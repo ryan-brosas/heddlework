@@ -35,6 +35,7 @@ describe('createWindowOptions', () => {
         browserRootCachePath: '/profiles',
         nativeBrowserEnabled: true,
         windowBackground: 'opaque',
+        ...(platform === 'linux' ? { appId: 'io.github.monotykamary.heddlework', windowDecorations: 'auto' } : {}),
       })
       expect('titlebarTransparent' in options).toBeFalse()
       expect('trafficLightX' in options).toBeFalse()

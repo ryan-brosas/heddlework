@@ -28,6 +28,8 @@ import type { TerminalSessionService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
+import { LinuxResizeHandles, LinuxWindowChrome, useNativeWindowChrome } from './linux-window-chrome.tsx'
+import type { WindowControlRenderer } from './window-controls.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
 type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
@@ -63,6 +65,8 @@ export function WorkbenchApp({
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
+  const windowControls = renderer as WindowControlRenderer
+  const nativeChrome = useNativeWindowChrome(windowControls)
   const windowSize = useWindowSize({ intervalMs: 50 })
   const windowInsets = useWindowInsets({ intervalMs: 50 })
   const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
@@ -262,7 +266,7 @@ export function WorkbenchApp({
   const mainWidth = safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * animatedSidebarProgress)
   const standardPanelWidth = Math.min(mainWidth, Math.max(420, Math.floor(mainWidth * 0.44)))
   const panelWidth = layout.panelOverlay ? safeWidth : displayedRightPanel === 'notifications' ? Math.min(422, mainWidth) : standardPanelWidth
-  const safeHeight = Math.max(1, windowSize.height - windowInsets.effective.top - windowInsets.effective.bottom)
+  const safeHeight = Math.max(1, windowSize.height - windowInsets.effective.top - windowInsets.effective.bottom - nativeChrome.height)
   const restDockHeight = Math.max(TERMINAL_DOCK_MIN_HEIGHT, Math.min(Math.floor(safeHeight * 0.7), bottomTerminalHeight))
   const dockHeight = !bottomTerminalOpen || panelFullscreenTarget ? 0 : bottomFullscreenVisible ? safeHeight : restDockHeight
   const showBottomDock = Boolean(terminals) && (bottomTerminalOpen || bottomTerminalMounted)
@@ -337,9 +341,12 @@ export function WorkbenchApp({
     <BrowserServiceProvider service={browsers}>
     <ResponsiveLayoutProvider layout={layout}>
       <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
+        {nativeChrome.height > 0 && nativeChrome.state && (
+          <LinuxWindowChrome renderer={windowControls} state={nativeChrome.state} title={state.windowTitle} onQuit={onQuit} reducedMotion={typeof process !== 'undefined' && process.env.HEDDLEWORK_REDUCED_MOTION === '1'} />
+        )}
         <div
           testId="workbench-safe-area"
-          style={{ position: 'absolute', top: windowInsets.effective.top, right: windowInsets.effective.right, bottom: windowInsets.effective.bottom, left: windowInsets.effective.left, display: 'flex', flexDirection: 'row', backgroundColor: colors.background, overflow: 'hidden' }}
+          style={{ position: 'absolute', top: windowInsets.effective.top + nativeChrome.height, right: windowInsets.effective.right, bottom: windowInsets.effective.bottom, left: windowInsets.effective.left, display: 'flex', flexDirection: 'row', backgroundColor: colors.background, overflow: 'hidden' }}
         >
           {!layout.navigationOverlay && sidebarHost}
           {surface === 'flows' && flows ? (
@@ -443,6 +450,7 @@ export function WorkbenchApp({
             </MotionDiv>
           )}
         </div>
+        {nativeChrome.height > 0 && nativeChrome.state && <LinuxResizeHandles state={nativeChrome.state} />}
       </div>
     </ResponsiveLayoutProvider>
     </BrowserServiceProvider>

@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, resetRender } from '@gpuix/react'
+import { GpuixRenderer, render, resetRender } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
@@ -23,6 +23,10 @@ import {
 } from './workbench/plugins.ts'
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
 import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
+import { assertNativeRuntime } from './native-runtime.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment } from './host/plugin.ts'
+import { resolveStaticRoot } from './host/static-root.ts'
+import { hostTokenPath } from './host/token.ts'
 
 interface RuntimeHandle {
   kernel: WorkbenchKernel
@@ -33,6 +37,8 @@ declare global {
   // eslint-disable-next-line no-var
   var __heddleworkRuntime: RuntimeHandle | undefined
 }
+
+assertNativeRuntime(GpuixRenderer.prototype)
 
 const workspacePath = resolveWorkspacePath()
 const demoMode = process.env.HEDDLEWORK_DEMO === '1'
@@ -50,6 +56,14 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
   threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
 }))
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
+const hostOptions = hostOptionsFromEnvironment()
+const staticRoot = resolveStaticRoot()
+kernel.mount(createWorkspaceHostPlugin({
+  ...hostOptions,
+  workspacePath,
+  tokenPath: demoMode ? false : hostTokenPath(),
+  ...(staticRoot ? { staticRoot } : {}),
+}))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
 kernel.mount(createTerminalPlugin({ cwd: workspacePath }))

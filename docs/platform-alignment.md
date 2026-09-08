@@ -11,11 +11,11 @@ Compared on 2026-09-08 against GPUix `6b4be86`, Zed `81c99f816b`, and
 - [x] Reserve two description lines so Agents does not grow relative to other built-in cards.
 - [x] Port stationary browser placement backoff and exercise geometry/visibility changes.
 - [x] Centralize browser-aware traffic-light detection in all shared titlebar owners.
-- [ ] Reconcile the native GPUix/Zed branches with current upstream and regenerate the pinned patch/artifact.
-- [ ] Port authenticated host/protocol, then the DOM client using our existing UI.
-- [ ] Port session/streaming performance changes with their race and pagination tests.
-- [ ] Expose native window decoration state and actions; implement Linux client-side controls.
-- [ ] Validate Wayland on GNOME and KDE/wlroots, plus X11 fallback.
+- [x] Reconcile the native GPUix/Zed branches with current upstream and regenerate the pinned native/React artifact, including the verified macOS CEF runtime.
+- [x] Port authenticated host/protocol and the shared-UI DOM client; verify real Chromium terminal input, composition, paste, Tab focus, resize, and close.
+- [x] Port session/streaming performance changes with stale-settle, pagination, cache identity, watcher fallback, and notification tests.
+- [x] Expose native window decoration state/actions and implement Linux client-side controls, including capability and gesture-lifetime regressions.
+- [x] Validate Wayland on GNOME/Mutter and wlroots/Sway, plus X11 fallback; retain explicit protocol and headless-environment limitations.
 
 ## Upstream findings
 
@@ -38,11 +38,11 @@ resize, focus traversal, dynamic image updates, CEF lifecycle, and accessibility
 Keep ABI, JS, and declarations from the same artifact. Do not publish a new pin
 until those checks pass.
 
-The local installation had reverted to stock GPUix while the patched package
-remained in `node_modules/.heddlework-gpuix-0.7`. Restoring the React symlink to
-that retained package restores the matching native dependency and declarations.
-This is local repair, not a reproducible upstream dependency upgrade; reinstalling
-stock dependencies can undo it.
+At the initial audit, the local installation had reverted to stock GPUix while
+the patched package remained in `node_modules/.heddlework-gpuix-0.7`. The final
+source installer replaces that manual repair: `gpuix-runtime.json` pins both
+repositories, and `bun run setup:native` checks source revisions and installs
+matching native/React packages. Run it after reinstalling stock dependencies.
 
 ## Community port boundaries
 
@@ -104,9 +104,24 @@ icons. GNOME (no server-decoration protocol), KDE/wlroots, fractional scaling, m
 moves, fullscreen, drag/resize, and XWayland/X11 must be tested explicitly. macOS
 headless layout tests cannot establish Wayland correctness.
 
+## Final validation scope
+
+All six client/server-decoration cases passed against GPUix `2b94075`: Mutter
+Wayland, Sway Wayland, and Mutter/X11, using native ARM64 Linux and lavapipe.
+X11 cases are complete, including real XTEST drag, resize, minimize, and close.
+Sway proves serial-backed move followed by resize without retained pointer capture.
+Mutter Wayland proves maximize/restore and decoration fallback. Wayland reports
+remain explicitly incomplete where xdg-shell cannot report minimized state,
+Sway 1.9 ignores maximize requests, or Mutter lacks a headless pointer injector.
+This does not certify physical-device, fractional-scale, or multi-monitor behavior.
+
+The application gates pass 408 tests, three separately isolated strict performance
+checks, Happy DOM integration, and a real Chromium/PTY companion probe. Browser
+IME variants are synthetic event checks, not physical iOS/Android certification.
+
 ## Resource policy
 
-No Cargo or CEF rebuild was needed for this first tranche. Reuse retained packages
-for local tests. For the native reconciliation, use bounded build profiles and clean
-only generated task artifacts after validation; do not delete global caches or run
-foreground window automation as part of these checks.
+The final native reconciliation used two-job, debug-disabled, non-incremental
+build profiles. Clean Cargo targets and task-owned containers/images after validation,
+while retaining the installed runtime, signed app, and checksummed final evidence.
+Do not delete shared global caches or run foreground window automation.

@@ -61,6 +61,7 @@ import { normalizeThreadLabels, type ThreadMetadataStoreService } from './thread
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
+import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
 
 const SESSION_PAGE_SIZE = 120
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -97,15 +98,24 @@ export class WorkbenchController {
   readonly #dialogs: WorkbenchDialogCoordinator
   readonly #stopTransportOnDispose: boolean
   readonly #listeners = new Set<() => void>()
+  readonly #notifier = new TrailingNotifier(() => {
+    for (const listener of this.#listeners) listener()
+  })
   #state: WorkbenchState
   #started = false
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
+  #refreshFull = false
+  #streamRevision = 0
+  #transcriptRefreshGeneration = 0
+  #bootstrapGeneration = 0
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectAttempts = 0
   #disposed = false
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
+  #sessionRefreshDirty = false
+  #unsubscribeCatalog: (() => void) | undefined
   #sessionTransitionDepth = 0
   #historyPager: PiSessionHistoryPager | undefined
   #sessionTree: PiSessionTree | undefined
@@ -186,10 +196,11 @@ export class WorkbenchController {
   }
 
   async start(): Promise<void> {
-    if (this.#started || this.#connecting) return
+    if (this.#disposed || this.#started || this.#connecting) return
     this.#clearReconnectTimer()
     this.#connecting = true
     this.#patch({ connection: 'connecting', connectionMessage: 'Starting Pi…' })
+    this.#watchSessionCatalog()
     void this.refreshSessions()
     try {
       await this.#transport.start()
@@ -597,26 +608,60 @@ export class WorkbenchController {
     }
   }
 
-  async refreshSessions(): Promise<void> {
-    if (this.#sessionRefresh) return this.#sessionRefresh
-    this.#patch({ sessionsLoading: true })
+  async refreshSessions(background = false): Promise<void> {
+    if (this.#disposed) return
+    if (!background) this.#patch({ sessionsLoading: true })
+    if (this.#sessionRefresh) {
+      this.#sessionRefreshDirty = true
+      return this.#sessionRefresh
+    }
     const task = (async () => {
-      try {
-        const sessions = await this.#sessionCatalog.list(this.#state.workspacePath, this.#sessionLimit + 1)
-        this.#patch({
-          sessions: sessions.slice(0, this.#sessionLimit),
-          sessionsLoading: false,
-          sessionsHasMore: sessions.length > this.#sessionLimit,
-        })
-      } catch (error) {
-        this.#patch({ sessionsLoading: false })
-        this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
-      }
+      do {
+        this.#sessionRefreshDirty = false
+        const workspacePath = this.#state.workspacePath
+        const limit = this.#sessionLimit
+        try {
+          const sessions = await this.#sessionCatalog.list(workspacePath, limit + 1)
+          if (this.#disposed) return
+          if (
+            workspacePath !== this.#state.workspacePath
+            || limit !== this.#sessionLimit
+            || this.#sessionRefreshDirty
+          ) {
+            this.#sessionRefreshDirty = true
+            continue
+          }
+          const page = sessions.slice(0, limit)
+          const unchanged = page.length === this.#state.sessions.length
+            && page.every((session, index) => session === this.#state.sessions[index])
+          this.#patch({
+            sessions: unchanged ? this.#state.sessions : page,
+            sessionsLoading: false,
+            sessionsHasMore: sessions.length > limit,
+          })
+        } catch (error) {
+          if (this.#disposed) return
+          if (this.#sessionRefreshDirty) continue
+          this.#patch({ sessionsLoading: false })
+          this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
+          return
+        }
+      } while (this.#sessionRefreshDirty && !this.#disposed)
     })().finally(() => {
       if (this.#sessionRefresh === task) this.#sessionRefresh = undefined
     })
     this.#sessionRefresh = task
     return task
+  }
+
+  #watchSessionCatalog(): void {
+    this.#unsubscribeCatalog?.()
+    const catalog = this.#sessionCatalog as SessionCatalogService & {
+      subscribe?(cwd: string, listener: () => void): () => void
+    }
+    this.#unsubscribeCatalog = catalog.subscribe?.(this.#state.workspacePath, () => {
+      void this.refreshSessions(true)
+    })
   }
 
   async loadMoreSessions(): Promise<void> {
@@ -888,6 +933,8 @@ export class WorkbenchController {
 
   async dispose(): Promise<void> {
     this.#disposed = true
+    this.#unsubscribeCatalog?.()
+    this.#unsubscribeCatalog = undefined
     this.#clearReconnectTimer()
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#dialogs.dispose()
@@ -896,6 +943,7 @@ export class WorkbenchController {
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
     if (this.#stopTransportOnDispose) await this.#transport.stop()
+    this.#notifier.cancel()
     this.#listeners.clear()
   }
 
@@ -1276,22 +1324,52 @@ export class WorkbenchController {
   }
 
   async #bootstrap(includeModels: boolean): Promise<void> {
-    const [session, sessionTree] = await Promise.all([
+    const generation = ++this.#bootstrapGeneration
+    const transcriptGeneration = ++this.#transcriptRefreshGeneration
+    const streamRevision = this.#streamRevision
+    const [reportedSession, sessionTree] = await Promise.all([
       this.#transport.request<PiSessionState>({ type: 'get_state' }),
       this.#tryRequestSessionTree(),
     ])
+    if (this.#disposed || generation !== this.#bootstrapGeneration) return
+
+    const streamUnchanged = streamRevision === this.#streamRevision
+    const session = streamUnchanged
+      ? reportedSession
+      : { ...reportedSession, isStreaming: this.#state.session.isStreaming }
     this.#sessionTree = sessionTree
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected',
       connectionMessage: 'Connected',
       session,
-      liveAssistant: undefined,
-      liveTools: [],
       activity: session.isStreaming ? 'Working' : 'Ready',
+      ...(streamUnchanged && !reportedSession.isStreaming
+        ? {
+            liveAssistant: undefined,
+            liveTools: this.#state.liveTools.length > 0 ? [] : this.#state.liveTools,
+          }
+        : {}),
     })
-    const tasks = await Promise.allSettled([
-      this.#loadInitialTranscript(session, sessionTree?.leafId),
+
+    const current = () => !this.#disposed && generation === this.#bootstrapGeneration
+    const transcriptCurrent = () => current()
+      && transcriptGeneration === this.#transcriptRefreshGeneration
+      && streamRevision === this.#streamRevision
+    const transcript = this.#loadInitialTranscript(session, sessionTree?.leafId).then(({ page, pager }) => {
+      if (!transcriptCurrent()) return
+      this.#historyPager = pager
+      this.#patch({
+        messages: page.messages,
+        messagesHasOlder: page.hasOlder,
+        messagesLoadingEarlier: false,
+        ...reconcileLiveTranscript(this.#state, page.messages),
+      })
+    }).catch(() => {
+      if (transcriptCurrent()) this.#patch({ messagesLoadingEarlier: false })
+    })
+
+    const metadata = Promise.allSettled([
       includeModels
         ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' })
         : Promise.resolve({ models: this.#state.models }),
@@ -1299,21 +1377,25 @@ export class WorkbenchController {
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
       this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
       this.#transport.request<{ commands: RpcSlashCommand[] }>({ type: 'get_commands' }),
-    ])
-    const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult, commandsResult] = tasks
-    this.#historyPager = messagesResult.status === 'fulfilled' ? messagesResult.value.pager : undefined
-    this.#patch({
-      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.page.messages : this.#state.messages,
-      messagesHasOlder: messagesResult.status === 'fulfilled' ? messagesResult.value.page.hasOlder : false,
-      messagesLoadingEarlier: false,
-      forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
-      models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
-      thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
-      stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
-      commands: commandsResult.status === 'fulfilled' ? slashCommandsFromRpc(commandsResult.value) : this.#state.commands,
+    ]).then(([modelsResult, levelsResult, statsResult, forkMessagesResult, commandsResult]) => {
+      if (!current()) return
+      this.#patch({
+        forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
+        models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
+        thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
+        stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
+        commands: commandsResult.status === 'fulfilled' ? slashCommandsFromRpc(commandsResult.value) : this.#state.commands,
+      })
     })
+
+    await Promise.all([transcript, metadata])
+    if (!current()) return
     void this.refreshWorkspaceDiff()
-    if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
+    if (!this.#state.session.isStreaming) {
+      queueMicrotask(() => {
+        if (current() && !this.#state.session.isStreaming) this.#drainQueue()
+      })
+    }
   }
 
   async #loadInitialTranscript(session: PiSessionState, leafId?: string | null): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
@@ -1353,17 +1435,28 @@ export class WorkbenchController {
   }
 
   async #refreshMessages(): Promise<void> {
+    const refreshGeneration = ++this.#transcriptRefreshGeneration
+    const bootstrapGeneration = this.#bootstrapGeneration
+    const streamRevision = this.#streamRevision
+    const current = () => !this.#disposed
+      && refreshGeneration === this.#transcriptRefreshGeneration
+      && bootstrapGeneration === this.#bootstrapGeneration
+      && streamRevision === this.#streamRevision
+      && this.#sessionTransitionDepth === 0
     try {
       const sessionFile = this.#state.session.sessionFile
       const previousTree = this.#sessionTree
       const [sessionTree, forkMessages] = await Promise.all([
         this.#tryRequestSessionTree(),
-        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
+          .catch(() => ({ messages: this.#state.forkMessages })),
       ])
+      if (!current()) return
       if (sessionTree) this.#sessionTree = sessionTree
       if (sessionFile) {
         const latestPager = new PiSessionHistoryPager(sessionFile, sessionTree?.leafId)
         const page = await latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
+        if (!current()) return
         const branchChanged = previousTree !== undefined
           && sessionTree !== undefined
           && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
@@ -1374,21 +1467,29 @@ export class WorkbenchController {
           messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
           messagesLoadingEarlier: false,
           forkMessages: forkMessagesFrom(forkMessages),
-          liveAssistant: undefined,
-          liveTools: [],
+          ...reconcileLiveTranscript(this.#state, page.messages),
         })
         return
       }
       const messages = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
-      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
+      if (!current()) return
+      this.#patch({
+        messages: messages.messages,
+        messagesHasOlder: false,
+        messagesLoadingEarlier: false,
+        forkMessages: forkMessagesFrom(forkMessages),
+        ...reconcileLiveTranscript(this.#state, messages.messages),
+      })
     } catch (error) {
-      this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
+      if (current()) this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
   }
 
   async #refreshStats(): Promise<void> {
+    const bootstrapGeneration = this.#bootstrapGeneration
     try {
       const stats = await this.#transport.request<PiSessionStats>({ type: 'get_session_stats' })
+      if (this.#disposed || this.#sessionTransitionDepth > 0 || bootstrapGeneration !== this.#bootstrapGeneration) return
       this.#patch({ stats })
     } catch {
       // Stats are supplementary; transcript operation should continue without them.
@@ -1403,10 +1504,19 @@ export class WorkbenchController {
   }
 
   #scheduleRefresh(full: boolean): void {
-    if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+    if (this.#sessionTransitionDepth > 0 || this.#disposed) return
+    this.#refreshFull ||= full
+    if (this.#refreshTimer) return
     this.#refreshTimer = setTimeout(() => {
       this.#refreshTimer = undefined
-      void (full ? Promise.all([this.#bootstrap(false), this.refreshSessions()]) : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
+      const refreshFull = this.#refreshFull
+      this.#refreshFull = false
+      void (refreshFull
+        ? Promise.all([this.#bootstrap(false), this.refreshSessions(true)])
+        : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
+        .catch((error) => {
+          if (!this.#disposed) this.#setState((state) => addNotice(state, 'warning', `Could not refresh session: ${errorMessage(error)}`))
+        })
     }, full ? 80 : 35)
   }
 
@@ -1503,6 +1613,8 @@ export class WorkbenchController {
   }
 
   #handleEvent(event: RpcRecord): void {
+    if (this.#disposed) return
+    if (event.type === 'agent_start' || event.type === 'agent_settled') this.#streamRevision += 1
     const fabricEvent = parseFabricBridgeEvent(event)
     if (fabricEvent) {
       this.#handleFabricBridgeEvent(fabricEvent)
@@ -1586,6 +1698,7 @@ export class WorkbenchController {
   }
 
   #patch(patch: Partial<WorkbenchState>): void {
+    if ((Object.keys(patch) as (keyof WorkbenchState)[]).every((key) => this.#state[key] === patch[key])) return
     this.#setState((state) => ({ ...state, ...patch }))
   }
 
@@ -1594,9 +1707,10 @@ export class WorkbenchController {
     const next = update(previous)
     if (next === previous) return
     this.#state = next
+    if (next.workspacePath !== previous.workspacePath && this.#unsubscribeCatalog) this.#watchSessionCatalog()
     if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
     if (next.threadLifecycle !== previous.threadLifecycle) this.#threadMetadataStore?.save(next.threadLifecycle)
-    for (const listener of this.#listeners) listener()
+    this.#notifier.notify(!liveFieldsOnlyChanged(previous, next))
   }
 }
 
@@ -1671,6 +1785,41 @@ function sameCompactionMessage(candidate: PiMessage, message: PiMessage): boolea
   return candidate.role === 'compaction'
     && contentText(candidate.content) === contentText(message.content)
     && candidate.tokensBefore === message.tokensBefore
+}
+
+/** Drop only live rows already represented by the authoritative transcript. Adapted from 0xCUB3/heddlework d196b0c. */
+function reconcileLiveTranscript(
+  state: WorkbenchState,
+  messages: PiMessage[],
+): Pick<WorkbenchState, 'liveAssistant' | 'liveTools'> {
+  if (!state.session.isStreaming) {
+    return {
+      liveAssistant: undefined,
+      liveTools: state.liveTools.length > 0 ? [] : state.liveTools,
+    }
+  }
+  let liveAssistant = state.liveAssistant
+  const completedTools = new Set<string>()
+  for (const message of messages) {
+    if (
+      liveAssistant
+      && message.role === 'assistant'
+      && message.timestamp !== undefined
+      && liveAssistant.id === `live-${message.timestamp}`
+    ) {
+      liveAssistant = undefined
+    }
+    if (message.role === 'toolResult' && typeof message.toolCallId === 'string') {
+      completedTools.add(message.toolCallId)
+    }
+  }
+  const remainingTools = state.liveTools.filter((tool) => (
+    tool.status !== 'complete' || !completedTools.has(tool.id)
+  ))
+  return {
+    liveAssistant,
+    liveTools: remainingTools.length === state.liveTools.length ? state.liveTools : remainingTools,
+  }
 }
 
 function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessage[] {

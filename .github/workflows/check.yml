@@ -15,13 +15,28 @@ concurrency:
 jobs:
   test:
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
+    env:
+      HEDDLEWORK_WITHOUT_CEF: '1'
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+      - name: Restore matched native runtime sources and artifacts
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/heddlework-gpuix
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock') }}
+      - name: Install Metal compiler
+        run: xcodebuild -downloadComponent MetalToolchain
+      - run: bun run setup:native
+      - run: bun run typecheck:web
+      - run: bun run build:web
+      - run: bunx playwright install chromium
+      - run: bun run test:browser
       - run: bun run check
       - run: bun run build
         env:

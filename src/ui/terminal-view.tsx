@@ -40,6 +40,7 @@ export const TerminalView = memo(function TerminalView({
   const nativeTerminal = renderer?.supportsNativeTerminal?.() === true
   const directTerminal = nativeTerminal && typeof renderer?.setTerminalFrame === 'function'
   const serviceSnapshot = useTerminalServiceSnapshot(service, projectionSuspended)
+  const sessionReady = serviceSnapshot.sessions.some((session) => session.id === sessionId)
   const rendering = serviceSnapshot.appearance
   const snapshot = useTerminalGrid(service, sessionId, projectionSuspended || directTerminal)
   const theme = useMemo(() => terminalPaintTheme(appearance), [appearance])
@@ -49,16 +50,16 @@ export const TerminalView = memo(function TerminalView({
   const inputId = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    if (projectionSuspended || !sessionId) return
+    if (projectionSuspended || !sessionId || !sessionReady) return
     service.resize(sessionId, size.cols, size.rows, placement)
-  }, [placement, projectionSuspended, service, sessionId, size.cols, size.rows])
+  }, [placement, projectionSuspended, service, sessionId, sessionReady, size.cols, size.rows])
 
   useEffect(() => {
-    if (focusSerial < 1 || !sessionId || inputId.current === undefined) return
+    if (focusSerial < 1 || !sessionId || !sessionReady || inputId.current === undefined) return
     service.claimSize(sessionId, placement)
     service.resize(sessionId, sizeRef.current.cols, sizeRef.current.rows, placement)
     gpuix?.renderer?.focusElement?.(inputId.current)
-  }, [focusSerial, gpuix, placement, service, sessionId])
+  }, [focusSerial, gpuix, placement, service, sessionId, sessionReady])
 
   const focusInput = useCallback(() => {
     if (sessionId) {
@@ -71,6 +72,11 @@ export const TerminalView = memo(function TerminalView({
   const onKeyDown = useCallback((event: TerminalKeyEvent) => {
     if (!sessionId) return
     const grid = service.grid(sessionId)
+    if (event.eventType === 'textInput' || event.eventType === 'paste') {
+      const text = event.keyChar ?? ''
+      if (text) service.write(sessionId, event.eventType === 'paste' ? wrapBracketedPaste(text, Boolean(grid?.bracketedPaste)) : text)
+      return
+    }
     const key = (event.key ?? '').toLowerCase()
     const mods = event.modifiers as { ctrl?: boolean; control?: boolean; alt?: boolean; cmd?: boolean; shift?: boolean } | undefined
     const ctrl = Boolean(mods?.ctrl || mods?.control)
@@ -278,6 +284,7 @@ const TerminalCursor = memo(function TerminalCursor({ x, y, color }: { x: number
 
 async function pasteClipboardText(): Promise<string | undefined> {
   try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) return (await navigator.clipboard.readText()) || undefined
     if (process.platform === 'darwin') {
       const proc = Bun.spawn(['/usr/bin/pbpaste'], { stdout: 'pipe' })
       return (await new Response(proc.stdout).text()) || undefined
