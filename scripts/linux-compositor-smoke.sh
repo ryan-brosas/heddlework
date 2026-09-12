@@ -142,7 +142,7 @@ else
   xprop -root _NET_SUPPORTED | grep -q '_GTK_FRAME_EXTENTS'
 fi
 
-timeout --preserve-status 300s bun scripts/linux-window-smoke.ts \
+timeout --preserve-status 120s bun scripts/linux-window-smoke.ts \
   --backend "$backend" \
   --compositor "$compositor" \
   --decorations "$decorations" \
