@@ -90,7 +90,7 @@ export function SessionRow({
           <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         </div>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-          {compact || hovered || snoozeMounted ? (
+          {compact || hovered || snoozeMounted || active ? (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
                 <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar, borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={withoutRowClick(onSnooze)}>

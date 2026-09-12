@@ -648,19 +648,37 @@ describe('clickable session switching', () => {
 
   it('opens a click that landed during a new-session transition', async () => {
     const transport = new SwitchingTransport()
-    const pool = createTransportPool(transport)
+    const pool = createTransportPool()
+    const fresh = new SwitchingTransport()
+    pool.prepared.set('', fresh)
     const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const release = transport.holdNextNewSession()
+      const release = fresh.holdStart()
       const creating = controller.newSession()
-      // The click lands while /new is still running, so it has no transition to join yet.
       const clicked = controller.switchSession(sessions[1]!)
       release()
       await creating
       await clicked
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(pool.spawned.has('/tmp/two.jsonl')).toBe(true)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('starts a new thread without aborting a live turn on the previous harness', async () => {
+    const transport = new SwitchingTransport()
+    const pool = createTransportPool()
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      transport.emitEvent({ type: 'agent_start' })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      const stops = transport.stopCalls
+      await controller.newSession()
+      expect(transport.stopCalls).toBe(stops)
+      expect(controller.getSnapshot().sessionActivity[sessions[0]!.path]).toBe(true)
     } finally {
       await controller.dispose()
     }

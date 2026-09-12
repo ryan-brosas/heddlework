@@ -549,12 +549,33 @@ export class WorkbenchController {
   }
 
   async newSession(): Promise<void> {
-    if (this.#state.session.isStreaming) return
+    const previousFile = this.#state.session.sessionFile
+    const wasStreaming = this.#state.session.isStreaming
+    if (!this.#createSessionTransport && wasStreaming) return
     this.#sessionTransitionDepth += 1
     try {
-      this.#dialogs.cancelAll()
+      if (previousFile) {
+        this.#captureLiveSession(previousFile)
+        this.#ensureBackgroundTracking(this.#transport, previousFile)
+        this.#dialogs.hideVisible()
+      }
+      if (this.#createSessionTransport) {
+        const transport = await this.#openSessionTransport('')
+        this.#attachActiveTransport(transport)
+      } else {
+        this.#dialogs.cancelAll()
+      }
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
+      if (previousFile && wasStreaming) {
+        this.#patch({
+          sessionActivity: {
+            ...this.#state.sessionActivity,
+            [previousFile]: true,
+            [resolve(previousFile)]: true,
+          },
+        })
+      }
       this.#historyPager = undefined
       this.#patch({
         messages: [],
@@ -575,6 +596,11 @@ export class WorkbenchController {
         queue: createQueueState(),
       })
       await this.#bootstrap(false)
+      const opened = this.#state.session.sessionFile
+      if (this.#createSessionTransport && opened) {
+        this.#touchSessionTransport(resolve(opened), this.#transport)
+        this.#trimIdleSessionPool(opened)
+      }
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
@@ -701,7 +727,7 @@ export class WorkbenchController {
       await transport.stop().catch(() => {})
       throw error
     }
-    this.#sessionTransports.set(resolve(sessionPath), transport)
+    if (sessionPath) this.#sessionTransports.set(resolve(sessionPath), transport)
     return transport
   }
 
