@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
+import { portalResponseMatchesToken, requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
 import type { PortalPickerProbe } from '../src/ui/portal-file-chooser.ts'
 
 function handleFor(token: string): string {
@@ -65,5 +65,34 @@ describe('requestPortalDirectory', () => {
 
     expect(commandsBeforeOpenReturns).toEqual(['dbus-monitor', 'gdbus'])
     expect(result.status).toBe('selected')
+  })
+
+  it('matches unquoted dbus-monitor Request paths used on Wayland', async () => {
+    const token = 'heddlework_deadbeef'
+    const unquoted = [
+      `signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/${token}; interface=org.freedesktop.portal.Request; member=Response`,
+      '   uint32 0',
+      '   array [',
+      '      dict entry(',
+      '         string "uris"',
+      '         variant             array [',
+      '               string "file:///tmp/project"',
+      '            ]',
+      '      )',
+      '   ]',
+    ].join('\n')
+    expect(portalResponseMatchesToken(unquoted, token)).toBe(true)
+    expect(portalResponseMatchesToken(unquoted, 'heddlework_other')).toBe(false)
+    expect(portalResponseMatchesToken(`path='/org/freedesktop/portal/desktop/request/1_555/${token}'`, token)).toBe(true)
+
+    const result = await requestPortalDirectory({
+      run: async (_command, args) => {
+        const opened = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]
+        return opened ? "(objectpath '" + handleFor(opened) + "',)" : undefined
+      },
+      monitor: async (_command, _args, _timeout, opened) => unquoted.replace(token, opened),
+    })
+    expect(result.status).toBe('selected')
+    expect(result.path).toBe('/tmp/project')
   })
 })

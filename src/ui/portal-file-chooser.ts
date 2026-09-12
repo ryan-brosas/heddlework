@@ -95,6 +95,14 @@ export async function requestPortalDirectory(
   return { status: 'selected', path: resolve(toFilePath(uri)) }
 }
 
+export function portalResponseMatchesToken(output: string, token: string): boolean {
+  if (!token || !output.includes(token)) return false
+  return new RegExp(
+    `/org/freedesktop/portal/desktop/request/[^/\\s'"]+/${escapeRegExp(token)}`,
+    'u',
+  ).test(output)
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -177,18 +185,13 @@ function runPortalMonitor(command: string, args: string[], timeoutMs: number, to
       finish(undefined)
       return
     }
-    // Only a Response for OUR request path counts.
-    const pathPattern = new RegExp('path=\'.\\/org\\/freedesktop\\/portal\\/desktop\\/request\\/[^\']*?\\/' + escapeRegExp(token) + '\'', 'u')
     const chunks: Buffer[] = []
     timer = setTimeout(() => done(), timeoutMs)
     stdout.on('data', (c: Buffer | string) => {
-      const text = Buffer.from(c)
-      chunks.push(text)
+      chunks.push(Buffer.from(c))
       const output = Buffer.concat(chunks).toString('utf8')
-      // Guard against splitting the Response header from the body with the
-      // token path: require the token path and a parseable response code.
-      const code = output.match(/\buint32\s+(\d+)\b/u)?.[1]
-      if (code !== undefined && pathPattern.test(output)) done(output)
+      const code = extractResponseCode(output)
+      if (code !== undefined && portalResponseMatchesToken(output, token)) done(output)
     })
     stderr.on('data', () => {})
     child.on('error', () => done(undefined))
