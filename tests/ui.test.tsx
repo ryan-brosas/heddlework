@@ -498,6 +498,8 @@ describeNative('WorkbenchApp', () => {
     root.renderer.flush()
     const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
     expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
+    const sessionStatus = await automation.getByTestId('sidebar-session-status').bounds()
+    expect(sessionStatus.y).toBeGreaterThan(sessionCardBeforeHover.y + sessionCardBeforeHover.height / 2)
     expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor).toBe(colors.sidebar)
     expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.textFaint)
     const settleBounds = await automation.getByTestId('sidebar-settle').bounds()
