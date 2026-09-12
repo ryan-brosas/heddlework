@@ -4,7 +4,6 @@ import { dirname, join, resolve } from 'node:path'
 
 /** Linux desktop launcher reads this one-line path when HEDDLEWORK_WORKSPACE is unset. */
 export function lastWorkspacePath(
-  platform: NodeJS.Platform = process.platform,
   environment: NodeJS.ProcessEnv = process.env,
   home = homedir(),
 ): string {
@@ -13,7 +12,7 @@ export function lastWorkspacePath(
 
 export async function persistLastWorkspace(workspacePath: string, platform: NodeJS.Platform = process.platform): Promise<void> {
   if (platform !== 'linux') return
-  const file = lastWorkspacePath(platform)
+  const file = lastWorkspacePath()
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, `${resolve(workspacePath)}\n`, { encoding: 'utf8', mode: 0o600 })
 }

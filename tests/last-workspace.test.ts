@@ -18,7 +18,7 @@ describe('last workspace persistence', () => {
     process.env.XDG_STATE_HOME = root
     try {
       await persistLastWorkspace('/tmp/project', 'darwin')
-      const file = lastWorkspacePath('linux', process.env)
+      const file = lastWorkspacePath(process.env)
       await expect(readFile(file, 'utf8')).rejects.toThrow()
     } finally {
       if (previous === undefined) delete process.env.XDG_STATE_HOME
@@ -33,7 +33,7 @@ describe('last workspace persistence', () => {
     process.env.XDG_STATE_HOME = root
     try {
       await persistLastWorkspace('/tmp/project', 'linux')
-      const file = lastWorkspacePath('linux', process.env)
+      const file = lastWorkspacePath(process.env)
       expect(await readFile(file, 'utf8')).toBe('/tmp/project\n')
     } finally {
       if (previous === undefined) delete process.env.XDG_STATE_HOME
