@@ -14,6 +14,9 @@ describe('sidebar session hit target', () => {
     expect(row).toContain('const cardSurface = active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.sidebar')
     expect(row).toContain('backgroundColor: cardSurface')
     expect(row).toContain('minWidth: 70')
+    // Same rule for the settled/snoozed wake control: it must follow the row surface, or it
+    // shows as a bare sidebar square once the row takes its hover fill.
+    expect(row).toContain('backgroundColor: hovered ? colors.sidebarHover : colors.sidebar')
     // The running label keeps the canonical working animation, not static text.
     expect(row).toContain("? <TextShimmer testId=\"sidebar-session-status\" text=\"Working\"")
     // Time/date and the Working tag live on the session metadata row, not the project row.

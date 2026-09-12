@@ -2,12 +2,28 @@ import { Window } from 'happy-dom'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { createInitialState } from '../src/workbench/state.ts'
+import { colors } from '../src/ui/theme.ts'
 const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}` })
 window.document.body.innerHTML = '<div id="root"></div>'
+const initial = createInitialState('/workspace/mobile')
+const sessionPath = '/workspace/mobile/session-1.jsonl'
 const state = {
-  ...createInitialState('/workspace/mobile'),
+  ...initial,
   connection: 'connected' as const,
   connectionMessage: 'Connected',
+  // One active, streaming session so the sidebar card renders its running controls: the card
+  // surface and both controls must share a single fill, and the running label must stay animated.
+  session: { ...initial.session, isStreaming: true, sessionFile: sessionPath },
+  sessions: [{
+    id: 'session-1',
+    path: sessionPath,
+    cwd: '/workspace/mobile',
+    title: 'Measure the turn',
+    firstMessage: 'Measure the turn',
+    messageCount: 2,
+    createdAt: 1,
+    modifiedAt: Date.now(),
+  }],
   // A session status line is chat content (Pi's showStatus), so it must render in the transcript
   // and must never surface as an extension notification banner.
   messages: [
@@ -42,5 +58,38 @@ assert(statusLine.textContent?.trim() === 'TPS 25.6 tok/s', `Pi showStatus line 
 const statusLineCss = statusLine.getAttribute('style') ?? ''
 assert(!/(^|;)\s*(background-color|border-width|border-color)\s*:/u.test(statusLineCss), `Pi showStatus line rendered notification chrome: ${statusLineCss}`)
 assert(!window.document.querySelector('[data-testid="session-status-line"] [data-testid^="timestamp"]'), 'Pi showStatus line rendered a timestamp')
+// The sidebar starts collapsed, and the session card only exists once it is open.
+const sidebarToggle = window.document.querySelector('[data-testid="toggle-left-sidebar"]')
+assert(sidebarToggle, 'Sidebar toggle did not render')
+sidebarToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await Bun.sleep(250)
+// The session card controls sit above the card, so their opaque fill has to match the surface
+// underneath: filling with the bare sidebar colour punches a dark slab into an active card and
+// spilled past the card padding when the action slot was fixed-width.
+// Structural typing: happy-dom's Element is not the DOM lib's Element.
+const styleOf = (element: { getAttribute(name: string): string | null }) => element.getAttribute('style') ?? ''
+const fillOf = (element: { getAttribute(name: string): string | null }) => (/background-color:\s*([^;]+)/u.exec(styleOf(element))?.[1] ?? '').trim()
+const card = window.document.querySelector('[data-testid="sidebar-session-card-active"]')
+assert(card, 'Sidebar session card did not render for the active streaming session')
+const surface = card.querySelector('[data-testid="sidebar-session-surface"]')
+const snooze = card.querySelector('[data-testid="sidebar-snooze"]')
+const settle = card.querySelector('[data-testid="sidebar-settle"]')
+assert(surface, 'Session card surface did not render')
+assert(snooze, 'Session snooze control did not render')
+assert(settle, 'Session settle control did not render')
+const brand = window.document.querySelector('[data-testid="sidebar-brand"]')
+assert(brand, 'Sidebar brand did not render')
+const surfaceFill = fillOf(surface)
+const pageFill = fillOf(brand)
+assert(surfaceFill.length > 0 && pageFill.length > 0, 'Card fills were not rendered inline')
+assert(surfaceFill !== pageFill, `Active card reused the bare sidebar fill ${surfaceFill}`)
+assert(fillOf(snooze) === surfaceFill, `Snooze control filled ${fillOf(snooze)} instead of the card surface ${surfaceFill}`)
+assert(fillOf(settle) === surfaceFill, `Settle control filled ${fillOf(settle)} instead of the card surface ${surfaceFill}`)
+// The running label is the animated shimmer, and it sits on the metadata row beside the branch.
+const status = window.document.querySelector('[data-testid="sidebar-session-status"]')
+assert(status, 'Running session rendered no status label')
+assert(status.classList.contains('gx-shimmer'), `Running session label was not the animated shimmer: ${status.outerHTML}`)
+assert(/animation-duration/u.test(styleOf(status)), 'Shimmer label carried no animation duration')
+assert(status.parentElement?.textContent?.includes('main') === true, 'Status label did not sit on the session metadata row beside the branch')
 console.log('web DOM probe passed')
 process.exit(0)
