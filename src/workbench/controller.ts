@@ -641,7 +641,10 @@ export class WorkbenchController {
       // get_state waits for Pi to finish parsing the JSONL. Holding the click lock for
       // that (5–10s on a 100 MiB thread) made every switch feel stalled even after the
       // transcript was already on screen.
-      void this.#bootstrap(false).then(() => { void this.refreshSessions() })
+      void this.#bootstrap(false).then(() => { void this.refreshSessions() }).catch((error) => {
+        if (this.#state.session.sessionFile !== session.path) return
+        this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      })
     } catch (error) {
       if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices] })
       this.#historyPager = scope.historyPager

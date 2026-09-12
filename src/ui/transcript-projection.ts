@@ -177,6 +177,7 @@ export function projectTranscriptRows(items: DisplayTimelineItem[], expandedTrac
     }
     if (item.changedPaths.length > 0) rows.push(reuseRow({ id: `${item.id}:files`, traceId: item.id, kind: 'trace-files', paths: item.changedPaths }))
   }
+  rememberProjectedRows(rows)
   return rows
 }
 
@@ -228,9 +229,15 @@ function sameRowContent(previous: TranscriptProjectionRow, next: TranscriptProje
 function reuseRow<T extends TranscriptProjectionRow>(row: T): T {
   const previous = rowIdentity.get(row.id)
   if (previous !== undefined && sameRowContent(previous, row)) return previous as T
-  if (rowIdentity.size >= ROW_IDENTITY_LIMIT) rowIdentity.clear()
-  rowIdentity.set(row.id, row)
   return row
+}
+
+function rememberProjectedRows(rows: readonly TranscriptProjectionRow[]): void {
+  rowIdentity.clear()
+  for (const row of rows) {
+    if (rowIdentity.size >= ROW_IDENTITY_LIMIT) return
+    rowIdentity.set(row.id, row)
+  }
 }
 
 /** Test-facing: forget the reused row objects. */
