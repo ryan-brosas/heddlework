@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, s
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { REQUIRED_NATIVE_METHODS } from '../src/native-runtime.ts'
 import { nativeBuildCommand, parseGpuixSourcePin } from './gpuix-source.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,7 +24,8 @@ await checkout(source, pin.gpuixRepository, pin.gpuixRevision, 'heddlework-runti
 await checkout(resolve(source, 'zed'), pin.zedRepository, pin.zedRevision, 'gpuix')
 await run(['bun', 'install', '--frozen-lockfile'], source)
 const stampPath = resolve(source, '.heddlework-build.json')
-const NATIVE_API_CHECK = 'const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ["setTerminalFrame", "getWindowState", "minimizeWindow", "toggleMaximizeWindow", "closeWindow"]) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)'
+// The app asserts the same list at startup, so the installer cannot drift from it.
+const NATIVE_API_CHECK = `const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ${JSON.stringify([...REQUIRED_NATIVE_METHODS])}) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)`
 const stamp = JSON.stringify({ ...pin, platform: process.platform, arch: process.arch, cef: process.platform === 'darwin' && process.env.HEDDLEWORK_WITHOUT_CEF !== '1' })
 // @gpuix/native loads the binary sitting in its own directory before falling back to the
 // published platform package, so the pinned build has to be installed under its napi name to

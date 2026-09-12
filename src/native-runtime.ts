@@ -1,4 +1,4 @@
-export const REQUIRED_NATIVE_METHODS = ['getWindowState', 'minimizeWindow', 'toggleMaximizeWindow', 'closeWindow'] as const
+export const REQUIRED_NATIVE_METHODS = ['setTerminalFrame', 'getWindowState', 'minimizeWindow', 'toggleMaximizeWindow', 'closeWindow'] as const
 
 export function assertNativeRuntime(prototype: object): void {
   const methods = prototype as Record<string, unknown>
