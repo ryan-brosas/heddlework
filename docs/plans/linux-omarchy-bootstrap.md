@@ -152,6 +152,22 @@ Two facts drive this, and both are Pi-side, not renderer-side:
 Measured end to end through `WorkbenchController` against real Pi and the same 117 MiB session:
 first transcript paint **31 860 ms -> 8 ms** after the click. Regression coverage lives in `tests/session-switch.test.ts`.
 
+**Linux UI-thread polls during a switch.** Optimistic JSONL preview is not enough if JS is stuck in
+`getWindowSize`/`getWindowState`: both are `recv_ui_response` round trips with a 2s timeout while
+GPUI paints the remounted transcript (gpuix `packages/native/src/renderer.rs`). The workbench now
+uses a 300 ms idle size/chrome poll and backs both off to 1.5 s while streaming or `Opening thread`.
+Row identity is reset on `sessionKey` so a switch cannot reuse the previous thread's memoized rows.
+The native virtual list is not remounted per session (appearance only), so Linux does not rebuild
+every GPUI view on each click.
+
+**Do not hold the click lock for Pi parse.** `switchSession` used to `await #bootstrap` /
+`get_state`. Pi parses the whole JSONL on a cold `--session` open (~5–10 s at 117 MiB), and the
+desktop launcher `cd`s to `$HOME`, so the sidebar is full of those threads. The click now paints
+the JSONL tail, attaches the harness (120 ms spawn), marks Ready, and bootstraps in the background.
+A later `get_state` cannot clobber a newer click (`#bootstrapGeneration` bumps at switch start).
+Dogfood the installed preview (`packaging/linux/install-user.sh`) after this change; the running
+`.desktop` process keeps the previous image.
+
 **Session-scoped harnesses (2026-09-12).** `switch_session` itself still costs ~7.5 s on a 117 MiB
 thread (Pi parses the whole file), Pi's RPC loop is serial, and `runtimeHost.switchSession` aborts
 the in-flight turn (`teardownCurrent` -> `session.abort()`) - so switching stopped running work no

@@ -1,39 +1,47 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from './icons.tsx'
 import { MotionDiv } from './motion.ts'
 import { colors } from './theme.ts'
 import { LINUX_TITLEBAR_HEIGHT, readWindowState, sameWindowState, usesClientWindowChrome, windowControlActions, type NativeWindowState, type WindowControlRenderer } from './window-controls.ts'
 
-export function useNativeWindowChrome(renderer: WindowControlRenderer) {
+/** Idle titlebar poll. Each read is a blocking Linux/Windows UI-thread round trip. */
+export const LINUX_CHROME_IDLE_POLL_MS = 300
+/** Streaming backs the poll off; window controls refresh on pointer down instead. */
+export const LINUX_CHROME_STREAMING_POLL_MS = 1_500
+
+export function useNativeWindowChrome(renderer: WindowControlRenderer, intervalMs = LINUX_CHROME_IDLE_POLL_MS) {
   const nativeLinux = typeof document === 'undefined' && typeof process !== 'undefined' && process.platform === 'linux'
   const [state, setState] = useState<NativeWindowState | undefined>(() => nativeLinux ? readWindowState(renderer) : undefined)
+  const updateRef = useRef<() => void>(() => undefined)
   useEffect(() => {
     if (!nativeLinux || !renderer.getWindowState) return
     const update = () => {
       const next = readWindowState(renderer)
       if (next) setState((previous) => sameWindowState(previous, next) ? previous : next)
     }
+    updateRef.current = update
     update()
-    // Compositor actions (maximize/restore/fullscreen) are the only thing that changes this, and
-    // every read is a blocking round trip to GPUI's UI thread (see src/ui/window-metrics.tsx),
-    // so it stays the slowest cadence the titlebar buttons can afford rather than a frame poll.
-    const timer = setInterval(update, 200)
+    // Synchronous UI-thread query: every tick blocks the JS thread until the UI
+    // thread answers, which costs tens of milliseconds while the window is
+    // painting (measured ~27% of JS self time during a stream at 200-300ms).
+    const timer = setInterval(update, intervalMs)
     return () => clearInterval(timer)
-  }, [nativeLinux, renderer])
+  }, [nativeLinux, intervalMs, renderer])
   const visible = usesClientWindowChrome(nativeLinux ? 'linux' : undefined, !nativeLinux, state)
-  return { state, height: visible ? LINUX_TITLEBAR_HEIGHT : 0 }
+  return { state, height: visible ? LINUX_TITLEBAR_HEIGHT : 0, refresh: () => updateRef.current() }
 }
 
-export function LinuxWindowChrome({ renderer, state, title, onQuit, reducedMotion = false }: {
+export function LinuxWindowChrome({ renderer, state, title, onQuit, onRefresh, reducedMotion = false }: {
   renderer: WindowControlRenderer
   state: NativeWindowState
   title: string
   onQuit?: (() => void) | undefined
+  onRefresh?: (() => void) | undefined
   reducedMotion?: boolean
 }) {
   const actions = windowControlActions(renderer, state, onQuit)
   return (
-    <div testId="linux-window-chrome" style={{ height: LINUX_TITLEBAR_HEIGHT, width: '100%', display: 'flex', flexDirection: 'row', alignItems: 'center', backgroundColor: colors.sidebar, borderBottomWidth: 1, borderColor: colors.border, flexShrink: 0 }}>
+    <div testId="linux-window-chrome" onMouseDown={() => onRefresh?.()} style={{ height: LINUX_TITLEBAR_HEIGHT, width: '100%', display: 'flex', flexDirection: 'row', alignItems: 'center', backgroundColor: colors.sidebar, borderBottomWidth: 1, borderColor: colors.border, flexShrink: 0 }}>
       {React.createElement('div', {
         testId: 'linux-window-drag-region', windowDragRegion: true,
         style: { height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', alignItems: 'center', userSelect: 'none' },

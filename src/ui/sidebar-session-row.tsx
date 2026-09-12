@@ -18,6 +18,14 @@ function SessionRowInset({ sidebarWidth, height, children }: { sidebarWidth: num
   return <div testId="sidebar-session-inset" style={{ width, height, flexShrink: 0, paddingLeft: SESSION_ROW_INSET, paddingRight: SESSION_ROW_INSET }}>{children}</div>
 }
 
+/** GPUI only hit-tests a hitbox. `pointerEvents: 'auto'` occludes the wheel
+ *  (BlockMouse), so list rows use an opaque fill instead and leave the event
+ *  unset — that is BlockMouseExceptScroll, which still lets the parent list
+ *  scroll. */
+function withoutRowClick(handler: () => void) {
+  return () => handler()
+}
+
 export function SessionRow({
   sidebarWidth,
   session,
@@ -58,13 +66,13 @@ export function SessionRow({
   if (lifecycle !== 'active') {
     return (
       <SessionRowInset sidebarWidth={sidebarWidth} height={36}>
-      <div testId={lifecycle === 'settled' ? 'sidebar-settled-row' : 'sidebar-snoozed-row'} style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, hover: { backgroundColor: colors.sidebarHover } }}>
+      <div testId={lifecycle === 'settled' ? 'sidebar-settled-row' : 'sidebar-snoozed-row'} tabIndex={disabled ? -1 : 0} style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', hover: { backgroundColor: colors.sidebarHover } }} {...(disabled ? {} : { onClick })}>
         <Icon name={lifecycle === 'snoozed' ? 'clock' : 'squarePen'} size={13} color={lifecycle === 'snoozed' ? colors.info : colors.settledIcon} />
-        <div tabIndex={disabled ? -1 : 0} style={{ minWidth: 0, flexGrow: 1, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
+        <div style={{ minWidth: 0, flexGrow: 1 }}>
           <text {...(lifecycle === 'settled' ? { testId: 'sidebar-settled-title' } : {})} style={{ color: lifecycle === 'settled' ? colors.settledText : colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         </div>
         <text style={{ color: lifecycle === 'settled' ? colors.settledMeta : colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? formatTimeOfDay(snoozedUntil) : relativeTime(session.modifiedAt)}</text>
-        <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onWake}>
+        <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar }} onClick={withoutRowClick(onWake)}>
           <Icon name="check" size={12} color={lifecycle === 'settled' ? colors.settledIcon : colors.textFaint} />
         </div>
       </div>
@@ -74,10 +82,10 @@ export function SessionRow({
 
   return (
     <SessionRowInset sidebarWidth={sidebarWidth} height={78}>
-    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.transparent, opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setSettleHovered(false) }}>
+    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} tabIndex={disabled ? -1 : 0} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setSettleHovered(false) }} {...(disabled ? {} : { onClick })}>
       <div testId="sidebar-session-surface" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.transparent, pointerEvents: 'none' }} />
       <div style={{ width: '100%', minWidth: 0, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-        <div tabIndex={disabled ? -1 : 0} style={{ minWidth: 0, flexGrow: 1, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
+        <div style={{ minWidth: 0, flexGrow: 1, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Icon name="folder" size={13} color={colors.textFaint} />
           <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         </div>
@@ -85,12 +93,12 @@ export function SessionRow({
           {compact || hovered || snoozeMounted ? (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
-                <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSnooze}>
+                <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar, borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={withoutRowClick(onSnooze)}>
                   <Icon name="clock" size={12} color={colors.textFaint} />
                 </div>
                 {snoozeMounted && <SnoozeMenu open={snoozeOpen} onSchedule={onSchedule} onClose={onSnooze} />}
               </div>
-              <div testId="sidebar-settle" tabIndex={0} style={{ height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 3, paddingRight: 0, cursor: 'pointer', backgroundColor: colors.transparent }} onMouseEnter={() => setSettleHovered(true)} onMouseLeave={() => setSettleHovered(false)} onClick={onSettle}>
+              <div testId="sidebar-settle" tabIndex={0} style={{ height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 3, paddingRight: 0, cursor: 'pointer', backgroundColor: colors.sidebar }} onMouseEnter={() => setSettleHovered(true)} onMouseLeave={() => setSettleHovered(false)} onClick={withoutRowClick(onSettle)}>
                 <Icon name="check" size={11} color={settleHovered ? colors.text : colors.textFaint} />
                 <text testId="sidebar-settle-label" style={{ color: settleHovered ? colors.text : colors.textFaint, fontSize: 9 }}>Settle</text>
               </div>
@@ -103,7 +111,7 @@ export function SessionRow({
           )}
         </div>
       </div>
-      <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} tabIndex={disabled ? -1 : 0} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
+      <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
         <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Icon name="gitBranch" size={11} color={colors.textFaint} />

@@ -597,6 +597,10 @@ export class WorkbenchController {
       return
     }
     this.#sessionTransitionDepth += 1
+    // Drop in-flight bootstrap from the previous thread so a late get_state cannot
+    // overwrite this click's optimistic scope once we release the transition lock.
+    this.#bootstrapGeneration += 1
+    this.#transcriptRefreshGeneration += 1
     // Everything the optimistic scope below hides, so a rejected switch can put it back.
     const scope = { state: this.#state, historyPager: this.#historyPager, sessionTree: this.#sessionTree }
     let rollback: Partial<WorkbenchState> | undefined
@@ -608,7 +612,7 @@ export class WorkbenchController {
       // clicked session must not depend on the harness either: the persisted JSONL tail
       // paints in milliseconds while a cold harness parses the whole session file (seconds
       // to tens of seconds on large threads). #bootstrap replaces the preview with
-      // authoritative state.
+      // authoritative state, off the transition lock.
       this.#sessionTree = undefined
       this.#historyPager = undefined
       const optimistic = this.#sessionSwitchPatch(session)
@@ -617,7 +621,8 @@ export class WorkbenchController {
       if (optimistic.workspacePath === scope.state.workspacePath) delete rollback.queue
       this.#patch(optimistic)
       const preview = this.#previewSessionTranscript(session)
-      const pooled = this.#sessionTransports.get(session.path)
+      const sessionKey = resolve(session.path)
+      const pooled = this.#sessionTransports.get(sessionKey) ?? this.#sessionTransports.get(session.path)
       const transport = pooled ?? await this.#openSessionTransport(session.path)
       if (this.#state.session.sessionFile !== session.path) {
         // A newer click superseded this switch while the harness was starting; leave the
@@ -632,8 +637,11 @@ export class WorkbenchController {
         this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [previousFile]: scope.state.session.isStreaming } })
       }
       await preview
-      await this.#bootstrap(false)
-      void this.refreshSessions()
+      this.#patch({ activity: this.#state.session.isStreaming ? 'Working' : 'Ready' })
+      // get_state waits for Pi to finish parsing the JSONL. Holding the click lock for
+      // that (5–10s on a 100 MiB thread) made every switch feel stalled even after the
+      // transcript was already on screen.
+      void this.#bootstrap(false).then(() => { void this.refreshSessions() })
     } catch (error) {
       if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices] })
       this.#historyPager = scope.historyPager
@@ -659,17 +667,18 @@ export class WorkbenchController {
       await transport.stop().catch(() => {})
       throw error
     }
-    this.#sessionTransports.set(sessionPath, transport)
+    this.#sessionTransports.set(resolve(sessionPath), transport)
     return transport
   }
 
   /** Keep the pool keyed by the file each harness actually holds (new_session re-files it). */
   #rememberActiveSessionTransport(sessionFile: string | undefined): void {
     if (!sessionFile) return
+    const sessionKey = resolve(sessionFile)
     for (const [path, transport] of this.#sessionTransports) {
-      if (transport === this.#transport && path !== sessionFile) this.#sessionTransports.delete(path)
+      if (transport === this.#transport && path !== sessionKey && path !== sessionFile) this.#sessionTransports.delete(path)
     }
-    this.#sessionTransports.set(sessionFile, this.#transport)
+    this.#sessionTransports.set(sessionKey, this.#transport)
     const tracked = this.#backgroundTracking.get(this.#transport)
     if (tracked?.path !== sessionFile) {
       tracked?.detach()
@@ -693,6 +702,8 @@ export class WorkbenchController {
     const offStatus = transport.onStatus((status) => {
       if (this.#disposed || this.#transport === transport) return
       if (status.state !== 'exited' && status.state !== 'stopped') return
+      const sessionKey = resolve(sessionFile)
+      if (this.#sessionTransports.get(sessionKey) === transport) this.#sessionTransports.delete(sessionKey)
       if (this.#sessionTransports.get(sessionFile) === transport) this.#sessionTransports.delete(sessionFile)
       this.#backgroundTracking.get(transport)?.detach()
       this.#backgroundTracking.delete(transport)

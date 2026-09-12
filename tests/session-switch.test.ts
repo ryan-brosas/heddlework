@@ -67,6 +67,7 @@ class SwitchingTransport implements AgentTransport {
   #switchFailure: string | undefined
   #startBarrier: Promise<void> | undefined
   #startFailure: string | undefined
+  #getStateBarrier: Promise<void> | undefined
 
   constructor(active: PiSessionSummary = sessions[0]!) {
     this.active = active
@@ -88,6 +89,12 @@ class SwitchingTransport implements AgentTransport {
   holdStart(): () => void {
     let release = () => {}
     this.#startBarrier = new Promise<void>((resolve) => { release = resolve })
+    return release
+  }
+
+  holdNextGetState(): () => void {
+    let release = () => {}
+    this.#getStateBarrier = new Promise<void>((resolve) => { release = resolve })
     return release
   }
 
@@ -137,6 +144,9 @@ class SwitchingTransport implements AgentTransport {
       return { cancelled: false } as T
     }
     if (command.type === 'get_state') {
+      const getStateBarrier = this.#getStateBarrier
+      this.#getStateBarrier = undefined
+      if (getStateBarrier) await getStateBarrier
       if (this.#notifyDuringBootstrap) {
         this.#notifyDuringBootstrap = false
         this.emitEvent({ type: 'extension_ui_request', id: 'bootstrap-wizard', method: 'notify', message: 'Bootstrap wizard' })
@@ -252,6 +262,7 @@ describe('clickable session switching', () => {
       const settledRequests = transport.requests.length
       await controller.switchSession(sessions[1]!)
       unsubscribe()
+      await waitFor(() => controller.getSnapshot().messages[0]?.content === 'Second')
       expect(observedNoticeCounts).not.toContain(1)
       expect(controller.getSnapshot().notices).toEqual([])
       expect(controller.getSnapshot().session.sessionId).toBe('two')
@@ -457,6 +468,32 @@ describe('clickable session switching', () => {
       }
       expect(controller.getSnapshot().session.sessionId).toBe('preview')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Previewed prompt')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('does not hold the click lock while Pi parses the session', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'heddlework-switch-get-state-'))
+    fixtures.push(directory)
+    const sessionPath = await writePersistedSession(directory, 'ready', ['Ready prompt'])
+    const previewed: PiSessionSummary = { id: 'ready', path: sessionPath, cwd: directory, title: 'Ready thread', firstMessage: 'Ready prompt', messageCount: 1, createdAt: 1, modifiedAt: 1 }
+    const transport = new SwitchingTransport()
+    transport.extras = [previewed]
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(previewed)
+    pool.prepared.set(sessionPath, target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      const release = target.holdNextGetState()
+      const switching = controller.switchSession(previewed)
+      await waitFor(() => controller.getSnapshot().messages[0]?.content === 'Ready prompt')
+      expect(controller.getSnapshot().activity).toBe('Ready')
+      // switchSession must not wait for get_state: that is Pi parsing the JSONL.
+      await switching
+      expect(controller.getSnapshot().session.sessionFile).toBe(sessionPath)
+      release()
     } finally {
       await controller.dispose()
     }
