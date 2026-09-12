@@ -155,10 +155,15 @@ across a session switch). Each rule was mutation-checked: reverting it fails its
 - `.github/workflows/check.yml` is Linux-first: job `test` keeps its id (so the published
   `check / test` context does not move) on `ubuntu-24.04` with `NAPI_RS_NATIVE_LIBRARY_PATH` testing,
   and `test-macos` is best-effort (`continue-on-error`).
-- `bun run setup:native` failed on every fresh clone: `bun install` materializes `@gpuix/react` as a
-  real directory and the installer refused to replace it. The guard now replaces only the package
-  manager's own copy (identified by its `package.json` name) and still refuses anything else, so a
-  source checkout or cache is never deleted.
+- `bun run setup:native` failed on every fresh clone for two reasons, both fixed in the installer:
+  `bun install` materializes `@gpuix/react` as a real directory that the guard refused to replace
+  (it now replaces only the package manager's own copy, identified by its `package.json` name, and
+  still refuses anything else); and the built addon was never installed, so `@gpuix/native` kept
+  loading the published platform binary and the API check failed with `Missing native API:
+  setTerminalFrame`. The pinned addon and its declarations are now installed over the resolved
+  package, and a cache hit is verified against that API check before it is trusted - a stamp
+  without its artifacts, or with artifacts that no longer answer, forces a rebuild.
+
 - `.github/workflows/linux.yml` compositor smoke fails for all six mutter/sway jobs on `main` and on
   the open PR branches (checked 2026-09-12); that lane is separate from the primary `check` gate.
 - Restore or re-derive `docs/linux-acceptance.md` and the native-runtime notes from `backup/main-35ahead`
