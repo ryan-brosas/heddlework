@@ -55,6 +55,11 @@ with their implementations.
 ## Deliverable hygiene
 
 - Run the full `check` suite before pushing.
+- Treat an explicit "commit, push, and PR" request as the primary goal: push what is
+  verified first, then land review findings as follow-up commits on the same branch.
+  Never leave a requested delivery parked locally while expanding scope.
+- After pushing, poll the required checks to a terminal state before reporting the
+  delivery complete; a pushed commit with pending checks is not verification.
 - Keep required-check names stable; rulesets match them exactly.
 - **Push and PR to the fork only** (`origin` = ryan-brosas/heddlework). Never push to `upstream`
   (its push URL is disabled as a guard) and never open PRs there unless the user explicitly requests
