@@ -72,6 +72,19 @@ describe('transcript projection', () => {
     expect(rows.filter((row) => row.kind === 'trace-entry')).toHaveLength(3)
     expect(rows.some((row) => row.kind === 'trace-continuation')).toBe(false)
   })
+
+  it('clamps an oversized first-expansion limit to the trace that exists', () => {
+    // The transcript only knows a trace's item count for traces it has already expanded, so a
+    // first expansion asks for the default limit; the projection has to clamp it to the trace.
+    const grouped = groupWorkItems(items)
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    const exact = projectTranscriptRows(grouped, new Set([trace.id]), new Map([[trace.id, trace.items.length]]))
+    const generous = projectTranscriptRows(grouped, new Set([trace.id]), new Map([[trace.id, 64]]))
+
+    expect(generous.map((row) => row.kind)).toEqual(exact.map((row) => row.kind))
+    expect(generous.some((row) => row.kind === 'trace-continuation')).toBe(false)
+  })
+
   it('does not treat a compaction CoT as the live Working header', () => {
     const grouped = groupWorkItems([
       { id: 'user', kind: 'user', text: 'Prompt', images: [] },

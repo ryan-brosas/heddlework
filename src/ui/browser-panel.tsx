@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useGpuixRequired, useWindowSize } from '@gpuix/react'
+import { useGpuixRequired } from '@gpuix/react'
 import type { BrowserSessionService } from '../browser/service.ts'
 import type { BrowserProfile, BrowserTab } from '../browser/types.ts'
 import { browserDisplayAddress } from '../browser/url.ts'
@@ -9,6 +9,7 @@ import { IconButton, Button } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors } from './theme.ts'
 import { useBrowserSnapshot } from './browser-context.tsx'
+import { useWindowMetrics } from './window-metrics.tsx'
 import { openExternal } from './open-external.ts'
 import { sampleBrowserPlacement, type BrowserPlacementSample } from './browser-placement.ts'
 
@@ -222,7 +223,7 @@ function ProfileMenu({
   isolation: 'full' | 'limited' | 'remote'
   onClose(): void
 }) {
-  const windowSize = useWindowSize({ intervalMs: 100 })
+  const windowSize = useWindowMetrics().size
   const menuWidth = Math.max(160, Math.min(310, windowSize.width - 32))
   const menuHeight = Math.max(80, windowSize.height - 112)
   const [creating, setCreating] = useState(false)

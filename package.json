@@ -43,7 +43,8 @@
     "benchmark:terminal": "bun scripts/benchmark-terminal.ts && bun scripts/benchmark-terminal-ui.tsx",
     "benchmark:terminal:hires": "bun scripts/benchmark-terminal-hires.ts",
     "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx",
-    "benchmark:session-switch": "bun scripts/benchmark-session-switch.ts"
+    "benchmark:session-switch": "bun scripts/benchmark-session-switch.ts",
+    "benchmark:window-metrics": "bun scripts/benchmark-window-metrics.tsx"
   },
   "dependencies": {
     "@gpuix/react": "0.7.0",
