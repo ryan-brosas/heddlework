@@ -1,0 +1,98 @@
+# Heddlework (ryan-brosas fork) - agent guidance
+
+Compact, durable context for any agent working in this repo. Prefer ground truth over this file;
+these notes encode invariants that are expensive to rediscover.
+
+## What this is
+
+A native, harness-neutral desktop workspace for agent sessions, task graphs, diffs, and durable
+work. React + GPUIX (GPU-rendered) on the client; Pi RPC is the first harness adapter. Core model:
+**the harness is authoritative for its own execution and transcripts; Heddlework projects state and
+never invents a second agent loop.**
+
+**This fork's purpose is the Linux support contribution** (Omarchy: Arch + Hyprland + Wayland,
+x86_64). The Linux/Omarchy working plan - pin state, Sourcebot corpus, Zed<>GPUix Wayland workstream,
+verification gates - lives in `docs/plans/linux-omarchy-bootstrap.md`; read it before native-runtime
+or Wayland work.
+
+## Lineage
+
+- `main` is the fork's own Linux baseline: upstream fork point `fd4496d` plus the re-landed Linux
+  foundations, merged from PR #1 (`67653a1`, head `3be39b3`). Upstream (`monotykamary/heddlework`)
+  is a fetch target, not a merge target for `main` anymore; new work branches from `main`.
+- The pre-reset Linux work (35 commits) is preserved locally on `backup/main-35ahead` (`5bbc57c`)
+  and `feat/linux-adoption-foundations` (`4298ef3`). Re-land it per concern; never merge wholesale.
+- `gpuix-runtime.json` pins `monotykamary/gpuix@2b94075` + `monotykamary/zed@e94e7f5` (both are the
+  tip of each fork's `feat/heddlework-platform-alignment` branch). Move pins only through
+  `bun run setup:native` plus the full gate suite.
+
+## Verification gates (verified in package.json - run these, do not guess)
+
+```bash
+bun install --frozen-lockfile   # never mutate the lockfile by hand
+bun run check                   # typecheck + typecheck:web + test + test:performance + web-dom-e2e
+bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
+```
+
+`check:native` and `check:ai-slop` do not exist in the fresh-fork package.json. Re-add them only
+with their implementations.
+
+## Invariants & traps
+
+- **Harness authority**: never let UI code own harness truth. Streaming replaces transcript rows
+  only after the authoritative `get_messages` settles.
+- **Cordis composability**: every registration/listener/timer/process an owner attaches must attach
+  its inverse to the same plugin/controller/React lifecycle. Unload withdraws effects in reverse.
+- **GPUIX runtime authority**: `gpuix-runtime.json` is the runtime contract. `bun run setup:native`
+  installs the built addon and symlinks `@gpuix/react` so a plain `bun run start` cannot load a
+  stale binary. React/reconciler must share the application's one React instance (the installer
+  enforces this).
+- **Wayland correctness is Linux-only knowledge**: macOS headless layout tests prove nothing about
+  decorations, serials, or fractional scaling. Validate on Hyprland and Mutter explicitly.
+- **Perf budgets skip on Linux by design**: `has_test_gpuix_renderer` is `cfg!(test-support &&
+  (macos || windows))` in the pinned gpuix (`packages/native/src/lib.rs`) because wgpu cannot read
+  back rendered images on Linux yet. `test:performance` therefore reports 3 skips on Linux even
+  with a healthy `@gpuix/react` symlink - do not "fix" the symlink; the blocker is upstream gpuix.
+- `.pi/` is local agent-runtime state; `.pi/fabric/mesh/*` handoff files are session-local,
+  never commit them.
+- `docs/browser.md` documents the native browser (macOS CEF today); read it before touching that
+  system. Linux browser-free builds are the default until a Linux CEF path exists.
+
+## Sourcebot is the code-truth authority (standing explicit request)
+
+- Sourcebot (http://localhost:3000, MCP `sourcebot_*` tools) is the required first evidence
+  step for any broad or cross-repository code question touching the indexed corpus
+  (`monotykamary/gpuix`, `monotykamary/zed`, `ryan-brosas/heddlework`, `omacom/omarchy`, ...).
+  This file is the standing explicit request to use the `ask_codebase` tool for those questions;
+  narrow known-path lookups may stay direct.
+- Verify indexed coverage before trusting it: `list_branches` must show `isIndexed: true` for the
+  branch in question (today: `feat/linux-workspace-foundations` on the fork). An unindexed branch
+  or stale snapshot means bounded local retrieval, not silent guessing.
+- Deployment config: `/home/utopia/sourcebot/config.json` (`heddlework-lane` connection). Adding
+  a branch to `revisions.branches` requires a backup in `backups/` and a fresh indexed-branch
+  probe afterward. Never cite a Sourcebot hit you cannot re-read with an explicit ref.
+- `ask_codebase` takes canonical repo names: `repos: ["github.com/ryan-brosas/heddlework"]`.
+  A bare `owner/repo` returns `Repository ... not found`, and a `repo` (singular) key is rejected.
+- The chat agent's LLM is OmniRoute's `top-tool` combo (config.json `models[0]`), and that combo
+  MUST keep cross-provider fallback members. Its principal upstream caps at 5 concurrent requests
+  per user while Sourcebot is the dominant consumer, so a single-provider combo 429s, fails the
+  research turn *and* title generation, and leaves chats as "Untitled chat". Verified 2026-09-12:
+  all 5 combo targets report ok via `POST http://127.0.0.1:20128/api/combos/test` and concurrent
+  `ask_codebase` calls succeed. Diagnose with `docker logs sourcebot | grep '\[sew\]'` and
+  `docker logs omniroute | grep -i 'too many concurrent'`.
+
+## Deliverable hygiene
+
+- Run the full `check` suite before pushing.
+- Treat an explicit "commit, push, and PR" request as the primary goal: push what is
+  verified first, then land review findings as follow-up commits on the same branch.
+  Never leave a requested delivery parked locally while expanding scope.
+- After pushing, poll the required checks to a terminal state before reporting the
+  delivery complete; a pushed commit with pending checks is not verification.
+- Keep required-check names stable; rulesets match them exactly.
+- **Push and PR to the fork only** (`origin` = ryan-brosas/heddlework). Never push to `upstream`
+  (its push URL is disabled as a guard) and never open PRs there unless the user explicitly requests
+  an upstream contribution. The existence of an `upstream` remote is NOT permission to push or PR
+  to it. `gh pr create` must target the fork (`--repo ryan-brosas/heddlework`).
+- CI runs the Linux `test` job on ubuntu-24.04. Compositor smoke is manual-only; macOS/Windows
+  jobs must not be added without the owner's request.
