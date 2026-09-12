@@ -42,7 +42,8 @@
     "smoke:browser": "bun scripts/smoke-browser.ts",
     "benchmark:terminal": "bun scripts/benchmark-terminal.ts && bun scripts/benchmark-terminal-ui.tsx",
     "benchmark:terminal:hires": "bun scripts/benchmark-terminal-hires.ts",
-    "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx"
+    "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx",
+    "benchmark:session-switch": "bun scripts/benchmark-session-switch.ts"
   },
   "dependencies": {
     "@gpuix/react": "0.7.0",

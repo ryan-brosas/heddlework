@@ -14,7 +14,7 @@ export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
     // git honours diff.mnemonicprefix/diff.noprefix from the developer's own
     // configuration. Pin the prefixes this parser reads instead of inheriting them.
     const trackedPatch = await runGit(cwd, [...DIFF_PREFIX, 'diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
-    const numstat = await runGit(cwd, ['diff', '--numstat', 'HEAD', '--'])
+    const numstat = await runGit(cwd, [...DIFF_PREFIX, 'diff', '--numstat', 'HEAD', '--'])
     const untracked = (await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '--']))
       .split('\n')
       .map((path) => path.trim())
