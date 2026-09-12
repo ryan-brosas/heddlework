@@ -63,8 +63,11 @@ import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
 import { formatTimeOfDay } from '../ui/format-time.ts'
+import { persistLastWorkspace } from './last-workspace.ts'
 
 const SESSION_PAGE_SIZE = 120
+/** Idle background Pi processes kept after a switch. Streaming harnesses are never evicted. */
+export const SESSION_IDLE_POOL_LIMIT = 8
 const RECONNECT_BASE_DELAY_MS = 1_000
 const RECONNECT_MAX_DELAY_MS = 15_000
 const MAX_RECONNECT_ATTEMPTS = 10
@@ -251,6 +254,7 @@ export class WorkbenchController {
       await this.#transport.start()
       this.#started = true
       await this.#bootstrap(true)
+      void persistLastWorkspace(this.#state.workspacePath)
     } catch (error) {
       this.#patch({
         connection: 'error',
@@ -588,6 +592,7 @@ export class WorkbenchController {
     try {
       const session = await this.#sessionCatalog.createWorkspaceSession(target)
       await this.switchSession(session)
+      void persistLastWorkspace(target)
     } catch (error) {
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', `Could not open project: ${errorMessage(error)}`))
@@ -649,6 +654,8 @@ export class WorkbenchController {
         return
       }
       this.#attachActiveTransport(transport)
+      this.#touchSessionTransport(sessionKey, transport)
+      this.#trimIdleSessionPool(session.path)
       // The thread just left keeps its harness and possibly its turn; seed the sidebar signal.
       if (previousFile && previousFile !== session.path) {
         this.#patch({
@@ -695,6 +702,39 @@ export class WorkbenchController {
     }
     this.#sessionTransports.set(resolve(sessionPath), transport)
     return transport
+  }
+
+  #touchSessionTransport(sessionKey: string, transport: AgentTransport): void {
+    this.#sessionTransports.delete(sessionKey)
+    this.#sessionTransports.set(sessionKey, transport)
+  }
+
+  /** Stop oldest idle harnesses so Linux does not accumulate a Pi per sidebar click. Streaming stays. */
+  #trimIdleSessionPool(keepPath: string): void {
+    const keep = resolve(keepPath)
+    const idle: AgentTransport[] = []
+    const seen = new Set<AgentTransport>()
+    for (const [path, transport] of this.#sessionTransports) {
+      if (seen.has(transport) || transport === this.#transport) continue
+      if (resolve(path) === keep) continue
+      const streaming = this.#liveSessions.get(path)?.isStreaming === true
+        || this.#liveSessions.get(resolve(path))?.isStreaming === true
+        || this.#state.sessionActivity[path] === true
+        || this.#state.sessionActivity[resolve(path)] === true
+      if (streaming) continue
+      seen.add(transport)
+      idle.push(transport)
+    }
+    const overflow = idle.length - SESSION_IDLE_POOL_LIMIT
+    if (overflow <= 0) return
+    for (const transport of idle.slice(0, overflow)) {
+      this.#backgroundTracking.get(transport)?.detach()
+      this.#backgroundTracking.delete(transport)
+      for (const [path, pooled] of [...this.#sessionTransports]) {
+        if (pooled === transport) this.#sessionTransports.delete(path)
+      }
+      void transport.stop()
+    }
   }
 
   #captureLiveSession(sessionFile: string | undefined): void {

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { PiSessionCatalog, type PiSessionSummary } from '../src/pi/session-catalog.ts'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
-import { WorkbenchController } from '../src/workbench/controller.ts'
+import { SESSION_IDLE_POOL_LIMIT, WorkbenchController } from '../src/workbench/controller.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 const sessions: PiSessionSummary[] = [
@@ -61,6 +61,7 @@ class SwitchingTransport implements AgentTransport {
   active: PiSessionSummary
   extras: PiSessionSummary[] = []
   startCalls = 0
+  stopCalls = 0
   streaming = false
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
@@ -100,7 +101,7 @@ class SwitchingTransport implements AgentTransport {
   }
 
   failStart(message: string): void { this.#startFailure = message }
-  async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
+  async stop(): Promise<void> { this.stopCalls += 1; this.emitStatus({ state: 'stopped' }) }
   send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
@@ -416,6 +417,32 @@ describe('clickable session switching', () => {
       expect(pool.spawned.size).toBe(1)
       expect(target.startCalls).toBe(1)
       expect(controller.getSnapshot().session.sessionId).toBe('two')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('stops oldest idle harnesses once the idle pool is full', async () => {
+    const extras: PiSessionSummary[] = Array.from({ length: SESSION_IDLE_POOL_LIMIT + 3 }, (_, index) => ({
+      id: 'pool-' + String(index),
+      path: '/tmp/pool-' + String(index) + '.jsonl',
+      cwd: '/tmp/project',
+      title: 'Pool ' + String(index),
+      firstMessage: 'p',
+      messageCount: 1,
+      createdAt: index,
+      modifiedAt: index,
+    }))
+    const transport = new SwitchingTransport()
+    transport.extras = extras
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      for (const session of extras) await controller.switchSession(session)
+      const stopped = extras.map((session) => pool.spawned.get(session.path)?.stopCalls ?? 0)
+      expect(stopped.filter((count) => count > 0).length).toBeGreaterThan(0)
+      expect(pool.spawned.get(extras[extras.length - 1]!.path)?.stopCalls).toBe(0)
     } finally {
       await controller.dispose()
     }
