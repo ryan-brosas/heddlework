@@ -138,6 +138,31 @@ describe('buildTimeline', () => {
     expect(items[2]).toMatchObject({ kind: 'status', text: 'TPS 25.6 tok/s' })
   })
 
+  it('places a status line emitted before the transcript loaded at the tail', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'First', timestamp: 1 },
+      { role: 'assistant', content: 'First answer', timestamp: 2 },
+    ]
+    const statusLines = [{ id: 5, text: 'TPS 25.6 tok/s', createdAt: 6, turn: -1 }]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, [], statusLines)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'status'])
+    expect(items[2]).toMatchObject({ kind: 'status', text: 'TPS 25.6 tok/s' })
+  })
+
+  it('keeps a status line whose turn is outside the loaded window instead of dropping it', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'First', timestamp: 1 },
+      { role: 'assistant', content: 'First answer', timestamp: 2 },
+    ]
+    const statusLines = [{ id: 7, text: 'TPS 25.6 tok/s', createdAt: 8, turn: 4 }]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, [], statusLines)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'status'])
+  })
+
   it('keeps only the latest status line for a turn', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: 'First', timestamp: 1 },

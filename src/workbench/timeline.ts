@@ -231,7 +231,12 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[], status
   for (const turnNotices of byTurn.values()) {
     turnNotices.sort((left, right) => (left.transcriptPosition ?? 0) - (right.transcriptPosition ?? 0) || left.createdAt - right.createdAt || left.id - right.id)
   }
-  const statusByTurn = new Map(statusLines.map((line) => [line.turn, line]))
+  const statusByTurn = new Map<number, StatusLine>()
+  const tailStatus: StatusLine[] = []
+  for (const line of statusLines) {
+    if (line.turn < 0) tailStatus.push(line)
+    else statusByTurn.set(line.turn, line)
+  }
 
   const merged: TimelineItem[] = []
   let turn = -1
@@ -248,11 +253,14 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[], status
   const appendRemaining = () => appendThrough(Number.POSITIVE_INFINITY)
   // Pi appends a status line to the chat after the turn's content, so it lands on the turn
   // boundary rather than at a trace position.
+  const emittedStatus = new Set<number>()
+  const statusItem = (line: StatusLine): TimelineItem => ({ id: `status-line-${line.id}`, kind: 'status', text: line.text, timestamp: line.createdAt })
   const appendStatus = () => {
     if (!pendingStatus) return
     const line = pendingStatus
     pendingStatus = undefined
-    merged.push({ id: `status-line-${line.id}`, kind: 'status', text: line.text, timestamp: line.createdAt })
+    emittedStatus.add(line.id)
+    merged.push(statusItem(line))
   }
 
   for (const item of items) {
@@ -278,6 +286,11 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[], status
   }
   appendRemaining()
   appendStatus()
+  // A status line for a turn outside the loaded window, and a status emitted before the transcript
+  // loaded (pi-tps restores the last readout on resume, before get_messages resolves), still belong
+  // to this session: place them at the tail instead of dropping them.
+  for (const line of [...statusByTurn.values()].filter((candidate) => !emittedStatus.has(candidate.id)).sort((left, right) => left.turn - right.turn || left.createdAt - right.createdAt)) merged.push(statusItem(line))
+  for (const line of tailStatus.filter((candidate) => !emittedStatus.has(candidate.id)).sort((left, right) => left.createdAt - right.createdAt)) merged.push(statusItem(line))
   return merged
 }
 
