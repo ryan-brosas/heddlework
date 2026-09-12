@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
@@ -29,6 +29,7 @@ import {
   liveWorkTraceId,
   pendingWorkTraceId,
   projectTranscriptRows,
+  resetRowIdentityCache,
   type DisplayTimelineItem,
   type TraceTimelineItem,
   type TranscriptProjectionRow,
@@ -108,6 +109,7 @@ export const Transcript = memo(function Transcript({
   if (previewLeaseSession.current !== sessionKey) {
     previewLeaseSession.current = sessionKey
     previewLeases.current = new Map()
+    resetRowIdentityCache()
   }
   const [disclosures, setDisclosures] = useState<TranscriptDisclosureState>(() => ({ sessionKey, traces: new Set(), entries: new Set(), traceLimits: new Map() }))
   const [retiringAssistants, setRetiringAssistants] = useState<AssistantTimelineItem[]>([])
@@ -274,31 +276,50 @@ export const Transcript = memo(function Transcript({
     }
   }, [rows, state.messagesHasOlder, state.messagesLoadingEarlier])
 
-  const toggleTrace = (traceId: string) => {
+  // `traceLengths` changes identity on every live delta. Reading it through a ref
+  // keeps this handler stable, which is what lets memoized rows bail out.
+  const traceLengthsRef = useRef(traceLengths)
+  traceLengthsRef.current = traceLengths
+
+  const toggleTrace = useCallback((traceId: string) => {
     setDisclosures((current) => {
       const traces = new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS)
       if (traces.has(traceId)) traces.delete(traceId)
       else traces.add(traceId)
       const traceLimits = new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS)
-      if (traces.has(traceId)) traceLimits.set(traceId, Math.min(TRACE_INITIAL_PROJECTED_ROWS, traceLengths.get(traceId) || TRACE_INITIAL_PROJECTED_ROWS))
+      if (traces.has(traceId)) traceLimits.set(traceId, Math.min(TRACE_INITIAL_PROJECTED_ROWS, traceLengthsRef.current.get(traceId) || TRACE_INITIAL_PROJECTED_ROWS))
       else traceLimits.delete(traceId)
       return { sessionKey, traces, entries: new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS), traceLimits }
     })
-  }
-  const toggleEntry = (rowId: string) => {
+  }, [sessionKey])
+  const toggleEntry = useCallback((rowId: string) => {
     setDisclosures((current) => {
       const entries = new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS)
       if (entries.has(rowId)) entries.delete(rowId)
       else entries.add(rowId)
       return { sessionKey, traces: new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS), entries, traceLimits: new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS) }
     })
-  }
+  }, [sessionKey])
+
+  const leasePreviewHeight = useCallback((key: string, natural: number, hold: boolean) => {
+    if (!hold) {
+      previewLeases.current.delete(key)
+      return natural
+    }
+    const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
+    previewLeases.current.set(key, next)
+    return next
+  }, [])
+
+  const finishRetire = useCallback((id: string) => {
+    setRetiringAssistants((current) => current.filter((item) => item.id !== id))
+  }, [])
 
   // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
     <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', pointerEvents: interactionDisabled ? 'none' : 'auto' }} onScroll={handleHistoryScroll}>
       <NativeVirtualList
-        key={`${sessionKey}:${appearance ?? nativeTheme.appearance}:virtual`}
+        key={`${appearance ?? nativeTheme.appearance}:virtual`}
         testId="transcript-list"
         alignment="bottom"
         followTail={followTail}
@@ -309,23 +330,15 @@ export const Transcript = memo(function Transcript({
         style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
       >
         {rows.map((row) => (
-          <TranscriptRowTransition key={row.id} row={row} live={row.kind === 'trace-header' && row.id === liveTraceId} persist={row.kind === 'trace-header' && stickyHeaderIds.current.has(row.id)}>
-          <ProjectedTranscriptRow
+          <MemoTranscriptRowTransition key={row.id} row={row} live={row.kind === 'trace-header' && row.id === liveTraceId} persist={row.kind === 'trace-header' && stickyHeaderIds.current.has(row.id)}>
+          <MemoProjectedTranscriptRow
             row={row}
             presenters={presenters}
             workspacePath={state.workspacePath}
             historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
             live={row.kind === 'trace-header' && row.id === liveTraceId}
-            leasePreviewHeight={(key, natural, hold) => {
-              if (!hold) {
-                previewLeases.current.delete(key)
-                return natural
-              }
-              const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
-              previewLeases.current.set(key, next)
-              return next
-            }}
+            leasePreviewHeight={leasePreviewHeight}
             questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
             statusItems={state.statusItems}
@@ -341,9 +354,9 @@ export const Transcript = memo(function Transcript({
             onOpenDiff={onOpenDiff}
             onRevert={onRevert}
             onDismissNotice={onDismissNotice}
-            onFinishRetire={(id) => setRetiringAssistants((current) => current.filter((item) => item.id !== id))}
+            onFinishRetire={finishRetire}
           />
-          </TranscriptRowTransition>
+          </MemoTranscriptRowTransition>
         ))}
       </NativeVirtualList>
     </div>
@@ -367,6 +380,11 @@ export const Transcript = memo(function Transcript({
   && previous.state.queue === next.state.queue
   && previous.state.statusItems === next.state.statusItems
   && previous.state.widgets === next.state.widgets)
+
+// Row identity is reused by `projectTranscriptRows` while its backing item is
+// unchanged, so memoized rows let a streaming delta skip settled history.
+const MemoTranscriptRowTransition = memo(TranscriptRowTransition)
+const MemoProjectedTranscriptRow = memo(ProjectedTranscriptRow)
 
 function TranscriptRowTransition({ row, live, persist, children }: { row: TranscriptRenderRow; live: boolean; persist: boolean; children: React.ReactNode }) {
   const entered = useRef(false)

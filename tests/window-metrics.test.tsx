@@ -23,7 +23,7 @@ mock.module('@gpuix/react', () => ({
 }))
 mock.module('@gpuix/react/jsx-runtime', () => ({ ...reactJsxRuntime }))
 
-const { WindowMetricsProvider, WINDOW_METRICS_INTERVAL_MS, useWindowMetrics, windowInsetsIntervalMs, windowInsetsPollInterval } = await import('../src/ui/window-metrics.tsx')
+const { WindowMetricsProvider, WINDOW_METRICS_INTERVAL_MS, useWindowMetrics, windowInsetsIntervalMs, windowInsetsPollInterval, windowSizeIntervalMs, windowSizePollInterval } = await import('../src/ui/window-metrics.tsx')
 const { renderToStaticMarkup } = await import('react-dom/server')
 
 function Consumer({ label }: { label: string }) {
@@ -58,7 +58,7 @@ describe('window metrics', () => {
 
     expect(markup).toContain('solo:1280x800:0')
     expect(reads).toEqual([
-      { hook: 'size', intervalMs: WINDOW_METRICS_INTERVAL_MS },
+      { hook: 'size', intervalMs: windowSizePollInterval() },
       { hook: 'insets', intervalMs: windowInsetsPollInterval() },
     ])
   })
@@ -70,6 +70,16 @@ describe('window metrics', () => {
     expect(windowInsetsIntervalMs('linux')).toBe(1_000)
     expect(windowInsetsIntervalMs('win32')).toBe(1_000)
     expect(windowInsetsIntervalMs(undefined)).toBe(1_000)
+  })
+
+  it('slows the blocking window-size poll off macOS, and further while the UI thread is busy', () => {
+    expect(windowSizeIntervalMs('darwin')).toBe(WINDOW_METRICS_INTERVAL_MS)
+    expect(windowSizeIntervalMs('darwin', true)).toBe(WINDOW_METRICS_INTERVAL_MS)
+    expect(windowSizeIntervalMs('linux')).toBe(300)
+    expect(windowSizeIntervalMs('linux', true)).toBe(1_500)
+    expect(windowSizeIntervalMs('win32')).toBe(300)
+    expect(windowSizeIntervalMs('win32', true)).toBe(1_500)
+    expect(windowSizeIntervalMs(undefined, true)).toBe(1_500)
   })
 
   it('keeps the poll in the workbench root and out of the panels', async () => {
@@ -84,7 +94,7 @@ describe('window metrics', () => {
     // One subscription per getter, both owned by the root: on Linux and Windows every extra
     // poller is another blocking round trip to GPUI's UI thread.
     expect([...app.matchAll(/useWindow(?:Size|Insets)\(/g)]).toHaveLength(2)
-    expect(app).toContain('useWindowSize({ intervalMs: WINDOW_METRICS_INTERVAL_MS })')
+    expect(app).toContain('useWindowSize({ intervalMs: windowSizePollInterval(deferLinuxUiPolls) })')
     expect(app).toContain('useWindowInsets({ intervalMs: windowInsetsPollInterval() })')
     expect(app.match(/<WindowMetricsProvider /g)).toHaveLength(1)
     for (const source of [terminalPanel, browserPanel]) {

@@ -15,14 +15,24 @@ export type TimelineItem =
   | ({ id: string; kind: 'compaction'; text: string; tokensBefore?: number | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
-export function buildTimeline(
+interface SettledTimeline {
+  items: TimelineItem[]
+  toolIndexes: Map<string, number>
+  revertEntryId: string | undefined
+}
+
+let settledTimelineCache: {
+  messages: PiMessage[]
+  forkMessages: PiForkMessage[]
+  messageIndexOffset: number
+  settled: SettledTimeline
+} | undefined
+
+function buildSettledTimeline(
   messages: PiMessage[],
-  liveAssistant: LiveAssistant | undefined,
-  liveTools: ToolRun[],
-  forkMessages: PiForkMessage[] = [],
-  messageIndexOffset = 0,
-  notices: Notice[] = [],
-): TimelineItem[] {
+  forkMessages: PiForkMessage[],
+  messageIndexOffset: number,
+): SettledTimeline {
   const items: TimelineItem[] = []
   const toolIndexes = new Map<string, number>()
   let userMessageIndex = 0
@@ -133,6 +143,37 @@ export function buildTimeline(
     const text = messageText(message)
     if (text) items.push({ id: `${base}-status`, kind: 'status', text, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
   })
+
+  return { items, toolIndexes, revertEntryId }
+}
+
+export function buildTimeline(
+  messages: PiMessage[],
+  liveAssistant: LiveAssistant | undefined,
+  liveTools: ToolRun[],
+  forkMessages: PiForkMessage[] = [],
+  messageIndexOffset = 0,
+  notices: Notice[] = [],
+): TimelineItem[] {
+  // Streaming deltas replace liveAssistant/liveTools and leave the transcript arrays
+  // identical, so reuse the settled pass instead of rebuilding every item per token.
+  const cached = settledTimelineCache
+  const settled = cached !== undefined
+    && cached.messages === messages
+    && cached.forkMessages === forkMessages
+    && cached.messageIndexOffset === messageIndexOffset
+    ? cached.settled
+    : (settledTimelineCache = {
+        messages,
+        forkMessages,
+        messageIndexOffset,
+        settled: buildSettledTimeline(messages, forkMessages, messageIndexOffset),
+      }).settled
+
+  // Live merging replaces array slots and never mutates settled items.
+  const items = [...settled.items]
+  const toolIndexes = settled.toolIndexes
+  const revertEntryId = settled.revertEntryId
 
   if (liveAssistant) {
     for (const block of liveAssistant.blocks) {
