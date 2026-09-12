@@ -31,7 +31,7 @@
     "setup:native": "bun scripts/install-gpuix.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p src/web",
-    "test": "bun test",
+    "test": "bun test ./tests",
     "test:performance": "HEDDLEWORK_PERFORMANCE_BUDGETS=1 bun test ./tests/diff-performance-ui.test.tsx",
     "test:web": "bun test tests/protocol-frames.test.ts tests/protocol-commands.test.ts tests/host-command-replay.test.ts tests/web-sw-policy.test.ts tests/web-host-platform.test.ts tests/web-client-replay.test.ts tests/remote-terminal-service.test.ts tests/host-static-root.test.ts && bun scripts/web-dom-e2e.ts",
     "test:browser": "bun scripts/web-browser-probe.ts",

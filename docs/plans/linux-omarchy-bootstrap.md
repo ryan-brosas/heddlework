@@ -32,9 +32,10 @@ Ingested 2026-09-12 via a `heddlework-lane` connection in `/home/utopia/sourcebo
 
 1. `monotykamary/gpuix` - alignment branch indexed at the pin `2b94075` (`isIndexed: true`).
 2. `monotykamary/zed` - alignment branch indexed at the pin `e94e7f5` (`isIndexed: true`).
-3. `ryan-brosas/heddlework` - fork (`exclude.forks` deliberately off); default branch indexed.
-   `feat/linux-omarchy-bootstrap` indexes once it is pushed to origin. The pre-reset
-   `feat/linux-adoption-foundations` exists remotely but is not in the revisions list.
+3. `ryan-brosas/heddlework` - fork (`exclude.forks` deliberately off); the previous repository's
+   default branch was indexed. The GitHub fork was deleted and recreated on 2026-09-12, so verify
+   repository identity and indexed revision coverage again before relying on this entry. The
+   pre-reset feature branches are now local backups, not branches in the recreated remote.
 
 Verified cross-repo finds from the new corpus: the fork's GPUI `activate()`
 (`crates/gpui/src/platform/linux/wayland/window.rs:850-865`, monotykamary/zed) requests an
@@ -81,14 +82,14 @@ instructions deliberately.
 
 Local-workspace traps (both hit and fixed 2026-09-12):
 
-- The untracked `external/gpuix` checkout sweeps into root `bun test`, and GPUix's `TestGpuixRenderer`
-  is macOS/Windows-only (wgpu has no Linux readback yet). Locally, gate with `bun test ./tests` +
-  `bun run typecheck` + `bun run typecheck:web`; CI checkouts have no `external/` and can run
-  `bun run check` directly.
+- Bare `bun test` also discovers the untracked `external/gpuix` checkout, whose `TestGpuixRenderer`
+  is macOS/Windows-only (wgpu has no Linux readback yet). The package's `test` script now explicitly
+  runs `bun test ./tests`, so `bun run check` uses the same project-owned tests locally and in CI.
 - Global git config `diff.mnemonicprefix=true` rewrote `a/ b/` prefixes to `c/ w/`, breaking
   workspace-diff parsing into `changed file` placeholders. Fixed in `src/workspace/git-diff.ts` by
-  forcing `-c diff.mnemonicprefix=false -c diff.noprefix=false` on every diff invocation; regression
-  coverage in `tests/workspace-diff.test.ts` (GIT_CONFIG_GLOBAL fixture).
+  pinning `diff.mnemonicprefix=false`, `diff.noprefix=false`, `diff.srcPrefix=a/`, and
+  `diff.dstPrefix=b/` on every diff invocation. `tests/workspace-diff.test.ts` covers mnemonic,
+  missing, and custom prefixes using isolated repository-local Git configuration.
 - A `hyprctl -j clients` probe verifies window registration only: app_id/class, pid, geometry,
   liveness. It does NOT exercise decorations, fractional scaling, minimize/maximize/close, or
   multi-monitor moves - scope Wayland claims to what the probe covered (2026-09-12 probe verified
@@ -152,9 +153,9 @@ across a session switch). Each rule was mutation-checked: reverting it fails its
 
 ## Open items
 
-- `.github/workflows/check.yml` is Linux-first: job `test` keeps its id (so the published
-  `check / test` context does not move) on `ubuntu-24.04` with `NAPI_RS_NATIVE_LIBRARY_PATH` testing,
-  and `test-macos` is best-effort (`continue-on-error`).
+- `.github/workflows/check.yml` runs the Linux job `test` on `ubuntu-24.04` with
+  `NAPI_RS_NATIVE_LIBRARY_PATH` testing. Its check name is unchanged. The macOS job was removed
+  at the owner's request; do not reintroduce it as part of restoring the old fork.
 - `bun run setup:native` failed on every fresh clone for two reasons, both fixed in the installer:
   `bun install` materializes `@gpuix/react` as a real directory that the guard refused to replace
   (it now replaces only the package manager's own copy, identified by its `package.json` name, and
@@ -164,8 +165,10 @@ across a session switch). Each rule was mutation-checked: reverting it fails its
   package, and a cache hit is verified against that API check before it is trusted - a stamp
   without its artifacts, or with artifacts that no longer answer, forces a rebuild.
 
-- `.github/workflows/linux.yml` compositor smoke fails for all six mutter/sway jobs on `main` and on
-  the open PR branches (checked 2026-09-12); that lane is separate from the primary `check` gate.
+- `.github/workflows/linux.yml` retains the six compositor cases behind `workflow_dispatch` only,
+  at the owner's request. They no longer run automatically on PRs or pushes. The previous fork's
+  compositor failures are not fixed by this scheduling change; manual Linux acceptance is still
+  required before claiming compositor support.
 - Restore or re-derive `docs/linux-acceptance.md` and the native-runtime notes from `backup/main-35ahead`
   when the corresponding work is re-landed on `main`.
 - CEF on Linux is unaddressed (macOS-only today, see `docs/browser.md`); browser-free builds are the Linux

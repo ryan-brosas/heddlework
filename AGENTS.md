@@ -47,7 +47,7 @@ with their implementations.
   enforces this).
 - **Wayland correctness is Linux-only knowledge**: macOS headless layout tests prove nothing about
   decorations, serials, or fractional scaling. Validate on Hyprland and Mutter explicitly.
-- `.pi/` is agent-runtime state and ignored; `.pi/fabric/mesh/*` handoff files are session-local,
+- `.pi/` is local agent-runtime state; `.pi/fabric/mesh/*` handoff files are session-local,
   never commit them.
 - `docs/browser.md` documents the native browser (macOS CEF today); read it before touching that
   system. Linux browser-free builds are the default until a Linux CEF path exists.
@@ -60,4 +60,5 @@ with their implementations.
   (its push URL is disabled as a guard) and never open PRs there unless the user explicitly requests
   an upstream contribution. The existence of an `upstream` remote is NOT permission to push or PR
   to it. `gh pr create` must target the fork (`--repo ryan-brosas/heddlework`).
-- CI should be Linux-first (ubuntu-24.04 primary job); macOS/Windows are best-effort compatibility.
+- CI runs the Linux `test` job on ubuntu-24.04. Compositor smoke is manual-only; macOS/Windows
+  jobs must not be added without the owner's request.
