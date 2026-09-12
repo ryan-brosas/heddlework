@@ -5,6 +5,7 @@ import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
 import { isGpuixWindowCloseRace } from './ui/native-window-lifecycle.ts'
+import { shutdownListener } from './process-signals.ts'
 import { ThemeManager } from './ui/theme-manager.ts'
 import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
@@ -98,13 +99,14 @@ const handleUncaughtException = (error: unknown): void => {
 const handleUnhandledRejection = (error: unknown): void => {
   shutdown(error)
 }
+const handleSignal = shutdownListener(shutdown)
 const runtime: RuntimeHandle = {
   kernel,
   dispose: async () => {
     if (disposed) return
     disposed = true
-    process.off('SIGINT', shutdown)
-    process.off('SIGTERM', shutdown)
+    process.off('SIGINT', handleSignal)
+    process.off('SIGTERM', handleSignal)
     process.off('uncaughtException', handleUncaughtException)
     process.off('unhandledRejection', handleUnhandledRejection)
     themeManager.dispose()
@@ -151,8 +153,8 @@ function shutdown(initialError?: unknown): void {
 
 process.prependListener('uncaughtException', handleUncaughtException)
 process.prependListener('unhandledRejection', handleUnhandledRejection)
-process.once('SIGINT', shutdown)
-process.once('SIGTERM', shutdown)
+process.once('SIGINT', handleSignal)
+process.once('SIGTERM', handleSignal)
 
 render(
   <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
