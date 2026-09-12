@@ -52,6 +52,29 @@ with their implementations.
 - `docs/browser.md` documents the native browser (macOS CEF today); read it before touching that
   system. Linux browser-free builds are the default until a Linux CEF path exists.
 
+## Sourcebot is the code-truth authority (standing explicit request)
+
+- Sourcebot (http://localhost:3000, MCP `sourcebot_*` tools) is the required first evidence
+  step for any broad or cross-repository code question touching the indexed corpus
+  (`monotykamary/gpuix`, `monotykamary/zed`, `ryan-brosas/heddlework`, `omacom/omarchy`, ...).
+  This file is the standing explicit request to use the `ask_codebase` tool for those questions;
+  narrow known-path lookups may stay direct.
+- Verify indexed coverage before trusting it: `list_branches` must show `isIndexed: true` for the
+  branch in question (today: `feat/linux-workspace-foundations` on the fork). An unindexed branch
+  or stale snapshot means bounded local retrieval, not silent guessing.
+- Deployment config: `/home/utopia/sourcebot/config.json` (`heddlework-lane` connection). Adding
+  a branch to `revisions.branches` requires a backup in `backups/` and a fresh indexed-branch
+  probe afterward. Never cite a Sourcebot hit you cannot re-read with an explicit ref.
+- `ask_codebase` takes canonical repo names: `repos: ["github.com/ryan-brosas/heddlework"]`.
+  A bare `owner/repo` returns `Repository ... not found`, and a `repo` (singular) key is rejected.
+- The chat agent's LLM is OmniRoute's `top-tool` combo (config.json `models[0]`), and that combo
+  MUST keep cross-provider fallback members. Its principal upstream caps at 5 concurrent requests
+  per user while Sourcebot is the dominant consumer, so a single-provider combo 429s, fails the
+  research turn *and* title generation, and leaves chats as "Untitled chat". Verified 2026-09-12:
+  all 5 combo targets report ok via `POST http://127.0.0.1:20128/api/combos/test` and concurrent
+  `ask_codebase` calls succeed. Diagnose with `docker logs sourcebot | grep '\[sew\]'` and
+  `docker logs omniroute | grep -i 'too many concurrent'`.
+
 ## Deliverable hygiene
 
 - Run the full `check` suite before pushing.
