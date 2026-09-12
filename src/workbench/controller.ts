@@ -86,12 +86,14 @@ export interface WorkbenchControllerDependencies {
   workspaceDiff: WorkspaceDiffService
   transportEvents?: 'direct' | 'external'
   transportOwnership?: 'controller' | 'provider'
+  /** Spawns the dedicated harness for one session; each session keeps its own Pi process. */
+  createSessionTransport?: ((sessionPath: string) => AgentTransport | Promise<AgentTransport>) | undefined
   queueStore?: QueueStoreService | undefined
   threadMetadataStore?: ThreadMetadataStoreService | undefined
 }
 
 export class WorkbenchController {
-  readonly #transport: AgentTransport
+  #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
   readonly #workspaceDiff: WorkspaceDiffService
   readonly #queueStore: QueueStoreService | undefined
@@ -132,8 +134,10 @@ export class WorkbenchController {
   readonly #fabricPeerRequests = new Map<string, (peers: FabricPeerCard[]) => void>()
   #compactionHold = false
   #pauseAfterTools = false
-  #unsubscribeEvent: () => void
-  #unsubscribeStatus: () => void
+  #detachActiveTransport: (() => void) | undefined
+  readonly #sessionTransports = new Map<string, AgentTransport>()
+  readonly #backgroundTracking = new Map<AgentTransport, { path: string; detach: () => void }>()
+  readonly #createSessionTransport: ((sessionPath: string) => AgentTransport | Promise<AgentTransport>) | undefined
 
   constructor(transport: AgentTransport, workspacePath: string, dependencies: WorkbenchControllerDependencies) {
     this.#transport = transport
@@ -157,12 +161,34 @@ export class WorkbenchController {
     if (cachedSessions.length > 0) {
       this.#state = { ...this.#state, sessions: cachedSessions.slice(0, this.#sessionLimit), sessionsLoading: true, sessionsHasMore: cachedSessions.length > this.#sessionLimit }
     }
+    this.#createSessionTransport = dependencies.createSessionTransport
     if (dependencies.transportEvents === 'external') {
-      this.#unsubscribeEvent = () => undefined
-      this.#unsubscribeStatus = () => undefined
+      // The integrating plugin owns the provider transport; it attaches it via attachTransport.
     } else {
-      this.#unsubscribeEvent = transport.onEvent(this.acceptAgentEvent)
-      this.#unsubscribeStatus = transport.onStatus(this.acceptAgentStatus)
+      this.#attachActiveTransport(transport)
+    }
+  }
+
+  /** Point the controller at a harness, routing events only from the active one. */
+  attachTransport(transport: AgentTransport): void {
+    this.#attachActiveTransport(transport)
+  }
+
+  #attachActiveTransport(transport: AgentTransport): void {
+    const detachPrevious = this.#detachActiveTransport
+    this.#transport = transport
+    const onEvent = (event: RpcRecord): void => {
+      if (this.#transport === transport) this.#handleEvent(event)
+    }
+    const onStatus = (status: TransportStatus): void => {
+      if (this.#transport === transport) this.#handleStatus(status)
+    }
+    const offEvent = transport.onEvent(onEvent)
+    const offStatus = transport.onStatus(onStatus)
+    this.#detachActiveTransport = () => {
+      offEvent()
+      offStatus()
+      detachPrevious?.()
     }
   }
 
@@ -577,18 +603,12 @@ export class WorkbenchController {
     try {
       this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
-      if (this.#state.session.isStreaming) {
-        this.#pauseAfterTools = false
-        try {
-          await this.#transport.request({ type: 'abort' })
-        } catch {
-          // switch_session still replaces the live turn; a failed abort must not pin the sidebar
-        }
-      }
-      // Move the visible thread to the clicked session before Pi finishes loading it.
-      // Pi's switch_session and get_tree parse the whole session file (seconds to tens
-      // of seconds on large threads), while the persisted JSONL tail paints in
-      // milliseconds. #bootstrap replaces this preview with authoritative state.
+      // No abort: every session owns a dedicated Pi process, so the previous harness keeps
+      // running any in-flight turn while this thread opens. Moving the visible thread to the
+      // clicked session must not depend on the harness either: the persisted JSONL tail
+      // paints in milliseconds while a cold harness parses the whole session file (seconds
+      // to tens of seconds on large threads). #bootstrap replaces the preview with
+      // authoritative state.
       this.#sessionTree = undefined
       this.#historyPager = undefined
       const optimistic = this.#sessionSwitchPatch(session)
@@ -597,13 +617,19 @@ export class WorkbenchController {
       if (optimistic.workspacePath === scope.state.workspacePath) delete rollback.queue
       this.#patch(optimistic)
       const preview = this.#previewSessionTranscript(session)
-      const result = await this.#transport.request<{ cancelled?: boolean }>({
-        type: 'switch_session',
-        sessionPath: session.path,
-      })
-      if (result.cancelled) {
-        await this.#bootstrap(false)
+      const pooled = this.#sessionTransports.get(session.path)
+      const transport = pooled ?? await this.#openSessionTransport(session.path)
+      if (this.#state.session.sessionFile !== session.path) {
+        // A newer click superseded this switch while the harness was starting; leave the
+        // pooled harness attached for the newer transition instead of clobbering it.
+        await preview
         return
+      }
+      this.#attachActiveTransport(transport)
+      // The thread just left keeps its harness and possibly its turn; seed the sidebar signal.
+      const previousFile = scope.state.session.sessionFile
+      if (previousFile && previousFile !== session.path) {
+        this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [previousFile]: scope.state.session.isStreaming } })
       }
       await preview
       await this.#bootstrap(false)
@@ -620,6 +646,61 @@ export class WorkbenchController {
       await this.#reconcileSessionScope()
     } finally {
       this.#endSessionTransition()
+    }
+  }
+
+  /** Start a dedicated harness for one session; the previous harness keeps running. */
+  async #openSessionTransport(sessionPath: string): Promise<AgentTransport> {
+    if (!this.#createSessionTransport) throw new Error('No session transport factory is configured')
+    const transport = await this.#createSessionTransport(sessionPath)
+    try {
+      await transport.start()
+    } catch (error) {
+      await transport.stop().catch(() => {})
+      throw error
+    }
+    this.#sessionTransports.set(sessionPath, transport)
+    return transport
+  }
+
+  /** Keep the pool keyed by the file each harness actually holds (new_session re-files it). */
+  #rememberActiveSessionTransport(sessionFile: string | undefined): void {
+    if (!sessionFile) return
+    for (const [path, transport] of this.#sessionTransports) {
+      if (transport === this.#transport && path !== sessionFile) this.#sessionTransports.delete(path)
+    }
+    this.#sessionTransports.set(sessionFile, this.#transport)
+    const tracked = this.#backgroundTracking.get(this.#transport)
+    if (tracked?.path !== sessionFile) {
+      tracked?.detach()
+      this.#backgroundTracking.set(this.#transport, { path: sessionFile, detach: this.#attachBackgroundTracking(this.#transport, sessionFile) })
+    }
+  }
+
+  /**
+   * Watch a non-active harness so its turn state stays visible: the sidebar shows a
+   * background session still working, and a crashed harness leaves the pool quietly.
+   */
+  #attachBackgroundTracking(transport: AgentTransport, sessionFile: string): () => void {
+    const setActivity = (streaming: boolean): void => {
+      this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [sessionFile]: streaming } })
+    }
+    const offEvent = transport.onEvent((event) => {
+      if (this.#disposed || this.#transport === transport) return
+      if (event.type === 'agent_start') setActivity(true)
+      if (event.type === 'agent_settled') setActivity(false)
+    })
+    const offStatus = transport.onStatus((status) => {
+      if (this.#disposed || this.#transport === transport) return
+      if (status.state !== 'exited' && status.state !== 'stopped') return
+      if (this.#sessionTransports.get(sessionFile) === transport) this.#sessionTransports.delete(sessionFile)
+      this.#backgroundTracking.get(transport)?.detach()
+      this.#backgroundTracking.delete(transport)
+      setActivity(false)
+    })
+    return () => {
+      offEvent()
+      offStatus()
     }
   }
 
@@ -1039,9 +1120,17 @@ export class WorkbenchController {
     this.#dialogs.dispose()
     for (const resolvePeers of this.#fabricPeerRequests.values()) resolvePeers([])
     this.#fabricPeerRequests.clear()
-    this.#unsubscribeEvent()
-    this.#unsubscribeStatus()
-    if (this.#stopTransportOnDispose) await this.#transport.stop()
+    this.#detachActiveTransport?.()
+    this.#detachActiveTransport = undefined
+    for (const tracked of this.#backgroundTracking.values()) tracked.detach()
+    this.#backgroundTracking.clear()
+    const stopAll = await Promise.allSettled(
+      [...new Set([this.#transport, ...this.#sessionTransports.values()])].map(async (transport) => {
+        if (transport === this.#transport && !this.#stopTransportOnDispose) return
+        await transport.stop()
+      }),
+    )
+    void stopAll
     this.#notifier.cancel()
     this.#listeners.clear()
   }
@@ -1430,6 +1519,7 @@ export class WorkbenchController {
     const streamRevision = this.#streamRevision
     const reportedSession = await this.#transport.request<PiSessionState>({ type: 'get_state' })
     if (this.#disposed || generation !== this.#bootstrapGeneration) return
+    this.#rememberActiveSessionTransport(reportedSession.sessionFile)
 
     const streamUnchanged = streamRevision === this.#streamRevision
     const session = streamUnchanged

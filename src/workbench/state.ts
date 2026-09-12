@@ -110,6 +110,8 @@ export interface WorkbenchState {
   stats: PiSessionStats | undefined
   notices: Notice[]
   threadLifecycle: Record<string, ThreadLifecycle>
+  /** Live turn signal per session file, tracked from each session's own harness. */
+  sessionActivity: Record<string, boolean>
   workspaceDiff: WorkspaceDiff
   statusItems: Record<string, string>
   widgets: Record<string, ExtensionWidget>
@@ -147,6 +149,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     queue: createQueueState(),
     notices: [],
     threadLifecycle: {},
+    sessionActivity: {},
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
     stats: undefined,
     statusItems: {},

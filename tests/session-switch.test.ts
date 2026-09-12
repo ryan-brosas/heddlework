@@ -58,15 +58,40 @@ class SwitchingTransport implements AgentTransport {
   readonly statuses = new Set<(status: TransportStatus) => void>()
   readonly sent: RpcRecord[] = []
   readonly requests: RpcCommand[] = []
-  active = sessions[0]!
+  active: PiSessionSummary
   extras: PiSessionSummary[] = []
   startCalls = 0
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
   #newSessionBarrier: Promise<void> | undefined
   #switchFailure: string | undefined
+  #startBarrier: Promise<void> | undefined
+  #startFailure: string | undefined
 
-  async start(): Promise<void> { this.startCalls += 1; this.emitStatus({ state: 'running', pid: 1 }) }
+  constructor(active: PiSessionSummary = sessions[0]!) {
+    this.active = active
+  }
+
+  async start(): Promise<void> {
+    this.startCalls += 1
+    const barrier = this.#startBarrier
+    this.#startBarrier = undefined
+    if (barrier) await barrier
+    if (this.#startFailure) {
+      const message = this.#startFailure
+      this.#startFailure = undefined
+      throw new Error(message)
+    }
+    this.emitStatus({ state: 'running', pid: 1 })
+  }
+
+  holdStart(): () => void {
+    let release = () => {}
+    this.#startBarrier = new Promise<void>((resolve) => { release = resolve })
+    return release
+  }
+
+  failStart(message: string): void { this.#startFailure = message }
   async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
   send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
@@ -144,6 +169,28 @@ class SwitchingTransport implements AgentTransport {
   }
 }
 
+/** Per-session harness pool: one fake transport per session path, spawned on first open. */
+function createTransportPool(initial?: { extras?: PiSessionSummary[] } | undefined) {
+  const spawned = new Map<string, SwitchingTransport>()
+  const prepared = new Map<string, SwitchingTransport>()
+  const factory = (sessionPath: string): AgentTransport => {
+    const ready = prepared.get(sessionPath) ?? spawned.get(sessionPath)
+    if (ready) return ready
+    const all = [...sessions, workspaceSession, ...(initial?.extras ?? [])]
+    const transport = new SwitchingTransport(all.find((session) => session.path === sessionPath) ?? {
+      id: sessionPath, path: sessionPath, cwd: '/tmp/unknown', title: sessionPath, firstMessage: '', messageCount: 0, createdAt: 0, modifiedAt: 0,
+    })
+    spawned.set(sessionPath, transport)
+    return transport
+  }
+  return {
+    spawned,
+    prepared,
+    factory,
+    deps: () => ({ ...testControllerDependencies(new StaticCatalog()), createSessionTransport: factory }),
+  }
+}
+
 class NavigatingTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
@@ -193,14 +240,16 @@ class NavigatingTransport implements AgentTransport {
 }
 
 describe('clickable session switching', () => {
-  it('switches the Pi RPC session and rehydrates the selected transcript', async () => {
+  it('switches to a dedicated harness and rehydrates the selected transcript', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       expect(controller.getSnapshot().sessions.map((session) => session.title)).toEqual(['First thread', 'Second thread'])
       const observedNoticeCounts: number[] = []
       const unsubscribe = controller.subscribe(() => { observedNoticeCounts.push(controller.getSnapshot().notices.length) })
+      const settledRequests = transport.requests.length
       await controller.switchSession(sessions[1]!)
       unsubscribe()
       expect(observedNoticeCounts).not.toContain(1)
@@ -208,19 +257,23 @@ describe('clickable session switching', () => {
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-two')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Second')
+      // The old harness was left untouched: no abort, no switch_session after the click.
+      expect(transport.requests.slice(settledRequests)).toEqual([])
+      expect(pool.spawned.has('/tmp/two.jsonl')).toBe(true)
     } finally {
       await controller.dispose()
     }
   })
 
-  it('opens a blank workspace in the current Pi process and window', async () => {
+  it('opens a blank workspace on a dedicated harness and window', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       await controller.switchWorkspace('/tmp/project-three')
       expect(transport.startCalls).toBe(1)
-      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/three.jsonl' })
+      expect(pool.spawned.has('/tmp/three.jsonl')).toBe(true)
       expect(controller.getSnapshot()).toMatchObject({ workspacePath: '/tmp/project-three', messages: [] })
       expect(controller.getSnapshot().session).toMatchObject({ sessionId: 'three', sessionFile: '/tmp/three.jsonl' })
     } finally {
@@ -228,20 +281,24 @@ describe('clickable session switching', () => {
     }
   })
 
-  it('aborts an in-flight turn before switching threads', async () => {
+  it('keeps an in-flight turn running on its own harness when switching threads', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       transport.emitEvent({ type: 'agent_start' })
       expect(controller.getSnapshot().session.isStreaming).toBe(true)
-      const before = transport.requests.length
+      const settledRequests = transport.requests.length
       await controller.switchSession(sessions[1]!)
-      const issued = transport.requests.slice(before)
-      expect(issued[0]).toEqual({ type: 'abort' })
-      expect(issued[1]).toEqual({ type: 'switch_session', sessionPath: '/tmp/two.jsonl' })
+      // The previous harness keeps its turn: the controller must not abort or switch it.
+      expect(transport.requests.slice(settledRequests)).toEqual([])
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().session.isStreaming).toBe(false)
+      // Events still flow only from the active harness.
+      const target = pool.spawned.get('/tmp/two.jsonl')!
+      target.emitEvent({ type: 'agent_start' })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
     } finally {
       await controller.dispose()
     }
@@ -251,11 +308,12 @@ describe('clickable session switching', () => {
     const forked: PiSessionSummary = { id: 'one', path: '/tmp/one-fork.jsonl', cwd: '/tmp/project-fork', title: 'Forked thread', firstMessage: 'Forked', messageCount: 1, createdAt: 4, modifiedAt: 4 }
     const transport = new SwitchingTransport()
     transport.extras = [forked]
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       await controller.switchSession(forked)
-      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/one-fork.jsonl' })
+      expect(pool.spawned.has('/tmp/one-fork.jsonl')).toBe(true)
       expect(controller.getSnapshot().session).toMatchObject({ sessionId: 'one', sessionFile: '/tmp/one-fork.jsonl' })
       expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-fork')
     } finally {
@@ -263,14 +321,63 @@ describe('clickable session switching', () => {
     }
   })
 
-  it('does not reissue switch_session for the already open thread', async () => {
+  it('does not spawn a second harness for the already open thread', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const before = transport.requests.length
+      const settledRequests = transport.requests.length
       await controller.switchSession(sessions[0]!)
-      expect(transport.requests.slice(before)).toEqual([])
+      expect(pool.spawned.size).toBe(0)
+      expect(transport.requests.slice(settledRequests)).toEqual([])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('tracks a background harness turn in sessionActivity', async () => {
+    const transport = new SwitchingTransport()
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      transport.emitEvent({ type: 'agent_start' })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      await controller.switchSession(sessions[1]!)
+      // Switching away mid-turn seeds the sidebar signal for the thread just left.
+      expect(controller.getSnapshot().sessionActivity).toEqual({ '/tmp/one.jsonl': true })
+      const target = pool.spawned.get('/tmp/two.jsonl')!
+      // The thread just left settles in its background harness.
+      transport.emitEvent({ type: 'agent_settled' })
+      expect(controller.getSnapshot().sessionActivity).toEqual({ '/tmp/one.jsonl': false })
+      // The active thread's turn lives on session.isStreaming, not the background map.
+      target.emitEvent({ type: 'agent_start' })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      expect(controller.getSnapshot().sessionActivity).toEqual({ '/tmp/one.jsonl': false })
+      // Leaving a streaming thread seeds it; settling in the background clears it.
+      await controller.switchSession(sessions[0]!)
+      expect(controller.getSnapshot().sessionActivity).toEqual({ '/tmp/one.jsonl': false, '/tmp/two.jsonl': true })
+      target.emitEvent({ type: 'agent_settled' })
+      expect(controller.getSnapshot().sessionActivity).toEqual({ '/tmp/one.jsonl': false, '/tmp/two.jsonl': false })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('reuses the pooled harness when returning to an open thread', async () => {
+    const transport = new SwitchingTransport()
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      await controller.switchSession(sessions[1]!)
+      const target = pool.spawned.get('/tmp/two.jsonl')!
+      await controller.switchSession(sessions[0]!)
+      await controller.switchSession(sessions[1]!)
+      expect(pool.spawned.size).toBe(1)
+      expect(target.startCalls).toBe(1)
+      expect(controller.getSnapshot().session.sessionId).toBe('two')
     } finally {
       await controller.dispose()
     }
@@ -290,13 +397,16 @@ describe('clickable session switching', () => {
 
   it('removes stale dialogs before an asynchronous session switch can paint', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       transport.emitEvent({ type: 'extension_ui_request', id: 'stale-dialog', method: 'select', title: 'Old session action', options: ['Continue'] })
       expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
 
-      const release = transport.holdNextSwitch()
+      const target = new SwitchingTransport(sessions[1]!)
+      pool.prepared.set('/tmp/two.jsonl', target)
+      const release = target.holdStart()
       const observedDialogIds: Array<string | undefined> = []
       const unsubscribe = controller.subscribe(() => { observedDialogIds.push(controller.getSnapshot().dialog?.id) })
       const switching = controller.switchSession(sessions[1]!)
@@ -328,13 +438,16 @@ describe('clickable session switching', () => {
     const previewed: PiSessionSummary = { id: 'preview', path: sessionPath, cwd: directory, title: 'Previewed thread', firstMessage: 'Previewed prompt', messageCount: 1, createdAt: 1, modifiedAt: 1 }
     const transport = new SwitchingTransport()
     transport.extras = [previewed]
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(previewed)
+    pool.prepared.set(sessionPath, target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const release = transport.holdNextSwitch()
+      const release = target.holdStart()
       const switching = controller.switchSession(previewed)
       try {
-        // switch_session is still blocked, yet the persisted tail is already on screen.
+        // The harness is still starting, yet the persisted tail is already on screen.
         await waitFor(() => controller.getSnapshot().messages[0]?.content === 'Previewed prompt')
         expect(controller.getSnapshot().session.sessionFile).toBe(sessionPath)
         expect(controller.getSnapshot().activity).toBe('Opening thread')
@@ -351,32 +464,38 @@ describe('clickable session switching', () => {
 
   it('opens the newest clicked thread once a slow transition finishes', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(sessions[1]!)
+    pool.prepared.set('/tmp/two.jsonl', target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const release = transport.holdNextSwitch()
+      const release = target.holdStart()
       const first = controller.switchSession(sessions[1]!)
       // This click lands while the first transition is still in flight.
       void controller.switchSession(workspaceSession)
       release()
       await first
       await waitFor(() => controller.getSnapshot().session.sessionId === 'three')
-      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/three.jsonl' })
+      expect(pool.spawned.has('/tmp/three.jsonl')).toBe(true)
     } finally {
       await controller.dispose()
     }
   })
 
-  it('restores the previous thread when Pi rejects the switch', async () => {
+  it('restores the previous thread when the target harness fails to open', async () => {
     const transport = new SwitchingTransport()
-    transport.failNextSwitch('Pi refused the switch')
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(sessions[1]!)
+    target.failStart('Pi refused the switch')
+    pool.prepared.set('/tmp/two.jsonl', target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       const before = controller.getSnapshot()
       await controller.switchSession(sessions[1]!)
       const after = controller.getSnapshot()
-      // Showing thread two while Pi still holds thread one would take the next prompt into
+      // Showing thread two while its harness never opened would take the next prompt into
       // the previous thread under the clicked header.
       expect(after.session).toMatchObject({ sessionId: 'one', sessionFile: '/tmp/one.jsonl' })
       expect(after.workspacePath).toBe(before.workspacePath)
@@ -390,11 +509,14 @@ describe('clickable session switching', () => {
 
   it('preserves concurrent queue, lifecycle and notice updates after a rejected switch', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(sessions[1]!)
+    pool.prepared.set('/tmp/two.jsonl', target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const release = transport.holdNextSwitch()
-      transport.failNextSwitch('Rejected delayed switch')
+      const release = target.holdStart()
+      target.failStart('Rejected delayed switch')
       const switching = controller.switchSession({ ...sessions[1]!, cwd: '/tmp/project' })
       const queued = controller.queueInput('Keep this queued input', [], { paused: true })!
       controller.settleThread('/tmp/background.jsonl')
@@ -434,7 +556,8 @@ describe('clickable session switching', () => {
 
   it('opens a click that landed during a new-session transition', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       const release = transport.holdNextNewSession()
@@ -445,7 +568,7 @@ describe('clickable session switching', () => {
       await creating
       await clicked
       expect(controller.getSnapshot().session.sessionId).toBe('two')
-      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/two.jsonl' })
+      expect(pool.spawned.has('/tmp/two.jsonl')).toBe(true)
     } finally {
       await controller.dispose()
     }
@@ -453,10 +576,13 @@ describe('clickable session switching', () => {
 
   it('settles a deferred switch only after its thread is open', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const target = new SwitchingTransport(sessions[1]!)
+    pool.prepared.set('/tmp/two.jsonl', target)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
-      const release = transport.holdNextSwitch()
+      const release = target.holdStart()
       const first = controller.switchSession(sessions[1]!)
       let settledWith: string | undefined
       const deferred = controller.switchSession(workspaceSession).then(() => {
@@ -476,16 +602,19 @@ describe('clickable session switching', () => {
 
   it('never rebuilds the Pi session tree on the switch or refresh path', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
     try {
       await controller.start()
       await controller.switchSession(sessions[1]!)
-      transport.emitEvent({ type: 'agent_start' })
-      transport.emitEvent({ type: 'message_end', message: { role: 'assistant', content: 'reply' } })
-      transport.emitEvent({ type: 'agent_settled' })
+      const target = pool.spawned.get('/tmp/two.jsonl')!
+      target.emitEvent({ type: 'agent_start' })
+      target.emitEvent({ type: 'message_end', message: { role: 'assistant', content: 'reply' } })
+      target.emitEvent({ type: 'agent_settled' })
       await new Promise((resolve) => setTimeout(resolve, 120))
       // get_tree parses the whole session in Pi and stalls its serial command loop.
       expect(transport.requests.some((command) => command.type === 'get_tree')).toBe(false)
+      expect(target.requests.some((command) => command.type === 'get_tree')).toBe(false)
     } finally {
       await controller.dispose()
     }
@@ -557,7 +686,8 @@ describe('clickable session switching', () => {
       }],
     }
     const transport = new NavigatingTransport(sessionPath, tree)
-    const controller = new WorkbenchController(transport, directory, testControllerDependencies(new StaticCatalog()))
+    const pool = createTransportPool()
+    const controller = new WorkbenchController(transport, directory, pool.deps())
     try {
       await controller.start()
       await controller.navigateTree('entry-a1')
