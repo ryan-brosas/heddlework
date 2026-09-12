@@ -8,6 +8,11 @@ describe('sidebar session hit target', () => {
     ])
     expect(row).toContain('backgroundColor: colors.sidebar')
     expect(row).toContain('withoutRowClick(onSnooze)')
+    // Time/date and the Working tag live on the session metadata row, not the project row.
+    const branchIconIndex = row.indexOf('name="gitBranch"')
+    const statusIndex = row.indexOf('sidebar-session-status')
+    expect(branchIconIndex).toBeGreaterThan(-1)
+    expect(statusIndex).toBeGreaterThan(branchIconIndex)
     expect(row).toContain('withoutRowClick(onSettle)')
     expect(row).toContain('withoutRowClick(onWake)')
     expect(row).toContain("testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'}")

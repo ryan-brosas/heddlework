@@ -109,10 +109,7 @@ export function SessionRow({
               </div>
             </>
           ) : (
-            <>
-              <text style={{ color: running ? colors.info : colors.textFaint, fontSize: 9 }}>{running ? 'Working' : relativeTime(session.modifiedAt)}</text>
-              <text style={{ color: '#E9705A', fontSize: 10, fontWeight: 700 }}>π</text>
-            </>
+            <text style={{ color: '#E9705A', fontSize: 10, fontWeight: 700 }}>π</text>
           )}
         </div>
       </div>
@@ -121,6 +118,8 @@ export function SessionRow({
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Icon name="gitBranch" size={11} color={colors.textFaint} />
           <text style={{ color: colors.textFaint, fontSize: 9 }}>{branch}</text>
+          <div style={{ flexGrow: 1 }} />
+          <text testId="sidebar-session-status" style={{ color: running ? colors.info : colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', flexShrink: 0 }}>{running ? 'Working' : relativeTime(session.modifiedAt)}</text>
         </div>
       </div>
     </div>
