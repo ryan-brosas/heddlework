@@ -120,7 +120,7 @@ export class WorkbenchController {
   #historyPager: PiSessionHistoryPager | undefined
   #sessionTree: PiSessionTree | undefined
   #sessionTreeRequest: Promise<PiSessionTree | undefined> | undefined
-  #pendingSessionSwitch: PiSessionSummary | undefined
+  #pendingSessionSwitch: { session: PiSessionSummary; settle: Array<() => void> } | undefined
   #sessionLeafId: string | null | undefined
   #sessionLeafAnchorFile: string | undefined
   #sessionLeafAnchorSize: number | undefined
@@ -533,7 +533,7 @@ export class WorkbenchController {
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
-      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+      this.#endSessionTransition()
     }
   }
 
@@ -556,10 +556,13 @@ export class WorkbenchController {
 
   async switchSession(session: PiSessionSummary): Promise<void> {
     if (this.#sessionTransitionDepth > 0) {
-      // A click landed while the previous thread was still opening; keep the newest
-      // target instead of dropping it, and open it when the transition finishes.
-      this.#pendingSessionSwitch = session
-      return
+      // A click landed while another session transition was still running; keep the newest
+      // target instead of dropping it, and open it when the transition finishes. The caller
+      // waits for that switch instead of returning early, which would claim the clicked
+      // thread is open while Pi still holds the previous one.
+      const settle = this.#pendingSessionSwitch?.settle ?? []
+      this.#pendingSessionSwitch = { session, settle }
+      return new Promise<void>((resolve) => { settle.push(resolve) })
     }
     if (isCurrentPiSession(session, this.#state.session)) return
     if (this.#state.connection !== 'connected') {
@@ -567,6 +570,8 @@ export class WorkbenchController {
       return
     }
     this.#sessionTransitionDepth += 1
+    // Everything the optimistic scope below hides, so a rejected switch can put it back.
+    const scope = { state: this.#state, historyPager: this.#historyPager, sessionTree: this.#sessionTree }
     try {
       this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
@@ -598,15 +603,44 @@ export class WorkbenchController {
       await this.#bootstrap(false)
       void this.refreshSessions()
     } catch (error) {
+      this.#setState(() => scope.state)
+      this.#historyPager = scope.historyPager
+      this.#sessionTree = scope.sessionTree
+      // Pi keeps the previous session open when switch_session rejects, so the optimistic
+      // scope must not outlive it: showing the clicked thread there would take the next
+      // prompt into the previous thread under the wrong header.
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      await this.#reconcileSessionScope()
     } finally {
-      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
-      if (this.#sessionTransitionDepth === 0) {
-        const pending = this.#pendingSessionSwitch
-        this.#pendingSessionSwitch = undefined
-        if (pending && !isCurrentPiSession(pending, this.#state.session)) void this.switchSession(pending)
-      }
+      this.#endSessionTransition()
+    }
+  }
+
+  /**
+   * Leave a session transition. Every operation that owns the transition must exit through
+   * here, so a click that landed during it opens on the way out instead of waiting for an
+   * unrelated later switch to drain it.
+   */
+  #endSessionTransition(): void {
+    this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+    if (this.#sessionTransitionDepth > 0) return
+    const pending = this.#pendingSessionSwitch
+    this.#pendingSessionSwitch = undefined
+    if (!pending) return
+    // switchSession reports its own failures, but a failure must not strand the waiters.
+    void this.switchSession(pending.session).catch(() => {}).finally(() => {
+      for (const settle of pending.settle) settle()
+    })
+  }
+
+  /** Pi owns what is actually open, so re-read it after a rejected transition. */
+  async #reconcileSessionScope(): Promise<void> {
+    if (this.#disposed || this.#state.connection !== 'connected') return
+    try {
+      await this.#bootstrap(false)
+    } catch {
+      // The failure notice above is the report; reconciling must not add a second one.
     }
   }
 

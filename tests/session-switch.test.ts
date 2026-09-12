@@ -63,6 +63,8 @@ class SwitchingTransport implements AgentTransport {
   startCalls = 0
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
+  #newSessionBarrier: Promise<void> | undefined
+  #switchFailure: string | undefined
 
   async start(): Promise<void> { this.startCalls += 1; this.emitStatus({ state: 'running', pid: 1 }) }
   async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
@@ -77,10 +79,30 @@ class SwitchingTransport implements AgentTransport {
     return release
   }
 
+  holdNextNewSession(): () => void {
+    let release = () => {}
+    this.#newSessionBarrier = new Promise<void>((resolve) => { release = resolve })
+    return release
+  }
+
+  failNextSwitch(message: string): void { this.#switchFailure = message }
+
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     this.requests.push(command)
     if (command.type === 'abort') return undefined as T
+    if (command.type === 'new_session') {
+      const barrier = this.#newSessionBarrier
+      this.#newSessionBarrier = undefined
+      if (barrier) await barrier
+      return {} as T
+    }
     if (command.type === 'switch_session') {
+      // Pi keeps the previous session when a switch fails, so active must stay put here.
+      if (this.#switchFailure) {
+        const message = this.#switchFailure
+        this.#switchFailure = undefined
+        throw new Error(message)
+      }
       this.active = [...sessions, workspaceSession, ...this.extras].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
@@ -334,6 +356,69 @@ describe('clickable session switching', () => {
       await first
       await waitFor(() => controller.getSnapshot().session.sessionId === 'three')
       expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/three.jsonl' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('restores the previous thread when Pi rejects the switch', async () => {
+    const transport = new SwitchingTransport()
+    transport.failNextSwitch('Pi refused the switch')
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      const before = controller.getSnapshot()
+      await controller.switchSession(sessions[1]!)
+      const after = controller.getSnapshot()
+      // Showing thread two while Pi still holds thread one would take the next prompt into
+      // the previous thread under the clicked header.
+      expect(after.session).toMatchObject({ sessionId: 'one', sessionFile: '/tmp/one.jsonl' })
+      expect(after.workspacePath).toBe(before.workspacePath)
+      expect(after.messages).toEqual(before.messages)
+      expect(transport.active.id).toBe('one')
+      expect(after.notices.map((notice) => notice.message)).toContain('Pi refused the switch')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('opens a click that landed during a new-session transition', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      const release = transport.holdNextNewSession()
+      const creating = controller.newSession()
+      // The click lands while /new is still running, so it has no transition to join yet.
+      const clicked = controller.switchSession(sessions[1]!)
+      release()
+      await creating
+      await clicked
+      expect(controller.getSnapshot().session.sessionId).toBe('two')
+      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/two.jsonl' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('settles a deferred switch only after its thread is open', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      const release = transport.holdNextSwitch()
+      const first = controller.switchSession(sessions[1]!)
+      let settledWith: string | undefined
+      const deferred = controller.switchSession(workspaceSession).then(() => {
+        settledWith = controller.getSnapshot().session.sessionFile
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      // Resolving here would tell a caller the clicked thread is open while Pi holds another.
+      expect(settledWith).toBeUndefined()
+      release()
+      await first
+      await deferred
+      expect(settledWith).toBe('/tmp/three.jsonl')
     } finally {
       await controller.dispose()
     }

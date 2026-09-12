@@ -135,18 +135,32 @@ Two facts drive this, and both are Pi-side, not renderer-side:
   from one `get_tree`, and every other path uses the file tip (Pi appends every new entry under
   the current leaf, and `_buildIndex` sets `leafId` to the file's last entry on load). An append,
   a different session file, or a `/reload` invalidates the anchor.
-- A click that lands during a transition is deferred to the newest target instead of dropped.
+- A click that lands during a transition (a switch or `/new`) is kept as the newest target and
+  opens when that transition ends - every transition exit drains it, not just `switchSession`. Its
+  caller settles only once the target really opened, so no caller acts on a thread Pi has not
+  switched to.
+- A rejected `switch_session` puts the optimistic scope back and re-bootstraps from Pi: Pi keeps the
+  previous session open, and leaving the clicked thread on screen sent the next prompt into the
+  previous thread under the wrong header.
 
 Measured end to end through `WorkbenchController` against real Pi and the same 117 MiB session:
 first transcript paint **31 860 ms -> 8 ms** after the click; `switchSession` settles when Pi's own
 `switch_session` returns (~3.7-8 s). Regression coverage lives in `tests/session-switch.test.ts`
-(instant preview, deferred click, no `get_tree` on the switch/refresh path, leaf anchor after
-navigation, anchor kept until the file grows, anchor dropped across a session switch).
+(instant preview, deferred click settlement, rollback after a rejected switch, no `get_tree` on the
+switch/refresh path, leaf anchor after navigation, anchor kept until the file grows, anchor dropped
+across a session switch). Each rule was mutation-checked: reverting it fails its test.
 
 ## Open items
 
-- `.github/workflows/check.yml` runs on `macos-latest`; the fork's purpose is Linux-first - move the primary
-  job to `ubuntu-24.04` with `NAPI_RS_NATIVE_LIBRARY_PATH`-based testing, keep macOS/Windows best-effort.
+- `.github/workflows/check.yml` is Linux-first: job `test` keeps its id (so the published
+  `check / test` context does not move) on `ubuntu-24.04` with `NAPI_RS_NATIVE_LIBRARY_PATH` testing,
+  and `test-macos` is best-effort (`continue-on-error`).
+- `bun run setup:native` failed on every fresh clone: `bun install` materializes `@gpuix/react` as a
+  real directory and the installer refused to replace it. The guard now replaces only the package
+  manager's own copy (identified by its `package.json` name) and still refuses anything else, so a
+  source checkout or cache is never deleted.
+- `.github/workflows/linux.yml` compositor smoke fails for all six mutter/sway jobs on `main` and on
+  the open PR branches (checked 2026-09-12); that lane is separate from the primary `check` gate.
 - Restore or re-derive `docs/linux-acceptance.md` and the native-runtime notes from `backup/main-35ahead`
   when the corresponding work is re-landed on `main`.
 - CEF on Linux is unaddressed (macOS-only today, see `docs/browser.md`); browser-free builds are the Linux

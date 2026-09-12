@@ -310,7 +310,13 @@ function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack,
           if (task.mode === 'queue') task.queueItemIds.forEach((id) => controller.removeQueuedInput(id))
           else controller.removeQueuedFlow(task.runId)
         }} />}
-        {task.session && <Button testId="flow-open-thread" label="Open thread" icon="squarePen" compact onClick={() => { void controller.switchSession(task.session!).then(() => onOpenSession(task.session!)) }} />}
+        {task.session && <Button testId="flow-open-thread" label="Open thread" icon="squarePen" compact onClick={() => {
+          void controller.switchSession(task.session!).then(() => {
+            // A newer click or a rejected switch leaves another thread open; only leave the
+            // flow page once the task's session is really the one Pi is showing.
+            if (controller.getSnapshot().session.sessionFile === task.session!.path) onOpenSession(task.session!)
+          })
+        }} />}
       </div>
       <div testId="flow-task-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', overflowX: 'hidden', overflowY: 'scroll', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter }}>
         <div style={{ width: '100%', maxWidth: 1120, minWidth: 0, flexShrink: 0, alignSelf: 'center', display: 'flex', flexDirection: layout.compact ? 'column' : 'row', alignItems: 'flex-start', gap: layout.compact ? 24 : 44, paddingTop: layout.mobile ? 18 : 28, paddingBottom: 40 }}>
