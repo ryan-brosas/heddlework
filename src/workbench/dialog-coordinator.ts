@@ -3,6 +3,7 @@ import type { ExtensionUiRequest, RpcRecord } from '../pi/types.ts'
 import { errorMessage } from '../pi/types.ts'
 import {
   addNotice,
+  addTransientNotice,
   type ExtensionDialog,
   type ExtensionWidget,
   type WorkbenchState,
@@ -16,6 +17,9 @@ import {
   type AskUserDialogAction,
   type AskUserSubmissionAnswer,
 } from './ask-user.ts'
+
+/** How long a transient extension banner lingers before the harness popup would have faded. */
+export const TRANSIENT_NOTICE_TTL_MS = 6_000
 
 interface AskUserDialogDriver {
   toolCallId: string
@@ -38,6 +42,7 @@ interface DialogResponse {
 export class WorkbenchDialogCoordinator {
   readonly #host: DialogCoordinatorHost
   #dialogTimer: ReturnType<typeof setTimeout> | undefined
+  #noticeTimers = new Map<number, ReturnType<typeof setTimeout>>()
   #askUserDialogDriver: AskUserDialogDriver | undefined
   #nextLocalDialogId = 0
   readonly #localDialogResponses = new Map<string, (response: DialogResponse) => void>()
@@ -53,7 +58,16 @@ export class WorkbenchDialogCoordinator {
       return
     }
     if (request.method === 'notify') {
-      this.#host.setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification', currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
+      const kind = request.notifyType ?? 'info'
+      const message = request.message ?? 'Pi notification'
+      if (kind !== 'info') {
+        this.#host.setState((state) => addNotice(state, kind, message, currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
+        return
+      }
+      const next = addTransientNotice(this.#host.getState(), kind, message)
+      this.#host.setState(() => next)
+      const noticeId = next.notices.at(-1)?.id
+      if (noticeId !== undefined) this.#scheduleNoticeExpiry(noticeId)
       return
     }
     if (request.method === 'setStatus') {
@@ -196,6 +210,10 @@ export class WorkbenchDialogCoordinator {
   }
 
   cancelAll(): void {
+    this.#clearNoticeTimers()
+    this.#host.setState((state) => state.notices.some((notice) => notice.transient === true)
+      ? { ...state, notices: state.notices.filter((notice) => notice.transient !== true) }
+      : state)
     const state = this.#host.getState()
     const pending = [state.dialog, ...state.dialogQueue]
       .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
@@ -281,6 +299,20 @@ export class WorkbenchDialogCoordinator {
   #clearDialogTimer(): void {
     if (this.#dialogTimer) clearTimeout(this.#dialogTimer)
     this.#dialogTimer = undefined
+  }
+
+  #scheduleNoticeExpiry(id: number): void {
+    const timer = setTimeout(() => {
+      this.#noticeTimers.delete(id)
+      this.#host.setState((state) => ({ ...state, notices: state.notices.filter((notice) => notice.id !== id) }))
+    }, TRANSIENT_NOTICE_TTL_MS)
+    timer.unref?.()
+    this.#noticeTimers.set(id, timer)
+  }
+
+  #clearNoticeTimers(): void {
+    for (const timer of this.#noticeTimers.values()) clearTimeout(timer)
+    this.#noticeTimers.clear()
   }
 }
 

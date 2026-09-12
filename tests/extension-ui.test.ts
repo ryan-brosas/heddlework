@@ -1,5 +1,5 @@
 import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, jest } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
@@ -8,6 +8,7 @@ import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { TRANSIENT_NOTICE_TTL_MS } from '../src/workbench/dialog-coordinator.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { colors } from '../src/ui/theme.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
@@ -107,6 +108,32 @@ describe('Pi extension UI projection', () => {
       expect(controller.getSnapshot().dialog).toBeUndefined()
       expect(controller.getSnapshot().notices).toHaveLength(1)
     } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('keeps info banners transient and expires them while warnings stay durable', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      jest.useFakeTimers()
+      transport.emit({ type: 'extension_ui_request', id: 'tps-1', method: 'notify', message: 'TPS 25.6 tok/s', notifyType: 'info' })
+
+      const banner = controller.getSnapshot().notices.at(-1)
+      expect(banner).toMatchObject({ kind: 'info', message: 'TPS 25.6 tok/s', transient: true })
+      expect(banner?.transcriptPosition).toBeUndefined()
+      expect(banner?.transcriptTurn).toBeUndefined()
+
+      transport.emit({ type: 'extension_ui_request', id: 'warning-1', method: 'notify', message: 'Disk almost full', notifyType: 'warning' })
+      expect(controller.getSnapshot().notices.at(-1)).toMatchObject({ kind: 'warning', message: 'Disk almost full' })
+
+      jest.advanceTimersByTime(TRANSIENT_NOTICE_TTL_MS + 1)
+      jest.useRealTimers()
+
+      expect(controller.getSnapshot().notices.map((notice) => notice.message)).toEqual(['Disk almost full'])
+    } finally {
+      jest.useRealTimers()
       await controller.dispose()
     }
   })

@@ -14,6 +14,8 @@ export interface Notice {
   createdAt: number
   transcriptTurn?: number
   transcriptPosition?: number
+  /** Pi extension banners (`ui.notify`) fade in the harness, so they never join the durable ledger. */
+  transient?: boolean
 }
 
 export type ThreadPriority = 0 | 1 | 2 | 3 | 4
@@ -252,6 +254,24 @@ export function addNotice(state: WorkbenchState, kind: NoticeKind, message: stri
     ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition }),
   }
   return { ...state, notices: [...state.notices, notice] }
+}
+
+/**
+ * Pi's `ui.notify` renders as a banner that fades, so extension banners never join the durable
+ * ledger and never claim a transcript position. Actionable output keeps the `addNotice` path.
+ */
+export function addTransientNotice(state: WorkbenchState, kind: NoticeKind, message: string): WorkbenchState {
+  const notice: Notice = { id: ++noticeId, kind, message, createdAt: Date.now(), transient: true }
+  return { ...state, notices: [...state.notices, notice] }
+}
+
+export function isTransientNotice(notice: Notice): boolean {
+  return notice.transient === true
+}
+
+/** The notification ledger and its unread badge hold durable history, not transient banners. */
+export function isDurableNotice(notice: Notice): boolean {
+  return !isTransientNotice(notice)
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

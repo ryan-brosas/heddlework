@@ -3,7 +3,7 @@ import { useGpuix } from '@gpuix/react'
 import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
-import type { WorkbenchState } from '../workbench/state.ts'
+import { isTransientNotice, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
@@ -11,6 +11,7 @@ import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
+import { ComposerNotificationStack } from './notifications.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { CommandPalette, ExtensionSurfaceRail, QuestionnaireWaitingDock } from './composer-surfaces.tsx'
 
@@ -87,6 +88,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const currentModel = state.session.model ? modelKey(state.session.model) : ''
   const above = Object.values(state.widgets).filter((widget) => widget.placement === 'aboveEditor')
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
+  const transientNotices = useMemo(() => state.notices.filter(isTransientNotice), [state.notices])
   const contextPercent = state.stats?.contextUsage?.percent
   const hasComposerInput = Boolean(state.editorText.trim() || state.editorImages.length > 0)
   const canResumeQueue = !state.session.isStreaming && state.queue.paused && state.queue.items.length > 0 && !hasComposerInput
@@ -206,6 +208,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     >
       {collapsedQuestionnaire && <QuestionnaireWaitingDock questionnaire={collapsedQuestionnaire} controller={controller} />}
       {matchingCommands.length > 0 && <CommandPalette commands={matchingCommands} activeIndex={Math.min(activeCommandIndex, matchingCommands.length - 1)} onChoose={chooseCommand} />}
+      <ComposerNotificationStack notices={transientNotices} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => { for (const notice of transientNotices) controller.dismissNotice(notice.id) }} />
       <ExtensionSurfaceRail above={above} below={below} statuses={state.statusItems} />
       <QueueDock state={state} controller={controller} />
 
