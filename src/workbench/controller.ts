@@ -62,6 +62,7 @@ import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
+import { formatTimeOfDay } from '../ui/format-time.ts'
 
 const SESSION_PAGE_SIZE = 120
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -950,7 +951,7 @@ export class WorkbenchController {
       ...this.#state.threadLifecycle,
       [path]: { ...retained, snoozedUntil },
     }
-    const time = new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const time = formatTimeOfDay(snoozedUntil)
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', `Snoozed until ${time}`))
   }
 

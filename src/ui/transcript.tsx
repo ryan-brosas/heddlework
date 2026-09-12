@@ -7,6 +7,7 @@ import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
+import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
@@ -825,7 +826,7 @@ function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-
   if (!isCompactionWorkTrace(trace)) return undefined
   const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
   if (!compaction) return undefined
-  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString()} tokens` : 'Compacted'
+  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${formatTokenCount(compaction.tokensBefore)} tokens` : 'Compacted'
 }
 
 function CollapsedTraceTools({ items, hidden, presenters }: { items: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>; hidden: number; presenters: ReadonlyMap<string, ToolPresenter> }) {
@@ -1011,7 +1012,7 @@ function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }:
 }
 
 function Timestamp({ value }: { value: number }) {
-  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimestamp(value)}</text>
+  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimeOfDay(value)}</text>
 }
 
 export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpenDiff(): void }) {
@@ -1051,6 +1052,3 @@ function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | 
   return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
 }
 
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-}
