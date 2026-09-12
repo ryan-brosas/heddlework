@@ -61,7 +61,8 @@ export function createWorkbenchControllerPlugin(
         createSessionTransport: (sessionPath) => {
           if (transportOptions?.demo) return new DemoTransport()
           const { demo: _demo, piArgs, ...rpcOptions } = transportOptions ?? { cwd: workspacePath }
-          return new PiRpcTransport({ ...rpcOptions, cwd: rpcOptions.cwd ?? workspacePath, piArgs: [...(piArgs ?? []), '--session', sessionPath] })
+          const sessionArgs = sessionPath ? ['--session', sessionPath] : []
+          return new PiRpcTransport({ ...rpcOptions, cwd: rpcOptions.cwd ?? workspacePath, piArgs: [...(piArgs ?? []), ...sessionArgs] })
         },
         ...(options.queueStore ? { queueStore: options.queueStore } : {}),
         ...(options.threadMetadataStore ? { threadMetadataStore: options.threadMetadataStore } : {}),

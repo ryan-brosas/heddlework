@@ -16,6 +16,19 @@ export interface Notice {
   transcriptPosition?: number
 }
 
+/**
+ * Pi renders an `info` notify through `showStatus`: a dim status line appended to the session
+ * chat rather than a notification. Lines are turn-anchored so the transcript can place one after
+ * the turn it describes; consecutive statuses for a turn update it instead of stacking.
+ */
+export interface StatusLine {
+  id: number
+  text: string
+  createdAt: number
+  /** Turn index of the line's position, or -1 to append at the transcript tail. */
+  turn: number
+}
+
 export type ThreadPriority = 0 | 1 | 2 | 3 | 4
 
 export interface ThreadLifecycle {
@@ -109,6 +122,7 @@ export interface WorkbenchState {
   queue: WorkbenchQueueState
   stats: PiSessionStats | undefined
   notices: Notice[]
+  statusLines: StatusLine[]
   threadLifecycle: Record<string, ThreadLifecycle>
   /** Live turn signal per session file, tracked from each session's own harness. */
   sessionActivity: Record<string, boolean>
@@ -127,6 +141,7 @@ export interface WorkbenchState {
 }
 
 let noticeId = 0
+let statusLineId = 0
 
 export function createInitialState(workspacePath: string): WorkbenchState {
   return {
@@ -148,6 +163,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     activity: 'Ready',
     queue: createQueueState(),
     notices: [],
+    statusLines: [],
     threadLifecycle: {},
     sessionActivity: {},
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
@@ -244,14 +260,57 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
 }
 
 export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string, transcriptPosition?: number): WorkbenchState {
+  // A notify that arrived before any turn loaded has no honest anchor: claiming turn 0 would
+  // drop it inside the first turn once the transcript arrives. It stays ledger-only instead.
+  const turn = transcriptPosition === undefined ? -1 : currentTurn(state)
   const notice: Notice = {
     id: ++noticeId,
     kind,
     message,
     createdAt: Date.now(),
-    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition }),
+    ...(transcriptPosition === undefined || turn < 0 ? {} : { transcriptTurn: turn, transcriptPosition }),
   }
   return { ...state, notices: [...state.notices, notice] }
+}
+
+/**
+ * Pi's `showExtensionNotify` sends `info` notifies to `showStatus`, which appends a dim line to the
+ * session chat and rewrites the previous line when statuses arrive back to back. Heddlework keeps
+ * that line with the session instead of the notification ledger, and replaces the turn's line when
+ * an extension re-reports the same turn (pi-tps corrects a turn once its cost is known).
+ */
+export function addStatusLine(state: WorkbenchState, text: string): WorkbenchState {
+  const turn = currentTurn(state)
+  const line: StatusLine = { id: ++statusLineId, text, createdAt: Date.now(), turn }
+  const index = state.statusLines.findIndex((candidate) => candidate.turn === turn)
+  return {
+    ...state,
+    statusLines: index === -1 ? [...state.statusLines, line] : state.statusLines.map((candidate, at) => (at === index ? line : candidate)),
+  }
+}
+
+/**
+ * Turn index of the newest loaded user message, -1 when no turn is loaded yet. Notices and
+ * status lines share this anchor so both read the same turn numbering.
+ */
+function currentTurn(state: WorkbenchState): number {
+  return state.messages.filter((message) => message.role === 'user').length - 1
+}
+
+/**
+ * Loading earlier messages prepends to the loaded window, so every turn index anchored in the
+ * previous window moves by the number of user messages inserted in front of it; without the
+ * shift a status line or notice renders after an older turn. Negative turns are tail anchors
+ * (and unanchored notices are absent) and do not move.
+ */
+export function shiftTurnAnchors(state: WorkbenchState, prependedTurns: number): WorkbenchState {
+  if (prependedTurns <= 0) return state
+  const shift = (turn: number) => (turn < 0 ? turn : turn + prependedTurns)
+  return {
+    ...state,
+    notices: state.notices.map((notice) => notice.transcriptTurn === undefined ? notice : { ...notice, transcriptTurn: shift(notice.transcriptTurn) }),
+    statusLines: state.statusLines.map((line) => ({ ...line, turn: shift(line.turn) })),
+  }
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

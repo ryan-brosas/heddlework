@@ -20,6 +20,16 @@ describe('transcript projection', () => {
     expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'trace-files', 'timeline-item'])
   })
 
+  it('renders a session status line as its own row instead of trace content', () => {
+    const status: TimelineItem = { id: 'status-line-3', kind: 'status', text: 'TPS 25.6 tok/s', timestamp: 5 }
+    const grouped = groupWorkItems([...items.slice(0, 3), status, ...items.slice(3)])
+    // `TraceTimelineItem` excludes status entries by type, so a status line can only stay top level.
+    expect(grouped.filter((item) => item.kind === 'status')).toHaveLength(1)
+
+    const rows = projectTranscriptRows(grouped, new Set(), new Map())
+    expect(rows.filter((row) => row.kind === 'timeline-item' && row.item.kind === 'status')).toHaveLength(1)
+  })
+
   it('keeps a boundary trace ID stable while live work appends', () => {
     const liveThinking: TimelineItem = { id: 'live-thinking', kind: 'thinking', text: 'Planning', streaming: true }
     const liveTool: TimelineItem = { id: 'live-tool', kind: 'tool', tool: { id: 'live-tool', name: 'read', status: 'running', isError: false } }
@@ -124,6 +134,27 @@ describe('transcript projection', () => {
     expect(notificationRows).toHaveLength(2)
     expect(notificationRows.map((row) => row.notices.length)).toEqual([2, 1])
     expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'trace-entry', 'trace-notices', 'trace-notices', 'trace-entry'])
+  })
+
+  it('keeps notices out of the collapsed trace rows', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'TPS 25.6 tok/s', createdAt: 1_000 } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    const rows = projectTranscriptRows(grouped, new Set(), new Map())
+    expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'timeline-item'])
+  })
+
+  it('keeps the running preview on reasoning when a notice trails the work wave', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan', streaming: true },
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'TPS 25.6 tok/s', createdAt: 1_000 } },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(currentWorkWave(trace.items).preview).toMatchObject({ id: 'thinking', kind: 'thinking' })
   })
 
   it('folds intermediate assistant replies into the work trace and keeps the settled response', () => {

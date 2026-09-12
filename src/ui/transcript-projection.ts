@@ -131,9 +131,12 @@ export function liveWorkTraceId(items: readonly DisplayTimelineItem[], isStreami
   return undefined
 }
 
+/** The running header previews current work; notifications render as their own rows. */
+export type TracePreviewItem = Exclude<TraceTimelineItem, { kind: 'notice' }>
+
 export function currentWorkWave(items: readonly TraceTimelineItem[]): {
   tools: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>
-  preview: TraceTimelineItem | undefined
+  preview: TracePreviewItem | undefined
 } {
   let start = 0
   for (let index = 0; index < items.length; index += 1) {
@@ -142,7 +145,7 @@ export function currentWorkWave(items: readonly TraceTimelineItem[]): {
   const wave = items.slice(start)
   return {
     tools: wave.filter((item): item is Extract<TraceTimelineItem, { kind: 'tool' }> => item.kind === 'tool'),
-    preview: wave.at(-1),
+    preview: wave.findLast((item): item is TracePreviewItem => item.kind !== 'notice'),
   }
 }
 

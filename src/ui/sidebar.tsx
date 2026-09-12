@@ -57,6 +57,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const sessionLastOffset = useRef(0)
   const sessionListRef = useRef<NativeElementHandle | null>(null)
   const initialSessionScrollApplied = useRef(false)
+  const projectScopePinned = useRef(false)
   const activePath = state.session.sessionFile
   const persistedSessions = useMemo(() => state.sessions.filter((session) => session.messageCount > 0), [state.sessions])
   const activeSummary = useMemo(
@@ -75,16 +76,16 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       ...[...projects].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label)),
     ]
   }, [activeSummary, persistedSessions])
+  // The workspace drives the scope until the user picks one; an explicit pick outranks it.
+  const selectProjectScope = (value: string) => {
+    projectScopePinned.current = true
+    setProjectScope(value)
+  }
   useEffect(() => {
-    if (projectOptions.some((option) => option.value === projectScope)) return
+    if (projectScopePinned.current) return
     const workspace = resolve(state.workspacePath)
     setProjectScope(projectOptions.some((option) => option.value === workspace) ? workspace : ALL_PROJECTS_SCOPE)
-  }, [projectOptions, projectScope, state.workspacePath])
-  useEffect(() => {
-    if (projectScope === ALL_PROJECTS_SCOPE) return
-    const workspace = resolve(state.workspacePath)
-    if (projectScope !== workspace && projectOptions.some((option) => option.value === workspace)) setProjectScope(workspace)
-  }, [projectOptions, projectScope, state.workspacePath])
+  }, [projectOptions, state.workspacePath])
   const matchingSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
@@ -191,11 +192,11 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
               onChange={(event) => setSearch(String(event.value ?? ''))}
             />
           </div>
-          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.session.isStreaming || state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
+          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <ProjectFilter value={projectScope} options={projectOptions} onChange={setProjectScope} />
+          <ProjectFilter value={projectScope} options={projectOptions} onChange={selectProjectScope} />
           <IconButton
             testId="sidebar-new-project"
             icon="folderPlus"
@@ -322,7 +323,7 @@ function SectionLabel({ label, tone = 'normal' }: { label: string; tone?: 'norma
 
 function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expanded: boolean; onToggle(): void }) {
   return (
-    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, cursor: 'pointer' }} onClick={onToggle}>
+    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, borderRadius: 7, backgroundColor: colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onToggle}>
       <text style={{ color: colors.settledText, fontSize: 10, fontWeight: 550, pointerEvents: 'none' }}>{expanded ? 'Settled' : `Settled (${count})`}</text>
       <div style={{ height: 1, flexGrow: 1, backgroundColor: colors.settledDivider, pointerEvents: 'none' }} />
       <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>

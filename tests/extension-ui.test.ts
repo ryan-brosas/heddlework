@@ -111,6 +111,27 @@ describe('Pi extension UI projection', () => {
     }
   })
 
+  it('keeps info notifies as session status lines and warnings as notifications', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({ type: 'extension_ui_request', id: 'tps-1', method: 'notify', message: 'TPS 25.6 tok/s', notifyType: 'info' })
+
+      expect(controller.getSnapshot().statusLines.map((line) => line.text)).toEqual(['TPS 25.6 tok/s'])
+      expect(controller.getSnapshot().notices.filter((notice) => notice.message.includes('TPS'))).toHaveLength(0)
+
+      transport.emit({ type: 'extension_ui_request', id: 'tps-correction', method: 'notify', message: 'TPS 25.9 tok/s', notifyType: 'info' })
+      expect(controller.getSnapshot().statusLines.map((line) => line.text)).toEqual(['TPS 25.9 tok/s'])
+
+      transport.emit({ type: 'extension_ui_request', id: 'warning-1', method: 'notify', message: 'Disk almost full', notifyType: 'warning' })
+      expect(controller.getSnapshot().notices.at(-1)).toMatchObject({ kind: 'warning', message: 'Disk almost full' })
+      expect(controller.getSnapshot().statusLines.map((line) => line.text)).toEqual(['TPS 25.9 tok/s'])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('dismisses ledger engagement prompts outside an active conversation', async () => {
     const transport = new ManualTransport()
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
@@ -223,7 +244,8 @@ describe('Pi extension UI projection', () => {
       transport.emit({ type: 'extension_ui_request', id: 'queued-dialog', method: 'input', title: 'Also stale' })
       transport.emit({ type: 'extension_ui_request', id: 'old-notice', method: 'notify', message: 'Old session notice' })
       expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
-      expect(controller.getSnapshot().notices).toHaveLength(1)
+      expect(controller.getSnapshot().statusLines).toHaveLength(1)
+      expect(controller.getSnapshot().notices).toHaveLength(0)
       expect(controller.getSnapshot().dialogQueue).toHaveLength(1)
 
       const creatingSession = controller.newSession()
@@ -233,6 +255,7 @@ describe('Pi extension UI projection', () => {
       await creatingSession
 
       expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(controller.getSnapshot().statusLines).toHaveLength(0)
       expect(controller.getSnapshot().notices).toHaveLength(0)
     } finally {
       await controller.dispose()

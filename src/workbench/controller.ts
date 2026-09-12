@@ -40,6 +40,7 @@ import {
   applyRpcEvent,
   contentText,
   createInitialState,
+  shiftTurnAnchors,
   type NoticeKind,
   type ThreadPriority,
   type WorkbenchState,
@@ -225,11 +226,15 @@ export class WorkbenchController {
       if (pager !== this.#historyPager) return
       const known = new Set(this.#state.messages.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
       const older = page.messages.filter((message) => !known.has(messageEntryId(message) ?? ''))
-      this.#patch({
-        messages: [...older, ...this.#state.messages],
+      // Prepending shifts every turn the loaded window already anchored, so the anchors move with
+      // the messages they point at instead of rendering after an older turn.
+      const prependedTurns = older.filter((message) => message.role === 'user').length
+      this.#setState((state) => shiftTurnAnchors({
+        ...state,
+        messages: [...older, ...state.messages],
         messagesHasOlder: page.hasOlder,
         messagesLoadingEarlier: false,
-      })
+      }, prependedTurns))
     } catch (error) {
       if (pager !== this.#historyPager) return
       this.#patch({ messagesHasOlder: false, messagesLoadingEarlier: false })
@@ -549,12 +554,33 @@ export class WorkbenchController {
   }
 
   async newSession(): Promise<void> {
-    if (this.#state.session.isStreaming) return
+    const previousFile = this.#state.session.sessionFile
+    const wasStreaming = this.#state.session.isStreaming
+    if (!this.#createSessionTransport && wasStreaming) return
     this.#sessionTransitionDepth += 1
     try {
-      this.#dialogs.cancelAll()
+      if (previousFile) {
+        this.#captureLiveSession(previousFile)
+        this.#ensureBackgroundTracking(this.#transport, previousFile)
+        this.#dialogs.hideVisible()
+      }
+      if (this.#createSessionTransport) {
+        const transport = await this.#openSessionTransport('')
+        this.#attachActiveTransport(transport)
+      } else {
+        this.#dialogs.cancelAll()
+      }
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
+      if (previousFile && wasStreaming) {
+        this.#patch({
+          sessionActivity: {
+            ...this.#state.sessionActivity,
+            [previousFile]: true,
+            [resolve(previousFile)]: true,
+          },
+        })
+      }
       this.#historyPager = undefined
       this.#patch({
         messages: [],
@@ -566,6 +592,7 @@ export class WorkbenchController {
         editorText: '',
         editorImages: [],
         notices: [],
+        statusLines: [],
         statusItems: {},
         widgets: {},
         dialog: undefined,
@@ -575,6 +602,11 @@ export class WorkbenchController {
         queue: createQueueState(),
       })
       await this.#bootstrap(false)
+      const opened = this.#state.session.sessionFile
+      if (this.#createSessionTransport && opened) {
+        this.#touchSessionTransport(resolve(opened), this.#transport)
+        this.#trimIdleSessionPool(opened)
+      }
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
@@ -677,7 +709,7 @@ export class WorkbenchController {
         this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
       })
     } catch (error) {
-      if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices] })
+      if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices], statusLines: [...scope.state.statusLines, ...this.#state.statusLines] })
       this.#historyPager = scope.historyPager
       this.#sessionTree = scope.sessionTree
       // Pi keeps the previous session open when switch_session rejects, so the optimistic
@@ -701,7 +733,7 @@ export class WorkbenchController {
       await transport.stop().catch(() => {})
       throw error
     }
-    this.#sessionTransports.set(resolve(sessionPath), transport)
+    if (sessionPath) this.#sessionTransports.set(resolve(sessionPath), transport)
     return transport
   }
 
@@ -873,6 +905,7 @@ export class WorkbenchController {
       editorText: '',
       editorImages: [],
       notices: [],
+      statusLines: [],
       statusItems: live?.statusItems ?? {},
       widgets: live?.widgets ?? {},
       dialog: live?.dialog,
@@ -1001,7 +1034,7 @@ export class WorkbenchController {
         return
       }
       this.#historyPager = undefined
-      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
+      this.#patch({ notices: [], statusLines: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
       // In-memory navigation can leave the file tip on the abandoned branch.
       await this.#bootstrap(false, { anchorLeaf: true })
       if (result.editorText !== undefined) this.#patch({ editorText: result.editorText, editorImages: [] })
@@ -1039,7 +1072,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
       if (result.cancelled) return
-      this.#patch({ notices: [], queue: createQueueState() })
+      this.#patch({ notices: [], statusLines: [], queue: createQueueState() })
       await this.#bootstrap(false, { anchorLeaf: true })
       this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
     } catch (error) {
@@ -1052,7 +1085,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
-      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
+      this.#patch({ notices: [], statusLines: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
       await this.#bootstrap(false, { anchorLeaf: true })
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
@@ -1525,7 +1558,7 @@ export class WorkbenchController {
           const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
           if (result.cancelled) return false
           this.#historyPager = undefined
-          this.#patch({ notices: [], queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
+          this.#patch({ notices: [], statusLines: [], queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
           await this.#bootstrap(false, { anchorLeaf: true })
           this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
           return true
@@ -1552,6 +1585,7 @@ export class WorkbenchController {
               editorText: '',
               editorImages: [],
               notices: [],
+              statusLines: [],
               statusItems: {},
               widgets: {},
               dialog: undefined,

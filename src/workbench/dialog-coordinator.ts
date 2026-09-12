@@ -3,6 +3,7 @@ import type { ExtensionUiRequest, RpcRecord } from '../pi/types.ts'
 import { errorMessage } from '../pi/types.ts'
 import {
   addNotice,
+  addStatusLine,
   type ExtensionDialog,
   type ExtensionWidget,
   type WorkbenchState,
@@ -53,7 +54,15 @@ export class WorkbenchDialogCoordinator {
       return
     }
     if (request.method === 'notify') {
-      this.#host.setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification', currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
+      const kind = request.notifyType ?? 'info'
+      const message = request.message ?? 'Pi notification'
+      if (kind === 'info') {
+        // Pi routes `info` notifies to `showStatus`, a status line in the session chat, and keeps
+        // `warning`/`error` for the notification stack.
+        this.#host.setState((state) => addStatusLine(state, message))
+        return
+      }
+      this.#host.setState((state) => addNotice(state, kind, message, currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
       return
     }
     if (request.method === 'setStatus') {

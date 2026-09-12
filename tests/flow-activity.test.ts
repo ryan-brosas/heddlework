@@ -57,6 +57,21 @@ describe('Flow activity projection', () => {
     expect(activity.find((entry) => entry.kind === 'response')?.detail).toBe('The first pass is complete.')
   })
 
+  it('keeps Pi showStatus lines out of the activity rail', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'Measure the turn', timestamp: 1_100 },
+      { role: 'assistant', content: [{ type: 'text', text: 'Measured.' }], timestamp: 2_000 },
+    ]
+    const activity = projectFlowActivity(subject, buildTimeline(messages, undefined, [], [], 0, [], [{ id: 1, text: 'TPS 25.6 tok/s', createdAt: 2_500, turn: 0 }]))
+
+    expect(activity.map((entry) => entry.title)).toEqual(['Session started', 'Prompted Pi', 'Produced a response', 'Session completed'])
+    expect(activity.some((entry) => entry.detail?.includes('TPS 25.6'))).toBe(false)
+    // pi routes extension errors to the notification stack, so the rail only records error-toned
+    // status rows that came from the session itself.
+    const errorTimeline = [{ id: 'status-error', kind: 'status' as const, text: 'Harness failure', tone: 'error' as const, timestamp: 3_000 }]
+    expect(projectFlowActivity(subject, errorTimeline).some((entry) => entry.title === 'Recorded an error')).toBe(true)
+  })
+
   it('projects useful lifecycle activity when no transcript page is available', () => {
     expect(projectFlowActivity({ ...subject, status: 'failed', stopReason: 'error' }, []).map((entry) => entry.title)).toEqual([
       'Session started',

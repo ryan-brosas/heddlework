@@ -31,6 +31,7 @@ import {
   projectTranscriptRows,
   resetRowIdentityCache,
   type DisplayTimelineItem,
+  type TracePreviewItem,
   type TraceTimelineItem,
   type TranscriptProjectionRow,
 } from './transcript-projection.ts'
@@ -138,8 +139,8 @@ export const Transcript = memo(function Transcript({
 
   const hydratedMessages = useMemo(() => hydrateMessageImages(state.messages), [state.messages])
   const items = useMemo(
-    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices), state.session.isStreaming),
-    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.session.isStreaming],
+    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices, state.statusLines), state.session.isStreaming),
+    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.statusLines, state.session.isStreaming],
   )
   // Only expanded traces are ever read back from this map (the row filter below, the
   // limit-growth effect, and the toggle clamp), so a transcript with nothing expanded skips the
@@ -376,6 +377,7 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.sessionId === next.state.session.sessionId
   && previous.state.session.isStreaming === next.state.session.isStreaming
   && previous.state.notices.length === next.state.notices.length
+  && previous.state.statusLines === next.state.statusLines
   && previous.state.questionnaireCollapsed === next.state.questionnaireCollapsed
   && previous.state.queue === next.state.queue
   && previous.state.statusItems === next.state.statusItems
@@ -547,7 +549,9 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
     <TranscriptRowShell user={item.kind === 'user'}>
       {item.kind === 'user' && <UserMessage item={item} onRevert={onRevert} />}
       {item.kind === 'assistant' && <AssistantMessage item={item} onRevert={onRevert} />}
-      {item.kind === 'status' && <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />}
+      {item.kind === 'status' && (item.origin === 'extension'
+        ? <SessionStatusLine text={item.text} />
+        : <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />)}
     </TranscriptRowShell>
   )
 }
@@ -813,16 +817,13 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
   )
 }
 
-function TracePreview({ item }: { item: TraceTimelineItem }) {
+function TracePreview({ item }: { item: TracePreviewItem }) {
   if (item.kind === 'thinking' || item.kind === 'assistant') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
   }
   if (item.kind === 'context-injection') {
     const prefix = item.source ? `${contextInjectionLabel(item)} ` : ''
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(`${prefix}${item.text}`)}</text></div>
-  }
-  if (item.kind === 'notice') {
-    return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.notice.message}</text></div>
   }
   if (item.kind === 'compaction') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
@@ -899,7 +900,7 @@ function RetiringAssistantRow({ item, onRevert, onDone }: { item: AssistantTimel
 
 function collapsedPreviewHeight(
   tools: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>,
-  preview: TraceTimelineItem | undefined,
+  preview: TracePreviewItem | undefined,
   presenters: ReadonlyMap<string, ToolPresenter>,
 ): number {
   let rows = preview && preview.kind !== 'tool' ? 1 : 0
@@ -1008,6 +1009,19 @@ function StatusMessage({ text, error, timestamp }: { text: string; error: boolea
     <div style={{ padding: 8, borderRadius: 7, backgroundColor: error ? colors.diffDel : colors.card }}>
       <text style={{ color: error ? colors.error : colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
       {timestamp && <Timestamp value={timestamp} />}
+    </div>
+  )
+}
+
+/**
+ * Pi core's showStatus line for an `info` notify: dim chat content with no notification chrome —
+ * no card, border, icon, timestamp, dismiss control, badge, or ledger entry. Pi rewrites the
+ * previous line when statuses arrive back to back, so a turn keeps its latest readout.
+ */
+function SessionStatusLine({ text }: { text: string }) {
+  return (
+    <div testId="session-status-line" style={{ paddingLeft: 1, paddingRight: 1 }}>
+      <text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
     </div>
   )
 }
