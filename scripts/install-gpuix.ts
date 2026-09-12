@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -55,8 +55,14 @@ let existing
 try { existing = lstatSync(dependency) } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
 }
-if (existing && !existing.isSymbolicLink()) throw new Error(`Refusing to replace a real directory: ${dependency}`)
-if (existing) unlinkSync(dependency)
+// `bun install` materializes a declared dependency as a real directory, and the next
+// install restores it, so that copy is safe to replace. Anything else is not.
+if (existing?.isSymbolicLink()) {
+  unlinkSync(dependency)
+} else if (existing) {
+  if (!isPublishedDependency(dependency, '@gpuix/react')) throw new Error(`Refusing to replace a real directory: ${dependency}`)
+  rmSync(dependency, { recursive: true, force: true })
+}
 symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
 await run(['bun', '-e', 'const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ["setTerminalFrame", "getWindowState", "minimizeWindow", "toggleMaximizeWindow", "closeWindow"]) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)'], root)
 
@@ -65,6 +71,16 @@ if (!alreadyBuilt && process.env.HEDDLEWORK_KEEP_BUILD_CACHE !== '1') {
   await run(['cargo', 'clean', '--manifest-path', 'packages/native/Cargo.toml'], source)
 }
 console.log(`[heddlework] installed GPUix ${pin.gpuixRevision} / Zed ${pin.zedRevision}`)
+
+// A directory is only replaceable when it is the package manager's own copy of the
+// dependency this script is about to shadow. A source checkout or a cache is never touched.
+function isPublishedDependency(directory: string, name: string): boolean {
+  try {
+    return JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8')).name === name
+  } catch {
+    return false
+  }
+}
 
 async function checkout(directory: string, repository: string, revision: string, branch: string) {
   if (!existsSync(resolve(directory, '.git'))) {

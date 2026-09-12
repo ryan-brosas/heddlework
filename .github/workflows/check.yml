@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   # Primary quality gate: Linux (the fork's development lane, Omarchy/Arch x86_64).
-  test-linux:
+  # The job id stays "test" so the published check context (check / test) does not change.
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
