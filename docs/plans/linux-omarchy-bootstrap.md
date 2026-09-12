@@ -95,6 +95,54 @@ Local-workspace traps (both hit and fixed 2026-09-12):
   app_id registration only). Write the jq filter to a file and run `jq -f`; inline jq quoting is
   eaten by the shell (hit twice 2026-09-12).
 
+## Session switch latency (2026-09-12)
+
+Switching threads was unusable on large sessions. Traced with `bun run benchmark:session-switch`
+against a real `pi --mode rpc` (117 MiB transcript, 10 000+ entries) on this Omarchy box:
+
+```
+step                      milliseconds
+local transcript page             11.1
+switch_session                  7500.3
+get_state                          0.3
+get_session_stats                  0.9
+get_fork_messages                  0.3
+get_tree                       17600.1
+
+interactive first paint           11.1  (optimistic preview from the session JSONL)
+before: preview                 25111.5  (awaited switch_session + get_tree before the transcript)
+```
+
+Two facts drive this, and both are Pi-side, not renderer-side:
+
+1. `switch_session` and `get_tree` are O(session size) in Pi. `get_tree` rebuilds the whole
+   tree: ~17 s at 117 MiB, and it is also issued on every `message_end` refresh.
+2. Pi processes RPC commands **serially**. A `get_tree` issued in the background blocks every
+   later command for its full duration (measured: `get_state` 17.1 s behind an in-flight
+   `get_tree`), so "just fire it and forget it" is not safe — it delays the next prompt.
+
+`WorkbenchController` therefore no longer awaits or proactively issues `get_tree`:
+
+- `switchSession` paints the clicked thread from its own persisted JSONL tail
+  (`PiSessionHistoryPager`, ~11 ms) before `switch_session` resolves, and `#bootstrap` then
+  replaces that preview with authoritative state. Header, workspace, queue, and diff scope move
+  with the click.
+- `#bootstrap` awaits only `get_state`; the transcript load no longer waits on the tree.
+- `#refreshMessages` no longer fetches the tree at all.
+- `get_tree` runs only when Pi's leaf cannot be derived from the file: in-memory tree navigation
+  (`navigateTree`), `fork`, and `clone`. Pi's `branch()`/`resetLeaf()` move the leaf without
+  appending, so `docs/pi-session-tree.md`'s leafId contract still holds — the anchor is captured
+  from one `get_tree`, and every other path uses the file tip (Pi appends every new entry under
+  the current leaf, and `_buildIndex` sets `leafId` to the file's last entry on load). An append,
+  a different session file, or a `/reload` invalidates the anchor.
+- A click that lands during a transition is deferred to the newest target instead of dropped.
+
+Measured end to end through `WorkbenchController` against real Pi and the same 117 MiB session:
+first transcript paint **31 860 ms -> 8 ms** after the click; `switchSession` settles when Pi's own
+`switch_session` returns (~3.7-8 s). Regression coverage lives in `tests/session-switch.test.ts`
+(instant preview, deferred click, no `get_tree` on the switch/refresh path, leaf anchor after
+navigation, anchor kept until the file grows, anchor dropped across a session switch).
+
 ## Open items
 
 - `.github/workflows/check.yml` runs on `macos-latest`; the fork's purpose is Linux-first - move the primary
