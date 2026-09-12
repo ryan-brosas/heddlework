@@ -21,7 +21,7 @@ The installer copies:
 
 The launcher records an absolute Pi path and only absolute entries from the installation shell's `PATH`. Desktop sessions commonly do not inherit shell initialization, so this also keeps a Pi shim's `node` or `bun` interpreter discoverable. Re-run the installer after moving or upgrading Pi. `HEDDLEWORK_LAUNCH_PATH` can override the captured path.
 
-The desktop launch starts in `$HOME`; choose a repository with Heddlework's project picker. Set `HEDDLEWORK_WORKSPACE` in the desktop session if a different initial directory is required.
+The desktop launch uses `HEDDLEWORK_WORKSPACE` when set, otherwise the last project opened in the app (`$XDG_STATE_HOME/heddlework/workspace`, defaulting under `~/.local/state`), otherwise `$HOME`. The sidebar defaults to that workspace's threads; choose **All projects** to browse every saved session.
 
 The source installer selects GPUix's CEF-enabled native build only on Darwin (`scripts/install-gpuix.ts` delegates through `nativeBuildCommand`). Linux uses the non-CEF release build, so this Linux preview does not yet provide embedded CEF browser surfaces.
 

@@ -209,3 +209,6 @@ harnesses dropped from the pool so the next open respawns them.
   when the corresponding work is re-landed on `main`.
 - CEF on Linux is unaddressed (macOS-only today, see `docs/browser.md`); browser-free builds are the Linux
   default until a Linux CEF packaging path exists.
+- Idle session harnesses are capped (`SESSION_IDLE_POOL_LIMIT`) so All-projects browsing cannot leave a Pi
+  process per click. Streaming harnesses are never stopped. The Linux launcher remembers the last project in
+  XDG state. The running `.desktop` process still keeps the previous image until restart.
