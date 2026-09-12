@@ -48,7 +48,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
-  const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
+  const [projectScope, setProjectScope] = useState(() => resolve(state.workspacePath))
   const [pickingProject, setPickingProject] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
   const [settledExpanded, setSettledExpanded] = useState(false)
@@ -76,8 +76,15 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     ]
   }, [activeSummary, persistedSessions])
   useEffect(() => {
-    if (!projectOptions.some((option) => option.value === projectScope)) setProjectScope(ALL_PROJECTS_SCOPE)
-  }, [projectOptions, projectScope])
+    if (projectOptions.some((option) => option.value === projectScope)) return
+    const workspace = resolve(state.workspacePath)
+    setProjectScope(projectOptions.some((option) => option.value === workspace) ? workspace : ALL_PROJECTS_SCOPE)
+  }, [projectOptions, projectScope, state.workspacePath])
+  useEffect(() => {
+    if (projectScope === ALL_PROJECTS_SCOPE) return
+    const workspace = resolve(state.workspacePath)
+    if (projectScope !== workspace && projectOptions.some((option) => option.value === workspace)) setProjectScope(workspace)
+  }, [projectOptions, projectScope, state.workspacePath])
   const matchingSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
