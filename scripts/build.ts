@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { readCefArtifactInventory, verifyCefArtifactInventory } from './cef-artifacts.ts'
+import { reactProductionDefine } from './production-define.ts'
 
 const root = resolve(import.meta.dir, '..')
 const appVersion = (JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'
@@ -41,6 +42,7 @@ try {
     compile,
     minify: true,
     sourcemap: 'external',
+    define: reactProductionDefine,
     ...(nativePackagingDirectory ? { plugins: [verifiedNativePlugin(nativePackagingDirectory)] } : {}),
   })
 

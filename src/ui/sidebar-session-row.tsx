@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { ThreadLifecycle } from '../workbench/state.ts'
 import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
+import { formatTimeOfDay } from './format-time.ts'
 import { DropdownSurface, useDropdownPresence } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -62,7 +63,7 @@ export function SessionRow({
         <div tabIndex={disabled ? -1 : 0} style={{ minWidth: 0, flexGrow: 1, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
           <text {...(lifecycle === 'settled' ? { testId: 'sidebar-settled-title' } : {})} style={{ color: lifecycle === 'settled' ? colors.settledText : colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         </div>
-        <text style={{ color: lifecycle === 'settled' ? colors.settledMeta : colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : relativeTime(session.modifiedAt)}</text>
+        <text style={{ color: lifecycle === 'settled' ? colors.settledMeta : colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? formatTimeOfDay(snoozedUntil) : relativeTime(session.modifiedAt)}</text>
         <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onWake}>
           <Icon name="check" size={12} color={lifecycle === 'settled' ? colors.settledIcon : colors.textFaint} />
         </div>
@@ -137,7 +138,7 @@ function SnoozeMenu({ open, onSchedule, onClose }: { open: boolean; onSchedule(u
               <div testId={`snooze-option-${index}`} tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onSchedule(option.value)}>
                 <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
                 <div style={{ flexGrow: 1 }} />
-                <text style={{ color: colors.textFaint, fontSize: 9 }}>{new Date(option.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</text>
+                <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimeOfDay(option.value)}</text>
               </div>
             </React.Fragment>
           ))}

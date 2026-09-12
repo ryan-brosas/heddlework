@@ -54,6 +54,12 @@ kernel.mount(coreToolPresentersPlugin)
 kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
   queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
   threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
+  transportOptions: {
+    cwd: workspacePath,
+    demo: demoMode,
+    ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
+    piArgs: piArgumentsFromEnvironment(),
+  },
 }))
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
 const hostOptions = hostOptionsFromEnvironment()

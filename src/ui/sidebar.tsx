@@ -135,7 +135,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         session={session}
         projectName={sessionProjectName(session)}
         active={active}
-        running={active && state.session.isStreaming}
+        running={active ? state.session.isStreaming : state.sessionActivity[session.path] === true}
         disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
