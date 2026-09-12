@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { directoryPickerCommand, directoryPickerCommands, systemTargetCommand } from '../src/ui/open-external.ts'
+import { directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, systemTargetCommand } from '../src/ui/open-external.ts'
 
 describe('external targets', () => {
   it('passes Windows URLs as one argument without invoking a command shell', () => {
@@ -15,15 +15,52 @@ describe('workspace directory picker', () => {
     expect(directoryPickerCommand('darwin')?.args.join(' ')).toContain('choose folder')
     expect(directoryPickerCommand('win32')).toMatchObject({ command: 'powershell.exe' })
     expect(directoryPickerCommand('win32')?.args.join(' ')).toContain('FolderBrowserDialog')
-    expect(directoryPickerCommand('linux')).toEqual({ command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] })
+    expect(directoryPickerCommand('linux')).toMatchObject({ command: 'kdialog' })
+    expect(directoryPickerCommand('linux')?.args).toContain('--getexistingdirectory')
   })
 
-  it('falls back from zenity to kdialog on Linux for Wayland sessions without zenity', () => {
+  it('falls back from kdialog to zenity on Linux after the portal is unavailable', () => {
     const pickers = directoryPickerCommands('linux')
     expect(pickers).toHaveLength(2)
-    expect(pickers[0]).toMatchObject({ command: 'zenity' })
-    expect(pickers[1]).toMatchObject({ command: 'kdialog' })
-    expect(pickers[1]?.args).toContain('--getexistingdirectory')
+    expect(pickers[0]).toMatchObject({ command: 'kdialog' })
+    expect(pickers[1]).toMatchObject({ command: 'zenity' })
+    expect(pickers[1]?.args).toContain('--file-selection')
+  })
+
+  it('uses the portal selection on Linux and does not open a CLI fallback', async () => {
+    const result = await pickWorkspaceDirectory(
+      'linux',
+      async () => ({ status: 'selected', path: '/tmp/heddlework-project' }),
+      async () => {
+        throw new Error('CLI fallback must not run after a portal selection')
+      },
+    )
+    expect(result).toEqual({ path: '/tmp/heddlework-project' })
+  })
+
+  it('treats a portal cancel as a dismiss and does not open a CLI fallback', async () => {
+    const result = await pickWorkspaceDirectory(
+      'linux',
+      async () => ({ status: 'cancelled' }),
+      async () => {
+        throw new Error('CLI fallback must not run after a portal cancel')
+      },
+    )
+    expect(result).toEqual({})
+  })
+
+  it('degrades to kdialog when the portal is unavailable', async () => {
+    const commands: string[] = []
+    const result = await pickWorkspaceDirectory(
+      'linux',
+      async () => ({ status: 'unavailable', error: 'File dialog portal is not reachable' }),
+      async (command) => {
+        commands.push(command)
+        return command === 'kdialog' ? '/tmp/from-kdialog\n' : undefined
+      },
+    )
+    expect(commands[0]).toBe('kdialog')
+    expect(result.path).toBe('/tmp/from-kdialog')
   })
 
   it('offers a single picker on macOS and Windows', () => {

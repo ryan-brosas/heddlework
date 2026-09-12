@@ -212,3 +212,6 @@ harnesses dropped from the pool so the next open respawns them.
 - Idle session harnesses are capped (`SESSION_IDLE_POOL_LIMIT`) so All-projects browsing cannot leave a Pi
   process per click. Streaming harnesses are never stopped. The Linux launcher remembers the last project in
   XDG state. The running `.desktop` process still keeps the previous image until restart.
+- **Open project** on Linux talks to `org.freedesktop.portal.FileChooser` first (listen for Response before
+  OpenFile). kdialog then zenity are fallbacks only when the portal is unavailable. This is a TypeScript
+  gdbus/dbus-monitor seam, not a GPUIX pin or Omarchy palette change.
