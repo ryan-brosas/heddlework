@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -55,15 +55,14 @@ let existing
 try { existing = lstatSync(dependency) } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
 }
-// `bun install` materializes a declared dependency as a real directory, and the next
-// install restores it, so that copy is safe to replace. Anything else is not.
 if (existing?.isSymbolicLink()) {
   unlinkSync(dependency)
-} else if (existing) {
-  if (!isPublishedDependency(dependency, '@gpuix/react')) throw new Error(`Refusing to replace a real directory: ${dependency}`)
-  rmSync(dependency, { recursive: true, force: true })
+  symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
+} else if (!existing) {
+  symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
+} else if (!isPublishedDependency(dependency, '@gpuix/react')) {
+  throw new Error(`Refusing to replace a real directory: ${dependency}`)
 }
-symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
 await run(['bun', '-e', 'const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ["setTerminalFrame", "getWindowState", "minimizeWindow", "toggleMaximizeWindow", "closeWindow"]) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)'], root)
 
 writeFileSync(stampPath, stamp)
