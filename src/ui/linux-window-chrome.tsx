@@ -14,6 +14,9 @@ export function useNativeWindowChrome(renderer: WindowControlRenderer) {
       if (next) setState((previous) => sameWindowState(previous, next) ? previous : next)
     }
     update()
+    // Compositor actions (maximize/restore/fullscreen) are the only thing that changes this, and
+    // every read is a blocking round trip to GPUI's UI thread (see src/ui/window-metrics.tsx),
+    // so it stays the slowest cadence the titlebar buttons can afford rather than a frame poll.
     const timer = setInterval(update, 200)
     return () => clearInterval(timer)
   }, [nativeLinux, renderer])

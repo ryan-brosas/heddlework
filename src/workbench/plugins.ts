@@ -44,23 +44,31 @@ export const localWorkspaceDiffPlugin: WorkbenchPlugin = {
   },
 }
 
-export function createWorkbenchControllerPlugin(workspacePath: string, options: { queueStore?: QueueStoreService | undefined; threadMetadataStore?: ThreadMetadataStoreService | undefined } = {}): WorkbenchPlugin {
+export function createWorkbenchControllerPlugin(
+  workspacePath: string,
+  options: { queueStore?: QueueStoreService | undefined; threadMetadataStore?: ThreadMetadataStoreService | undefined; transportOptions?: PiRpcTransportOptions & { demo: boolean } } = {},
+): WorkbenchPlugin {
   return {
     id: 'workbench-controller',
     requires: [agentTransportToken, sessionCatalogToken, workspaceDiffToken],
     activate(ctx) {
+      const transportOptions = options.transportOptions
       const controller = new WorkbenchController(ctx.get(agentTransportToken), workspacePath, {
         sessionCatalog: ctx.get(sessionCatalogToken),
         workspaceDiff: ctx.get(workspaceDiffToken),
         transportEvents: 'external',
         transportOwnership: 'provider',
+        createSessionTransport: (sessionPath) => {
+          if (transportOptions?.demo) return new DemoTransport()
+          const { demo: _demo, piArgs, ...rpcOptions } = transportOptions ?? { cwd: workspacePath }
+          return new PiRpcTransport({ ...rpcOptions, cwd: rpcOptions.cwd ?? workspacePath, piArgs: [...(piArgs ?? []), '--session', sessionPath] })
+        },
         ...(options.queueStore ? { queueStore: options.queueStore } : {}),
         ...(options.threadMetadataStore ? { threadMetadataStore: options.threadMetadataStore } : {}),
       })
+      controller.attachTransport(ctx.get(agentTransportToken))
       ctx.provide(workbenchControllerToken, controller)
       ctx.effect(() => async () => controller.dispose())
-      ctx.on('agent/event', controller.acceptAgentEvent)
-      ctx.on('agent/status', controller.acceptAgentStatus)
     },
   }
 }

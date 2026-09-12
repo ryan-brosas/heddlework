@@ -1,3 +1,4 @@
+import { formatTimeOfDay } from './format-time.ts'
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useEffect, useRef, useState } from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
@@ -143,7 +144,7 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, 
         <Icon name={notice.kind === 'error' ? 'x' : notice.kind === 'warning' ? 'bell' : 'check'} size={11} color={tone} />
       </div>
       <AutoScrollingNoticeText message={notice.message} {...(newest ? { testId: 'notification-toast-message', scrollTestId: 'notification-toast-scroll' } : {})} />
-      <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(notice.createdAt)}</text>
+      <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimeOfDay(notice.createdAt)}</text>
       <div style={{ height: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         {newest && (
           <div testId="clear-notifications" tabIndex={0} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onClear}>
@@ -201,7 +202,7 @@ function LedgerRow({ notice }: { notice: Notice }) {
       <div testId="notification-ledger-row" style={{ minWidth: 0, minHeight: 40, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8, paddingRight: 12, paddingBottom: 8, paddingLeft: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, selectionColor: '#4F67D866' }}>
         <div style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone, flexShrink: 0 }} />
         <AutoScrollingNoticeText message={notice.message} scrollTestId="notification-ledger-scroll" />
-        <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(notice.createdAt)}</text>
+        <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimeOfDay(notice.createdAt)}</text>
       </div>
     </div>
   )
@@ -225,6 +226,4 @@ function noticeColor(kind: NoticeKind): string {
   return colors.success
 }
 
-function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-}
+

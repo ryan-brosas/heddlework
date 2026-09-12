@@ -7,6 +7,7 @@ import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
+import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
@@ -76,6 +77,7 @@ interface TranscriptDisclosureState {
 
 const EMPTY_IDS: ReadonlySet<string> = new Set()
 const EMPTY_LIMITS: ReadonlyMap<string, number> = new Map()
+const EMPTY_LENGTHS: ReadonlyMap<string, number> = new Map()
 
 export const Transcript = memo(function Transcript({
   state,
@@ -137,13 +139,22 @@ export const Transcript = memo(function Transcript({
     () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices), state.session.isStreaming),
     [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.session.isStreaming],
   )
-  const traceLengths = useMemo(() => new Map(items.flatMap((item) => item.kind === 'work-trace' ? [[item.id, item.items.length] as const] : [])), [items])
+  // Only expanded traces are ever read back from this map (the row filter below, the
+  // limit-growth effect, and the toggle clamp), so a transcript with nothing expanded skips the
+  // O(items) build that every live delta would otherwise pay for.
+  const traceLengths = useMemo(() => {
+    if (expandedTraceIds.size === 0) return EMPTY_LENGTHS
+    const lengths = new Map<string, number>()
+    for (const item of items) {
+      if (item.kind === 'work-trace' && expandedTraceIds.has(item.id)) lengths.set(item.id, item.items.length)
+    }
+    return lengths
+  }, [expandedTraceIds, items])
   const projectedRows = useMemo(() => projectTranscriptRows(items, expandedTraceIds, traceLimits), [expandedTraceIds, items, traceLimits])
-  const displayedAssistants = useMemo(
-    () => items.flatMap((item) => item.kind === 'assistant' ? [item] : []),
-    [items],
-  )
   useEffect(() => {
+    // Derived here rather than in a memo: this effect is the only consumer, and a live delta
+    // replaces `items` on every streamed block.
+    const displayedAssistants = items.flatMap((item) => item.kind === 'assistant' ? [item] : [])
     const displayedIds = new Set(displayedAssistants.map((item) => item.id))
     const displayedTexts = new Set(displayedAssistants.map((item) => item.text))
     const disappeared = previousAssistants.current.filter((item) => !displayedIds.has(item.id) && !displayedTexts.has(item.text))
@@ -154,7 +165,7 @@ export const Transcript = memo(function Transcript({
       const known = new Set(remaining.map((item) => item.id))
       return [...remaining, ...disappeared.filter((item) => !known.has(item.id))]
     })
-  }, [displayedAssistants])
+  }, [items])
   useEffect(() => {
     if (state.session.isStreaming && !wasStreaming.current) setFollowTail(true)
     wasStreaming.current = state.session.isStreaming
@@ -184,7 +195,6 @@ export const Transcript = memo(function Transcript({
     next.push({ id: 'composer-spacer', kind: 'composer-spacer' })
     return next
   }, [items, liveTraceId, projectedRows, retiringAssistants, state.session.isStreaming, traceLengths])
-  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows])
   // Spread retained-tree growth across frames; native virtualization handles layout and paint per direct row.
   useEffect(() => {
     if (disclosures.sessionKey !== sessionKey) return
@@ -252,7 +262,8 @@ export const Transcript = memo(function Transcript({
     const pending = pendingHistoryPage.current
     if (!pending) return
     pendingHistoryPage.current = undefined
-    const anchorIndex = pending.anchorId ? rowIndexById.get(pending.anchorId) ?? -1 : -1
+    // Built only when a page actually landed: this anchor is its only reader.
+    const anchorIndex = pending.anchorId ? new Map(rows.map((row, index) => [row.id, index])).get(pending.anchorId) ?? -1 : -1
     if (
       anchorIndex === 0
       && state.messagesHasOlder
@@ -261,7 +272,7 @@ export const Transcript = memo(function Transcript({
     ) {
       queueMicrotask(() => loadEarlier(pending.continuation + 1))
     }
-  }, [rowIndexById, state.messagesHasOlder, state.messagesLoadingEarlier])
+  }, [rows, state.messagesHasOlder, state.messagesLoadingEarlier])
 
   const toggleTrace = (traceId: string) => {
     setDisclosures((current) => {
@@ -815,7 +826,7 @@ function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-
   if (!isCompactionWorkTrace(trace)) return undefined
   const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
   if (!compaction) return undefined
-  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString()} tokens` : 'Compacted'
+  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${formatTokenCount(compaction.tokensBefore)} tokens` : 'Compacted'
 }
 
 function CollapsedTraceTools({ items, hidden, presenters }: { items: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>; hidden: number; presenters: ReadonlyMap<string, ToolPresenter> }) {
@@ -1001,7 +1012,7 @@ function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }:
 }
 
 function Timestamp({ value }: { value: number }) {
-  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimestamp(value)}</text>
+  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimeOfDay(value)}</text>
 }
 
 export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpenDiff(): void }) {
@@ -1041,6 +1052,3 @@ function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | 
   return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
 }
 
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-}

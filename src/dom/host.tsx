@@ -82,7 +82,7 @@ function viewportMetrics() {
   return { width, height, visibleHeight, keyboardTop, keyboardInset }
 }
 
-export function useWindowSize(_options?: { intervalMs?: number }): { width: number; height: number } {
+export function useWindowSize(_options?: { intervalMs?: number | false }): { width: number; height: number } {
   const read = () => { const value = viewportMetrics(); return { width: value.width, height: value.height } }
   const [size, setSize] = useState(read)
   useEffect(() => {
@@ -102,7 +102,7 @@ export function useWindowSize(_options?: { intervalMs?: number }): { width: numb
   return size
 }
 
-export function useWindowInsets(_options?: { intervalMs?: number }) {
+export function useWindowInsets(_options?: { intervalMs?: number | false }) {
   const [metrics, setMetrics] = useState(viewportMetrics)
   useEffect(() => {
     const update = () => setMetrics((current) => {

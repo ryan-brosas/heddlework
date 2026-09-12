@@ -1,9 +1,8 @@
 name: linux
 
+# Compositor checks are opt-in, not automatic PR or main-branch checks.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

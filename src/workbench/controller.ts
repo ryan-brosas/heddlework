@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { isCurrentPiSession, type PiSessionSummary } from '../pi/session-catalog.ts'
 import { parseBuiltinSlashCommand, slashCommandsFromRpc, type ParsedBuiltinSlashCommand } from '../pi/slash-commands.ts'
@@ -10,7 +11,6 @@ import {
 } from '../pi/session-history.ts'
 import {
   sessionTreeFrom,
-  sessionTreeLeafDescendsFrom,
   sessionTreeOptions,
   treeNavigationLeavesBranch,
   type PiSessionTree,
@@ -62,6 +62,7 @@ import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
+import { formatTimeOfDay } from '../ui/format-time.ts'
 
 const SESSION_PAGE_SIZE = 120
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -85,12 +86,14 @@ export interface WorkbenchControllerDependencies {
   workspaceDiff: WorkspaceDiffService
   transportEvents?: 'direct' | 'external'
   transportOwnership?: 'controller' | 'provider'
+  /** Spawns the dedicated harness for one session; each session keeps its own Pi process. */
+  createSessionTransport?: ((sessionPath: string) => AgentTransport | Promise<AgentTransport>) | undefined
   queueStore?: QueueStoreService | undefined
   threadMetadataStore?: ThreadMetadataStoreService | undefined
 }
 
 export class WorkbenchController {
-  readonly #transport: AgentTransport
+  #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
   readonly #workspaceDiff: WorkspaceDiffService
   readonly #queueStore: QueueStoreService | undefined
@@ -119,6 +122,11 @@ export class WorkbenchController {
   #sessionTransitionDepth = 0
   #historyPager: PiSessionHistoryPager | undefined
   #sessionTree: PiSessionTree | undefined
+  #sessionTreeRequest: Promise<PiSessionTree | undefined> | undefined
+  #pendingSessionSwitch: { session: PiSessionSummary; settle: Array<() => void> } | undefined
+  #sessionLeafId: string | null | undefined
+  #sessionLeafAnchorFile: string | undefined
+  #sessionLeafAnchorSize: number | undefined
   #nextQueueId = 0
   #nextUiRequestId = 0
   #nextFabricRequestId = 0
@@ -126,8 +134,10 @@ export class WorkbenchController {
   readonly #fabricPeerRequests = new Map<string, (peers: FabricPeerCard[]) => void>()
   #compactionHold = false
   #pauseAfterTools = false
-  #unsubscribeEvent: () => void
-  #unsubscribeStatus: () => void
+  #detachActiveTransport: (() => void) | undefined
+  readonly #sessionTransports = new Map<string, AgentTransport>()
+  readonly #backgroundTracking = new Map<AgentTransport, { path: string; detach: () => void }>()
+  readonly #createSessionTransport: ((sessionPath: string) => AgentTransport | Promise<AgentTransport>) | undefined
 
   constructor(transport: AgentTransport, workspacePath: string, dependencies: WorkbenchControllerDependencies) {
     this.#transport = transport
@@ -151,12 +161,34 @@ export class WorkbenchController {
     if (cachedSessions.length > 0) {
       this.#state = { ...this.#state, sessions: cachedSessions.slice(0, this.#sessionLimit), sessionsLoading: true, sessionsHasMore: cachedSessions.length > this.#sessionLimit }
     }
+    this.#createSessionTransport = dependencies.createSessionTransport
     if (dependencies.transportEvents === 'external') {
-      this.#unsubscribeEvent = () => undefined
-      this.#unsubscribeStatus = () => undefined
+      // The integrating plugin owns the provider transport; it attaches it via attachTransport.
     } else {
-      this.#unsubscribeEvent = transport.onEvent(this.acceptAgentEvent)
-      this.#unsubscribeStatus = transport.onStatus(this.acceptAgentStatus)
+      this.#attachActiveTransport(transport)
+    }
+  }
+
+  /** Point the controller at a harness, routing events only from the active one. */
+  attachTransport(transport: AgentTransport): void {
+    this.#attachActiveTransport(transport)
+  }
+
+  #attachActiveTransport(transport: AgentTransport): void {
+    const detachPrevious = this.#detachActiveTransport
+    this.#transport = transport
+    const onEvent = (event: RpcRecord): void => {
+      if (this.#transport === transport) this.#handleEvent(event)
+    }
+    const onStatus = (status: TransportStatus): void => {
+      if (this.#transport === transport) this.#handleStatus(status)
+    }
+    const offEvent = transport.onEvent(onEvent)
+    const offStatus = transport.onStatus(onStatus)
+    this.#detachActiveTransport = () => {
+      offEvent()
+      offStatus()
+      detachPrevious?.()
     }
   }
 
@@ -528,7 +560,7 @@ export class WorkbenchController {
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
-      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+      this.#endSessionTransition()
     }
   }
 
@@ -550,62 +582,209 @@ export class WorkbenchController {
   }
 
   async switchSession(session: PiSessionSummary): Promise<void> {
+    if (this.#sessionTransitionDepth > 0) {
+      // A click landed while another session transition was still running; keep the newest
+      // target instead of dropping it, and open it when the transition finishes. The caller
+      // waits for that switch instead of returning early, which would claim the clicked
+      // thread is open while Pi still holds the previous one.
+      const settle = this.#pendingSessionSwitch?.settle ?? []
+      this.#pendingSessionSwitch = { session, settle }
+      return new Promise<void>((resolve) => { settle.push(resolve) })
+    }
     if (isCurrentPiSession(session, this.#state.session)) return
     if (this.#state.connection !== 'connected') {
       this.#setState((state) => addNotice(state, 'warning', 'Reconnect Pi before switching sessions'))
       return
     }
-    if (this.#sessionTransitionDepth > 0) return
     this.#sessionTransitionDepth += 1
+    // Everything the optimistic scope below hides, so a rejected switch can put it back.
+    const scope = { state: this.#state, historyPager: this.#historyPager, sessionTree: this.#sessionTree }
+    let rollback: Partial<WorkbenchState> | undefined
     try {
       this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
-      if (this.#state.session.isStreaming) {
-        this.#pauseAfterTools = false
-        try {
-          await this.#transport.request({ type: 'abort' })
-        } catch {
-          // switch_session still replaces the live turn; a failed abort must not pin the sidebar
-        }
-      }
-      const result = await this.#transport.request<{ cancelled?: boolean }>({
-        type: 'switch_session',
-        sessionPath: session.path,
-      })
-      if (result.cancelled) {
-        this.#patch({ activity: 'Ready' })
+      // No abort: every session owns a dedicated Pi process, so the previous harness keeps
+      // running any in-flight turn while this thread opens. Moving the visible thread to the
+      // clicked session must not depend on the harness either: the persisted JSONL tail
+      // paints in milliseconds while a cold harness parses the whole session file (seconds
+      // to tens of seconds on large threads). #bootstrap replaces the preview with
+      // authoritative state.
+      this.#sessionTree = undefined
+      this.#historyPager = undefined
+      const optimistic = this.#sessionSwitchPatch(session)
+      // Restore only fields this preview changed, not concurrent application updates.
+      rollback = Object.fromEntries(Object.keys(optimistic).map((key) => [key, scope.state[key as keyof WorkbenchState]]))
+      if (optimistic.workspacePath === scope.state.workspacePath) delete rollback.queue
+      this.#patch(optimistic)
+      const preview = this.#previewSessionTranscript(session)
+      const pooled = this.#sessionTransports.get(session.path)
+      const transport = pooled ?? await this.#openSessionTransport(session.path)
+      if (this.#state.session.sessionFile !== session.path) {
+        // A newer click superseded this switch while the harness was starting; leave the
+        // pooled harness attached for the newer transition instead of clobbering it.
+        await preview
         return
       }
-      const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
-      this.#historyPager = undefined
-      this.#patch({
-        workspacePath,
-        messages: [],
-        messagesHasOlder: false,
-        messagesLoadingEarlier: false,
-        forkMessages: [],
-        liveAssistant: undefined,
-        liveTools: [],
-        editorText: '',
-        editorImages: [],
-        notices: [],
-        statusItems: {},
-        widgets: {},
-        dialog: undefined,
-        dialogQueue: [],
-        questionnaireSubmitting: undefined,
-        questionnaireCollapsed: undefined,
-        queue: resolve(workspacePath) === resolve(this.#state.workspacePath) ? this.#state.queue : this.#queueStore?.load(workspacePath) ?? createQueueState(),
-        workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
-      })
+      this.#attachActiveTransport(transport)
+      // The thread just left keeps its harness and possibly its turn; seed the sidebar signal.
+      const previousFile = scope.state.session.sessionFile
+      if (previousFile && previousFile !== session.path) {
+        this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [previousFile]: scope.state.session.isStreaming } })
+      }
+      await preview
       await this.#bootstrap(false)
       void this.refreshSessions()
     } catch (error) {
+      if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices] })
+      this.#historyPager = scope.historyPager
+      this.#sessionTree = scope.sessionTree
+      // Pi keeps the previous session open when switch_session rejects, so the optimistic
+      // scope must not outlive it: showing the clicked thread there would take the next
+      // prompt into the previous thread under the wrong header.
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      await this.#reconcileSessionScope()
     } finally {
-      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+      this.#endSessionTransition()
     }
+  }
+
+  /** Start a dedicated harness for one session; the previous harness keeps running. */
+  async #openSessionTransport(sessionPath: string): Promise<AgentTransport> {
+    if (!this.#createSessionTransport) throw new Error('No session transport factory is configured')
+    const transport = await this.#createSessionTransport(sessionPath)
+    try {
+      await transport.start()
+    } catch (error) {
+      await transport.stop().catch(() => {})
+      throw error
+    }
+    this.#sessionTransports.set(sessionPath, transport)
+    return transport
+  }
+
+  /** Keep the pool keyed by the file each harness actually holds (new_session re-files it). */
+  #rememberActiveSessionTransport(sessionFile: string | undefined): void {
+    if (!sessionFile) return
+    for (const [path, transport] of this.#sessionTransports) {
+      if (transport === this.#transport && path !== sessionFile) this.#sessionTransports.delete(path)
+    }
+    this.#sessionTransports.set(sessionFile, this.#transport)
+    const tracked = this.#backgroundTracking.get(this.#transport)
+    if (tracked?.path !== sessionFile) {
+      tracked?.detach()
+      this.#backgroundTracking.set(this.#transport, { path: sessionFile, detach: this.#attachBackgroundTracking(this.#transport, sessionFile) })
+    }
+  }
+
+  /**
+   * Watch a non-active harness so its turn state stays visible: the sidebar shows a
+   * background session still working, and a crashed harness leaves the pool quietly.
+   */
+  #attachBackgroundTracking(transport: AgentTransport, sessionFile: string): () => void {
+    const setActivity = (streaming: boolean): void => {
+      this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [sessionFile]: streaming } })
+    }
+    const offEvent = transport.onEvent((event) => {
+      if (this.#disposed || this.#transport === transport) return
+      if (event.type === 'agent_start') setActivity(true)
+      if (event.type === 'agent_settled') setActivity(false)
+    })
+    const offStatus = transport.onStatus((status) => {
+      if (this.#disposed || this.#transport === transport) return
+      if (status.state !== 'exited' && status.state !== 'stopped') return
+      if (this.#sessionTransports.get(sessionFile) === transport) this.#sessionTransports.delete(sessionFile)
+      this.#backgroundTracking.get(transport)?.detach()
+      this.#backgroundTracking.delete(transport)
+      setActivity(false)
+    })
+    return () => {
+      offEvent()
+      offStatus()
+    }
+  }
+
+  /**
+   * Leave a session transition. Every operation that owns the transition must exit through
+   * here, so a click that landed during it opens on the way out instead of waiting for an
+   * unrelated later switch to drain it.
+   */
+  #endSessionTransition(): void {
+    this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+    if (this.#sessionTransitionDepth > 0) return
+    const pending = this.#pendingSessionSwitch
+    this.#pendingSessionSwitch = undefined
+    if (!pending) return
+    // switchSession reports its own failures, but a failure must not strand the waiters.
+    void this.switchSession(pending.session).catch(() => {}).finally(() => {
+      for (const settle of pending.settle) settle()
+    })
+  }
+
+  /** Pi owns what is actually open, so re-read it after a rejected transition. */
+  async #reconcileSessionScope(): Promise<void> {
+    if (this.#disposed || this.#state.connection !== 'connected') return
+    try {
+      await this.#bootstrap(false)
+    } catch {
+      // The failure notice above is the report; reconciling must not add a second one.
+    }
+  }
+
+  /**
+   * Reset applied the moment a thread is clicked, so the transcript, header, project
+   * scope, and queue move together while Pi loads the session in the background.
+   */
+  #sessionSwitchPatch(session: PiSessionSummary): Partial<WorkbenchState> {
+    const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
+    const sameWorkspace = resolve(workspacePath) === resolve(this.#state.workspacePath)
+    return {
+      workspacePath,
+      session: {
+        ...this.#state.session,
+        sessionFile: session.path,
+        sessionId: session.id,
+        sessionName: session.name ?? session.title,
+        isStreaming: false,
+      },
+      messages: [],
+      messagesHasOlder: false,
+      messagesLoadingEarlier: false,
+      forkMessages: [],
+      liveAssistant: undefined,
+      liveTools: [],
+      editorText: '',
+      editorImages: [],
+      notices: [],
+      statusItems: {},
+      widgets: {},
+      dialog: undefined,
+      dialogQueue: [],
+      questionnaireSubmitting: undefined,
+      questionnaireCollapsed: undefined,
+      queue: sameWorkspace ? this.#state.queue : this.#queueStore?.load(workspacePath) ?? createQueueState(),
+      workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
+    }
+  }
+
+  /** Read the clicked thread's persisted tail; #bootstrap owns the authoritative transcript. */
+  async #previewSessionTranscript(session: PiSessionSummary): Promise<void> {
+    const pager = new PiSessionHistoryPager(session.path)
+    let page: SessionHistoryPage
+    try {
+      page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
+    } catch {
+      return
+    }
+    if (this.#disposed || this.#sessionTransitionDepth === 0) return
+    if (this.#state.session.sessionFile !== session.path) return
+    if (page.messages.length === 0) return
+    this.#historyPager = pager
+    this.#patch({
+      messages: page.messages,
+      messagesHasOlder: page.hasOlder,
+      messagesLoadingEarlier: false,
+    })
   }
 
   async refreshSessions(background = false): Promise<void> {
@@ -705,7 +884,8 @@ export class WorkbenchController {
       }
       this.#historyPager = undefined
       this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
-      await this.#bootstrap(false)
+      // In-memory navigation can leave the file tip on the abandoned branch.
+      await this.#bootstrap(false, { anchorLeaf: true })
       if (result.editorText !== undefined) this.#patch({ editorText: result.editorText, editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Navigated within the current Pi session'))
     } catch (error) {
@@ -742,7 +922,7 @@ export class WorkbenchController {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
       if (result.cancelled) return
       this.#patch({ notices: [], queue: createQueueState() })
-      await this.#bootstrap(false)
+      await this.#bootstrap(false, { anchorLeaf: true })
       this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -755,7 +935,7 @@ export class WorkbenchController {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
       this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
-      await this.#bootstrap(false)
+      await this.#bootstrap(false, { anchorLeaf: true })
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
     } catch (error) {
@@ -852,7 +1032,7 @@ export class WorkbenchController {
       ...this.#state.threadLifecycle,
       [path]: { ...retained, snoozedUntil },
     }
-    const time = new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const time = formatTimeOfDay(snoozedUntil)
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', `Snoozed until ${time}`))
   }
 
@@ -940,9 +1120,17 @@ export class WorkbenchController {
     this.#dialogs.dispose()
     for (const resolvePeers of this.#fabricPeerRequests.values()) resolvePeers([])
     this.#fabricPeerRequests.clear()
-    this.#unsubscribeEvent()
-    this.#unsubscribeStatus()
-    if (this.#stopTransportOnDispose) await this.#transport.stop()
+    this.#detachActiveTransport?.()
+    this.#detachActiveTransport = undefined
+    for (const tracked of this.#backgroundTracking.values()) tracked.detach()
+    this.#backgroundTracking.clear()
+    const stopAll = await Promise.allSettled(
+      [...new Set([this.#transport, ...this.#sessionTransports.values()])].map(async (transport) => {
+        if (transport === this.#transport && !this.#stopTransportOnDispose) return
+        await transport.stop()
+      }),
+    )
+    void stopAll
     this.#notifier.cancel()
     this.#listeners.clear()
   }
@@ -1219,7 +1407,7 @@ export class WorkbenchController {
           if (result.cancelled) return false
           this.#historyPager = undefined
           this.#patch({ notices: [], queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
-          await this.#bootstrap(false)
+          await this.#bootstrap(false, { anchorLeaf: true })
           this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
           return true
         }
@@ -1286,6 +1474,8 @@ export class WorkbenchController {
             await this.#transport.stop()
             await this.#transport.start()
             this.#started = true
+            // Pi reloads the file, so its leaf is the file tip again.
+            this.#clearSessionLeafAnchor()
             const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'switch_session', sessionPath: sessionFile })
             if (result.cancelled) {
               await this.#bootstrap(false)
@@ -1323,21 +1513,22 @@ export class WorkbenchController {
     this.#patch({ uiRequest })
   }
 
-  async #bootstrap(includeModels: boolean): Promise<void> {
+  async #bootstrap(includeModels: boolean, { anchorLeaf = false }: { anchorLeaf?: boolean } = {}): Promise<void> {
     const generation = ++this.#bootstrapGeneration
     const transcriptGeneration = ++this.#transcriptRefreshGeneration
     const streamRevision = this.#streamRevision
-    const [reportedSession, sessionTree] = await Promise.all([
-      this.#transport.request<PiSessionState>({ type: 'get_state' }),
-      this.#tryRequestSessionTree(),
-    ])
+    const reportedSession = await this.#transport.request<PiSessionState>({ type: 'get_state' })
     if (this.#disposed || generation !== this.#bootstrapGeneration) return
+    this.#rememberActiveSessionTransport(reportedSession.sessionFile)
 
     const streamUnchanged = streamRevision === this.#streamRevision
     const session = streamUnchanged
       ? reportedSession
       : { ...reportedSession, isStreaming: this.#state.session.isStreaming }
-    this.#sessionTree = sessionTree
+    // get_tree is O(session size) in Pi and a background request would stall Pi's
+    // serial command loop (seconds on large threads), so the tree is fetched only when
+    // tree navigation is opened. Drop any tree cached for a different session.
+    if ((session.sessionFile ?? '') !== (this.#state.session.sessionFile ?? '')) this.#sessionTree = undefined
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected',
@@ -1353,10 +1544,14 @@ export class WorkbenchController {
     })
 
     const current = () => !this.#disposed && generation === this.#bootstrapGeneration
+    // Changing sessionFile clears the previous anchor; capture the new harness leaf after
+    // that change, including fork/clone results whose persisted tip may be another branch.
+    if (anchorLeaf) await this.#captureSessionLeafAnchor(session.sessionFile)
+    if (!current()) return
     const transcriptCurrent = () => current()
       && transcriptGeneration === this.#transcriptRefreshGeneration
       && streamRevision === this.#streamRevision
-    const transcript = this.#loadInitialTranscript(session, sessionTree?.leafId).then(({ page, pager }) => {
+    const transcript = this.#loadInitialTranscript(session).then(({ page, pager }) => {
       if (!transcriptCurrent()) return
       this.#historyPager = pager
       this.#patch({
@@ -1398,9 +1593,9 @@ export class WorkbenchController {
     }
   }
 
-  async #loadInitialTranscript(session: PiSessionState, leafId?: string | null): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
+  async #loadInitialTranscript(session: PiSessionState): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
     if (session.sessionFile) {
-      const pager = new PiSessionHistoryPager(session.sessionFile, leafId)
+      const pager = new PiSessionHistoryPager(session.sessionFile, await this.#activeLeafAnchor(session.sessionFile))
       try {
         const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
         return { page, pager }
@@ -1413,20 +1608,62 @@ export class WorkbenchController {
   }
 
   async #requestSessionTree(): Promise<PiSessionTree> {
-    const value = await this.#transport.request({ type: 'get_tree' })
-    const sessionTree = sessionTreeFrom(value)
+    const sessionTree = (await this.#tryRequestSessionTree()) ?? this.#sessionTree
     if (!sessionTree) throw new Error('This Pi version does not expose session tree navigation to RPC clients')
     this.#sessionTree = sessionTree
     return sessionTree
   }
 
-  async #tryRequestSessionTree(): Promise<PiSessionTree | undefined> {
-    try {
-      const value = await this.#transport.request({ type: 'get_tree' })
-      return sessionTreeFrom(value)
-    } catch {
+  /**
+   * Read Pi's active leaf for a transcript that in-memory navigation moved away from the
+   * file tip. The anchor only holds while the same session stays loaded: a different file
+   * or a grown one means Pi's leaf is the file tip again.
+   */
+  async #activeLeafAnchor(sessionFile: string | undefined): Promise<string | null | undefined> {
+    if (sessionFile === undefined || this.#sessionLeafId === undefined) return undefined
+    if (this.#sessionLeafAnchorFile !== sessionFile) return undefined
+    const size = await sessionFileSize(sessionFile)
+    if (size === undefined || size !== this.#sessionLeafAnchorSize) {
+      this.#clearSessionLeafAnchor()
       return undefined
     }
+    return this.#sessionLeafId
+  }
+
+  #clearSessionLeafAnchor(): void {
+    this.#sessionLeafId = undefined
+    this.#sessionLeafAnchorFile = undefined
+    this.#sessionLeafAnchorSize = undefined
+  }
+
+  async #captureSessionLeafAnchor(sessionFile: string | undefined): Promise<void> {
+    if (sessionFile === undefined) {
+      this.#clearSessionLeafAnchor()
+      return
+    }
+    const size = await sessionFileSize(sessionFile)
+    try {
+      const tree = await this.#requestSessionTree()
+      this.#sessionLeafId = tree.leafId
+    } catch {
+      this.#clearSessionLeafAnchor()
+      return
+    }
+    this.#sessionLeafAnchorFile = sessionFile
+    this.#sessionLeafAnchorSize = size
+  }
+
+  /** One get_tree at a time: it is O(session size) in Pi, so callers must share the result. */
+  async #tryRequestSessionTree(): Promise<PiSessionTree | undefined> {
+    if (this.#sessionTreeRequest) return this.#sessionTreeRequest
+    const request = this.#transport.request({ type: 'get_tree' })
+      .then((value) => sessionTreeFrom(value))
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.#sessionTreeRequest === request) this.#sessionTreeRequest = undefined
+      })
+    this.#sessionTreeRequest = request
+    return request
   }
 
   async #getThinkingLevels(): Promise<ThinkingLevel[]> {
@@ -1445,25 +1682,23 @@ export class WorkbenchController {
       && this.#sessionTransitionDepth === 0
     try {
       const sessionFile = this.#state.session.sessionFile
-      const previousTree = this.#sessionTree
-      const [sessionTree, forkMessages] = await Promise.all([
-        this.#tryRequestSessionTree(),
-        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
-          .catch(() => ({ messages: this.#state.forkMessages })),
-      ])
+      const forkMessages = await this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
+        .catch(() => ({ messages: this.#state.forkMessages }))
       if (!current()) return
-      if (sessionTree) this.#sessionTree = sessionTree
       if (sessionFile) {
-        const latestPager = new PiSessionHistoryPager(sessionFile, sessionTree?.leafId)
+        const latestPager = new PiSessionHistoryPager(sessionFile, await this.#activeLeafAnchor(sessionFile))
         const page = await latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
         if (!current()) return
-        const branchChanged = previousTree !== undefined
-          && sessionTree !== undefined
-          && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
-        const retainedPager = branchChanged ? undefined : this.#historyPager
+        const merged = mergeTranscriptTail(this.#state.messages, page.messages)
+        // A rewritten branch moves the head of the loaded window; the retained pager's
+        // cursor would then follow the abandoned branch, so restart it from the new tail.
+        const branchReset = this.#state.messages.length > 0
+          && merged.length > 0
+          && messageEntryId(merged[0]!) !== messageEntryId(this.#state.messages[0]!)
+        const retainedPager = branchReset ? undefined : this.#historyPager
         if (!retainedPager) this.#historyPager = latestPager
         this.#patch({
-          messages: branchChanged ? page.messages : mergeTranscriptTail(this.#state.messages, page.messages),
+          messages: merged,
           messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
           messagesLoadingEarlier: false,
           forkMessages: forkMessagesFrom(forkMessages),
@@ -1707,6 +1942,8 @@ export class WorkbenchController {
     const next = update(previous)
     if (next === previous) return
     this.#state = next
+    // A loaded session owns its own leaf; a switch, new session or reload invalidates it.
+    if (next.session.sessionFile !== previous.session.sessionFile) this.#clearSessionLeafAnchor()
     if (next.workspacePath !== previous.workspacePath && this.#unsubscribeCatalog) this.#watchSessionCatalog()
     if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
     if (next.threadLifecycle !== previous.threadLifecycle) this.#threadMetadataStore?.save(next.threadLifecycle)
@@ -1760,6 +1997,15 @@ function interactiveOnlyCommandMessage(command: ParsedBuiltinSlashCommand['name'
   if (command === 'hotkeys') return "Pi's /hotkeys describes its terminal UI; Heddlework uses native desktop controls"
   if (command === 'changelog') return "Pi's /changelog view is interactive-only and is not exposed by RPC"
   return `/${command} is not available through Pi RPC`
+}
+
+async function sessionFileSize(path: string | undefined): Promise<number | undefined> {
+  if (!path) return undefined
+  try {
+    return (await stat(path)).size
+  } catch {
+    return undefined
+  }
 }
 
 function messageEntryId(message: PiMessage): string | undefined {

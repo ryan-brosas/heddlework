@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { useWindowSize } from '@gpuix/react'
+import { useWindowMetrics } from './window-metrics.tsx'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { WorkbenchSurfaceProps } from './extensions.ts'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
@@ -21,7 +21,7 @@ export function TerminalPanel({
 }: WorkbenchSurfaceProps & { service: TerminalSessionService }) {
   const projectionSuspended = useTerminalProjectionSuspended()
   const snapshot = useTerminalServiceSnapshot(service, projectionSuspended)
-  const windowSize = useWindowSize({ intervalMs: 50 })
+  const windowSize = useWindowMetrics().size
   const activeId = snapshot.activeRightId ?? snapshot.sessions[0]?.id
   const [focusSerial, setFocusSerial] = useState(1)
   const grabFocus = useCallback((id = activeId) => {
