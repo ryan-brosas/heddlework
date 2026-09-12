@@ -12,6 +12,11 @@ import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
+async function exportTranscript(controller: WorkbenchController): Promise<void> {
+  const path = await controller.exportSession()
+  if (path) openPath(path)
+}
+
 export function ChatHeader({
   state,
   controller,
@@ -55,12 +60,12 @@ export function ChatHeader({
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
             <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
-            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
+            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
           </>
         ) : (
           <>
             <Button testId="header-open" label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
-            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
+            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
           </>
         ))}
         {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
@@ -91,7 +96,7 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
         if (value === 'clone') void controller.cloneSession()
         if (value === 'compact') void controller.compact()
         if (value === 'refresh') void controller.refreshSessions()
-        if (value === 'export') void controller.exportSession()
+        if (value === 'export') void exportTranscript(controller)
       }}
     >
       <SelectTrigger

@@ -92,7 +92,7 @@ export function IconButton({
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 8,
-        backgroundColor: active ? colors.sidebarActive : colors.transparent,
+        backgroundColor: active ? colors.sidebarActive : colors.background,
         opacity: disabled ? 0.35 : 1,
         userSelect: 'none',
         ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: colors.hover } }),

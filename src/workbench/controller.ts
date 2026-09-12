@@ -64,6 +64,7 @@ import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
 import { formatTimeOfDay } from '../ui/format-time.ts'
 import { persistLastWorkspace } from './last-workspace.ts'
+import { ensureSessionExportPath } from './session-export.ts'
 
 const SESSION_PAGE_SIZE = 120
 /** Idle background Pi processes kept after a switch. Streaming harnesses are never evicted. */
@@ -1062,7 +1063,8 @@ export class WorkbenchController {
 
   async exportSession(): Promise<string | undefined> {
     try {
-      const data = await this.#transport.request<{ path: string }>({ type: 'export_html' })
+      const outputPath = ensureSessionExportPath(this.#state.session.sessionFile)
+      const data = await this.#transport.request<{ path: string }>({ type: 'export_html', outputPath })
       this.#setState((state) => addNotice(state, 'info', `Exported session to ${data.path}`))
       return data.path
     } catch (error) {
