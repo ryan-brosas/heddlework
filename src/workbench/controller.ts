@@ -92,6 +92,18 @@ export interface WorkbenchControllerDependencies {
   threadMetadataStore?: ThreadMetadataStoreService | undefined
 }
 
+/** Live overlay for a background harness so switching back does not look aborted. */
+interface SessionLiveSnapshot {
+  isStreaming: boolean
+  liveAssistant: WorkbenchState['liveAssistant']
+  liveTools: WorkbenchState['liveTools']
+  activity: string
+  dialog: WorkbenchState['dialog']
+  dialogQueue: WorkbenchState['dialogQueue']
+  statusItems: WorkbenchState['statusItems']
+  widgets: WorkbenchState['widgets']
+}
+
 export class WorkbenchController {
   #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
@@ -137,6 +149,7 @@ export class WorkbenchController {
   #detachActiveTransport: (() => void) | undefined
   readonly #sessionTransports = new Map<string, AgentTransport>()
   readonly #backgroundTracking = new Map<AgentTransport, { path: string; detach: () => void }>()
+  readonly #liveSessions = new Map<string, SessionLiveSnapshot>()
   readonly #createSessionTransport: ((sessionPath: string) => AgentTransport | Promise<AgentTransport>) | undefined
 
   constructor(transport: AgentTransport, workspacePath: string, dependencies: WorkbenchControllerDependencies) {
@@ -605,8 +618,13 @@ export class WorkbenchController {
     const scope = { state: this.#state, historyPager: this.#historyPager, sessionTree: this.#sessionTree }
     let rollback: Partial<WorkbenchState> | undefined
     try {
-      this.#dialogs.cancelAll()
-      this.#patch({ activity: 'Opening thread' })
+      const previousFile = this.#state.session.sessionFile
+      this.#captureLiveSession(previousFile)
+      this.#ensureBackgroundTracking(this.#transport, previousFile)
+      // Hide this window's dialogs; do not cancel Pi — that aborts the background turn.
+      this.#dialogs.hideVisible()
+      const live = this.#liveSessions.get(resolve(session.path)) ?? this.#liveSessions.get(session.path)
+      this.#patch({ activity: live?.isStreaming ? 'Working' : 'Opening thread' })
       // No abort: every session owns a dedicated Pi process, so the previous harness keeps
       // running any in-flight turn while this thread opens. Moving the visible thread to the
       // clicked session must not depend on the harness either: the persisted JSONL tail
@@ -615,7 +633,7 @@ export class WorkbenchController {
       // authoritative state, off the transition lock.
       this.#sessionTree = undefined
       this.#historyPager = undefined
-      const optimistic = this.#sessionSwitchPatch(session)
+      const optimistic = this.#sessionSwitchPatch(session, live)
       // Restore only fields this preview changed, not concurrent application updates.
       rollback = Object.fromEntries(Object.keys(optimistic).map((key) => [key, scope.state[key as keyof WorkbenchState]]))
       if (optimistic.workspacePath === scope.state.workspacePath) delete rollback.queue
@@ -632,9 +650,14 @@ export class WorkbenchController {
       }
       this.#attachActiveTransport(transport)
       // The thread just left keeps its harness and possibly its turn; seed the sidebar signal.
-      const previousFile = scope.state.session.sessionFile
       if (previousFile && previousFile !== session.path) {
-        this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [previousFile]: scope.state.session.isStreaming } })
+        this.#patch({
+          sessionActivity: {
+            ...this.#state.sessionActivity,
+            [previousFile]: scope.state.session.isStreaming,
+            [resolve(previousFile)]: scope.state.session.isStreaming,
+          },
+        })
       }
       await preview
       this.#patch({ activity: this.#state.session.isStreaming ? 'Working' : 'Ready' })
@@ -674,6 +697,31 @@ export class WorkbenchController {
     return transport
   }
 
+  #captureLiveSession(sessionFile: string | undefined): void {
+    if (!sessionFile) return
+    const snapshot: SessionLiveSnapshot = {
+      isStreaming: this.#state.session.isStreaming,
+      liveAssistant: this.#state.liveAssistant,
+      liveTools: this.#state.liveTools,
+      activity: this.#state.activity,
+      dialog: this.#state.dialog,
+      dialogQueue: this.#state.dialogQueue,
+      statusItems: this.#state.statusItems,
+      widgets: this.#state.widgets,
+    }
+    this.#liveSessions.set(resolve(sessionFile), snapshot)
+    this.#liveSessions.set(sessionFile, snapshot)
+  }
+
+  #ensureBackgroundTracking(transport: AgentTransport, sessionFile: string | undefined): void {
+    if (!sessionFile) return
+    const key = resolve(sessionFile)
+    const tracked = this.#backgroundTracking.get(transport)
+    if (tracked?.path === sessionFile || tracked?.path === key) return
+    tracked?.detach()
+    this.#backgroundTracking.set(transport, { path: sessionFile, detach: this.#attachBackgroundTracking(transport, sessionFile) })
+  }
+
   /** Keep the pool keyed by the file each harness actually holds (new_session re-files it). */
   #rememberActiveSessionTransport(sessionFile: string | undefined): void {
     if (!sessionFile) return
@@ -695,7 +743,21 @@ export class WorkbenchController {
    */
   #attachBackgroundTracking(transport: AgentTransport, sessionFile: string): () => void {
     const setActivity = (streaming: boolean): void => {
-      this.#patch({ sessionActivity: { ...this.#state.sessionActivity, [sessionFile]: streaming } })
+      this.#patch({
+        sessionActivity: {
+          ...this.#state.sessionActivity,
+          [sessionFile]: streaming,
+          [resolve(sessionFile)]: streaming,
+        },
+      })
+      const live = this.#liveSessions.get(resolve(sessionFile)) ?? this.#liveSessions.get(sessionFile)
+      if (!live) return
+      live.isStreaming = streaming
+      live.activity = streaming ? 'Working' : 'Ready'
+      if (!streaming) {
+        live.liveAssistant = undefined
+        live.liveTools = []
+      }
     }
     const offEvent = transport.onEvent((event) => {
       if (this.#disposed || this.#transport === transport) return
@@ -749,7 +811,7 @@ export class WorkbenchController {
    * Reset applied the moment a thread is clicked, so the transcript, header, project
    * scope, and queue move together while Pi loads the session in the background.
    */
-  #sessionSwitchPatch(session: PiSessionSummary): Partial<WorkbenchState> {
+  #sessionSwitchPatch(session: PiSessionSummary, live?: SessionLiveSnapshot): Partial<WorkbenchState> {
     const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
     const sameWorkspace = resolve(workspacePath) === resolve(this.#state.workspacePath)
     return {
@@ -759,23 +821,24 @@ export class WorkbenchController {
         sessionFile: session.path,
         sessionId: session.id,
         sessionName: session.name ?? session.title,
-        isStreaming: false,
+        isStreaming: live?.isStreaming ?? false,
       },
       messages: [],
       messagesHasOlder: false,
       messagesLoadingEarlier: false,
       forkMessages: [],
-      liveAssistant: undefined,
-      liveTools: [],
+      liveAssistant: live?.liveAssistant,
+      liveTools: live?.liveTools ?? [],
       editorText: '',
       editorImages: [],
       notices: [],
-      statusItems: {},
-      widgets: {},
-      dialog: undefined,
-      dialogQueue: [],
+      statusItems: live?.statusItems ?? {},
+      widgets: live?.widgets ?? {},
+      dialog: live?.dialog,
+      dialogQueue: live?.dialogQueue ?? [],
       questionnaireSubmitting: undefined,
       questionnaireCollapsed: undefined,
+      activity: live?.isStreaming ? live.activity || 'Working' : 'Opening thread',
       queue: sameWorkspace ? this.#state.queue : this.#queueStore?.load(workspacePath) ?? createQueueState(),
       workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
     }
