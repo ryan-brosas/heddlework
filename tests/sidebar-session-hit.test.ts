@@ -11,6 +11,9 @@ describe('sidebar session hit target', () => {
     expect(row).toContain('withoutRowClick(onSettle)')
     expect(row).toContain('withoutRowClick(onWake)')
     expect(row).toContain("testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'}")
+    expect(row).toContain('compact || hovered || snoozeMounted || active')
+    expect(sidebar).not.toContain('disabled={state.session.isStreaming || state.connection !== \'connected\'}')
+    expect(sidebar).toContain('disabled={state.connection !== \'connected\'}')
     // pointerEvents auto occludes the wheel (GPUI BlockMouse). List rows must not use it.
     const card = row.slice(row.indexOf("sidebar-session-card-active' : 'sidebar-session-card'"))
     expect(card.slice(0, 800)).not.toContain("pointerEvents: 'auto'")
