@@ -101,7 +101,7 @@ export function SessionRow({
           <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         </div>
         <div style={{ minWidth: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-          {showLifecycleActions ? (
+          {showLifecycleActions && (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
                 <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: cardSurface, borderRadius: 5, hover: { backgroundColor: colors.hover } }} onMouseEnter={() => setSnoozeHovered(true)} onMouseLeave={() => setSnoozeHovered(false)} onClick={withoutRowClick(onSnooze)}>
@@ -114,9 +114,10 @@ export function SessionRow({
                 <text testId="sidebar-settle-label" style={{ color: settleHovered ? colors.text : colors.textFaint, fontSize: 9 }}>Settle</text>
               </div>
             </>
-          ) : (
-            <text style={{ color: '#E9705A', fontSize: 10, fontWeight: 700 }}>π</text>
           )}
+          {/* The Pi mark is the card's harness identity: the lifecycle controls must never
+              displace it, so a live card keeps showing it at the far right of the row. */}
+          <text testId="sidebar-harness-badge" style={{ color: '#E9705A', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>π</text>
         </div>
       </div>
       <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>

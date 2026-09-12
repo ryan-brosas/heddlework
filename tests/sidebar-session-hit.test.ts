@@ -28,6 +28,11 @@ describe('sidebar session hit target', () => {
     expect(row).toContain('withoutRowClick(onWake)')
     expect(row).toContain("testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'}")
     expect(row).toContain('showLifecycleActions')
+    // The Pi mark is the card's harness identity and must survive the controls that share its
+    // row: exactly one glyph, rendered after both controls rather than instead of them.
+    expect(row).toContain('testId="sidebar-harness-badge"')
+    expect(row.match(/π/gu)?.length).toBe(1)
+    expect(row.indexOf('sidebar-harness-badge')).toBeGreaterThan(row.indexOf('testId="sidebar-settle"'))
     expect(row).toContain('settleHovered || snoozeHovered')
     expect(row).toContain('onMouseEnter={() => setSnoozeHovered(true)}')
     expect(sidebar).not.toContain('disabled={state.session.isStreaming || state.connection !== \'connected\'}')

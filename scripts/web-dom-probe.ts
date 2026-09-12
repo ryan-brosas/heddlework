@@ -85,6 +85,17 @@ assert(surfaceFill.length > 0 && pageFill.length > 0, 'Card fills were not rende
 assert(surfaceFill !== pageFill, `Active card reused the bare sidebar fill ${surfaceFill}`)
 assert(fillOf(snooze) === surfaceFill, `Snooze control filled ${fillOf(snooze)} instead of the card surface ${surfaceFill}`)
 assert(fillOf(settle) === surfaceFill, `Settle control filled ${fillOf(settle)} instead of the card surface ${surfaceFill}`)
+// The Pi mark is the card's harness identity: it must coexist with the lifecycle controls on a
+// live card, stay the rightmost element of the row, and keep its brand colour unclipped.
+const badge = window.document.querySelector('[data-testid="sidebar-harness-badge"]')
+assert(badge, 'Active card lost the Pi harness mark to the lifecycle controls')
+assert(badge.textContent === 'π', `Harness mark rendered ${JSON.stringify(badge.textContent)}`)
+assert(/color:\s*#E9705A/iu.test(styleOf(badge)), `Harness mark lost its brand colour: ${styleOf(badge)}`)
+assert(/flex-shrink:\s*0/u.test(styleOf(badge)), 'Harness mark was shrinkable and could be clipped')
+const badgeRow = badge.parentElement
+assert(badgeRow, 'Harness mark had no parent row')
+assert(badgeRow.querySelector('[data-testid="sidebar-snooze"]') !== null, 'Harness mark replaced the snooze control')
+assert(Array.from(badgeRow.children).at(-1) === badge, 'Harness mark was not the rightmost element of the row')
 // The running label is the animated shimmer, and it sits on the metadata row beside the branch.
 const status = window.document.querySelector('[data-testid="sidebar-session-status"]')
 assert(status, 'Running session rendered no status label')
