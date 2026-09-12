@@ -2,7 +2,6 @@ import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import { isDurableNotice } from '../workbench/state.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
@@ -94,7 +93,7 @@ export function WorkbenchApp({
   const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
-  const unreadCount = state.notices.filter((notice) => isDurableNotice(notice) && notice.id > lastSeenNoticeId).length
+  const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
   const setLeftSidebarVisibility = useCallback((open: boolean) => {
     if (!open) setLeftSidebarMounted(true)

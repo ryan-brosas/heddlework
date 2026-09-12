@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PiImageContent } from '../pi/types.ts'
-import { isTransientNotice, type WorkbenchState } from '../workbench/state.ts'
+import type { WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
 import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
@@ -11,7 +11,6 @@ import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
-import { composerNotificationStackHeight } from './notifications.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS, TextShimmer, useEaseProgress } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -140,10 +139,9 @@ export const Transcript = memo(function Transcript({
 
   const hydratedMessages = useMemo(() => hydrateMessageImages(state.messages), [state.messages])
   const items = useMemo(
-    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices), state.session.isStreaming),
-    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.session.isStreaming],
+    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices, state.statusLines), state.session.isStreaming),
+    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.statusLines, state.session.isStreaming],
   )
-  const transientNoticeCount = useMemo(() => state.notices.filter(isTransientNotice).length, [state.notices])
   // Only expanded traces are ever read back from this map (the row filter below, the
   // limit-growth effect, and the toggle clamp), so a transcript with nothing expanded skips the
   // O(items) build that every live delta would otherwise pay for.
@@ -346,7 +344,6 @@ export const Transcript = memo(function Transcript({
             queue={state.queue}
             statusItems={state.statusItems}
             widgets={state.widgets}
-            transientNoticeCount={transientNoticeCount}
             expandedEntryIds={expandedEntryIds}
             expanded={row.kind === 'trace-header'
               ? expandedTraceIds.has(row.id)
@@ -380,6 +377,7 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.sessionId === next.state.session.sessionId
   && previous.state.session.isStreaming === next.state.session.isStreaming
   && previous.state.notices.length === next.state.notices.length
+  && previous.state.statusLines === next.state.statusLines
   && previous.state.questionnaireCollapsed === next.state.questionnaireCollapsed
   && previous.state.queue === next.state.queue
   && previous.state.statusItems === next.state.statusItems
@@ -423,7 +421,6 @@ function ProjectedTranscriptRow({
   queue,
   statusItems,
   widgets,
-  transientNoticeCount,
   expanded,
   expandedEntryIds,
   onToggleTrace,
@@ -444,7 +441,6 @@ function ProjectedTranscriptRow({
   queue: WorkbenchState['queue']
   statusItems: WorkbenchState['statusItems']
   widgets: WorkbenchState['widgets']
-  transientNoticeCount: number
   expanded: boolean
   expandedEntryIds: ReadonlySet<string>
   onToggleTrace(traceId: string): void
@@ -456,7 +452,7 @@ function ProjectedTranscriptRow({
 }) {
   if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
   if (row.kind === 'working') return <WorkingRow activity={activity} />
-  if (row.kind === 'composer-spacer') return <ComposerSpacer questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} transientNoticeCount={transientNoticeCount} />
+  if (row.kind === 'composer-spacer') return <ComposerSpacer questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} />
   if (row.kind === 'retiring-assistant') return <RetiringAssistantRow item={row.item} onRevert={onRevert} onDone={() => onFinishRetire(row.item.id)} />
   if (row.kind === 'timeline-item') return <TimelineItemRow item={row.item} onRevert={onRevert} />
   if (row.kind === 'trace-header') {
@@ -1027,8 +1023,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets, transientNoticeCount }: { questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets']; transientNoticeCount: number }) {
-  const targetHeight = 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems) + composerNotificationStackHeight(transientNoticeCount)
+function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }: { questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
+  const targetHeight = 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems)
   return <MotionDiv initial={false} animate={{ height: targetHeight }} transition={LAYOUT_MOTION_TRANSITION} testId="composer-spacer" style={{ width: '100%', height: targetHeight }} />
 }
 
