@@ -8,6 +8,14 @@ describe('sidebar session hit target', () => {
     ])
     expect(row).toContain('backgroundColor: colors.sidebar')
     expect(row).toContain('withoutRowClick(onSnooze)')
+    // Controls fill with the card surface, never the bare sidebar colour, or they show as a
+    // dark slab inside an active/hovered card.
+    expect(row).toContain("import { TextShimmer } from './motion.ts'")
+    expect(row).toContain('const cardSurface = active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.sidebar')
+    expect(row).toContain('backgroundColor: cardSurface')
+    expect(row).toContain('minWidth: 70')
+    // The running label keeps the canonical working animation, not static text.
+    expect(row).toContain("? <TextShimmer testId=\"sidebar-session-status\" text=\"Working\"")
     // Time/date and the Working tag live on the session metadata row, not the project row.
     const branchIconIndex = row.indexOf('name="gitBranch"')
     const statusIndex = row.indexOf('sidebar-session-status')
