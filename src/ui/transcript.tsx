@@ -31,6 +31,7 @@ import {
   projectTranscriptRows,
   resetRowIdentityCache,
   type DisplayTimelineItem,
+  type TracePreviewItem,
   type TraceTimelineItem,
   type TranscriptProjectionRow,
 } from './transcript-projection.ts'
@@ -813,16 +814,13 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
   )
 }
 
-function TracePreview({ item }: { item: TraceTimelineItem }) {
+function TracePreview({ item }: { item: TracePreviewItem }) {
   if (item.kind === 'thinking' || item.kind === 'assistant') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
   }
   if (item.kind === 'context-injection') {
     const prefix = item.source ? `${contextInjectionLabel(item)} ` : ''
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(`${prefix}${item.text}`)}</text></div>
-  }
-  if (item.kind === 'notice') {
-    return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.notice.message}</text></div>
   }
   if (item.kind === 'compaction') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
@@ -899,7 +897,7 @@ function RetiringAssistantRow({ item, onRevert, onDone }: { item: AssistantTimel
 
 function collapsedPreviewHeight(
   tools: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>,
-  preview: TraceTimelineItem | undefined,
+  preview: TracePreviewItem | undefined,
   presenters: ReadonlyMap<string, ToolPresenter>,
 ): number {
   let rows = preview && preview.kind !== 'tool' ? 1 : 0

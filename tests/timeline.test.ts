@@ -111,6 +111,18 @@ describe('buildTimeline', () => {
     expect(items.map((item) => item.kind)).toEqual(['user', 'thinking', 'notice', 'tool'])
     expect(items[2]).toMatchObject({ kind: 'notice', notice: { message: 'TPS 25.6 tok/s' } })
   })
+
+  it('leaves a notice without a captured turn position out of the feed', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'Inspect the project', timestamp: 1 },
+      { role: 'assistant', content: 'Done.', timestamp: 2 },
+    ]
+    const notices = [{ id: 9, kind: 'info' as const, message: 'TPS 25.6 tok/s', createdAt: 3 }]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, notices)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant'])
+  })
   it('orders notifications at their captured trace positions and by time within a position', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: 'Inspect the project', timestamp: 1 },

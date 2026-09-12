@@ -126,6 +126,27 @@ describe('transcript projection', () => {
     expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'trace-entry', 'trace-notices', 'trace-notices', 'trace-entry'])
   })
 
+  it('keeps notices out of the collapsed trace rows', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'TPS 25.6 tok/s', createdAt: 1_000 } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    const rows = projectTranscriptRows(grouped, new Set(), new Map())
+    expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'timeline-item'])
+  })
+
+  it('keeps the running preview on reasoning when a notice trails the work wave', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan', streaming: true },
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'TPS 25.6 tok/s', createdAt: 1_000 } },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(currentWorkWave(trace.items).preview).toMatchObject({ id: 'thinking', kind: 'thinking' })
+  })
+
   it('folds intermediate assistant replies into the work trace and keeps the settled response', () => {
     const grouped = groupWorkItems([
       { id: 'user', kind: 'user', text: 'Prompt', images: [] },
