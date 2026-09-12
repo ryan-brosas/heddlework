@@ -175,7 +175,9 @@ matter what the client did. `WorkbenchController` therefore no longer shares one
 each session gets a dedicated harness (`pi --mode rpc --session <file>`, ~4.9 s cold open on the
 117 MiB thread, paid once per session), pooled per session file and reused on return. A switch is a
 pointer swap plus the optimistic preview; the previous harness keeps running its turn, so work
-continues while another thread is open. `createSessionTransport` is injected
+continues while another thread is open. The visible overlay (streaming flag, live tools, dialogs)
+is snapshotted per session file and restored on return. Switching must not send
+`extension_ui_response cancelled` to the old Pi — that aborts the background turn. `createSessionTransport` is injected
 (`createWorkbenchControllerPlugin` mirrors the app's transport options; tests spawn fakes).
 Removed on the switch path: the client-side `abort` and `switch_session` requests. Events/status
 route only from the active harness (guarded `#attachActiveTransport`); the pool re-keys after
