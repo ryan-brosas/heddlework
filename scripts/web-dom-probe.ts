@@ -34,5 +34,13 @@ assert(window.sessionStorage.getItem('heddlework.token') === 'a'.repeat(43), 'Pa
 assert(!window.document.documentElement.outerHTML.includes('windowdragregion'), 'Native drag props leaked into DOM')
 assert(window.document.body.textContent?.includes('TPS 25.6 tok/s'), 'Session status line did not render in the transcript')
 assert(!window.document.querySelector('[data-testid="composer-notification-stack"]'), 'Extension status leaked into a notification banner')
+// Pi's showStatus line carries no notification chrome: no card, no border, no timestamp. Asserting the
+// exact text also proves no time-of-day element was appended beside it.
+const statusLine = window.document.querySelector('[data-testid="session-status-line"]')
+assert(statusLine, 'Pi showStatus line did not render as a session status line')
+assert(statusLine.textContent?.trim() === 'TPS 25.6 tok/s', `Pi showStatus line carried extra chrome: ${statusLine.textContent}`)
+const statusLineCss = statusLine.getAttribute('style') ?? ''
+assert(!/(^|;)\s*(background-color|border-width|border-color)\s*:/u.test(statusLineCss), `Pi showStatus line rendered notification chrome: ${statusLineCss}`)
+assert(!window.document.querySelector('[data-testid="session-status-line"] [data-testid^="timestamp"]'), 'Pi showStatus line rendered a timestamp')
 console.log('web DOM probe passed')
 process.exit(0)

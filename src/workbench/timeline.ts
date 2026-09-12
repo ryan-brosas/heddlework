@@ -13,7 +13,7 @@ export type TimelineItem =
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'notice'; notice: Notice; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'compaction'; text: string; tokensBefore?: number | undefined; timestamp?: number | undefined } & RevertibleItem)
-  | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'status'; text: string; origin?: 'extension'; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
 interface SettledTimeline {
   items: TimelineItem[]
@@ -254,7 +254,9 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[], status
   // Pi appends a status line to the chat after the turn's content, so it lands on the turn
   // boundary rather than at a trace position.
   const emittedStatus = new Set<number>()
-  const statusItem = (line: StatusLine): TimelineItem => ({ id: `status-line-${line.id}`, kind: 'status', text: line.text, timestamp: line.createdAt })
+  // Pi's showStatus line carries no chrome and no timestamp: it is plain dim chat content, so the
+  // item stays a status line with the extension origin that selects that rendering.
+  const statusItem = (line: StatusLine): TimelineItem => ({ id: `status-line-${line.id}`, kind: 'status', text: line.text, origin: 'extension' })
   const appendStatus = () => {
     if (!pendingStatus) return
     const line = pendingStatus
