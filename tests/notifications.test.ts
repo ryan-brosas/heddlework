@@ -19,8 +19,10 @@ describe('notification ledger state', () => {
     state = addStatusLine(state, 'TPS 25.9 tok/s')
 
     expect(state.statusLines.map((line) => line.text)).toEqual(['TPS 25.9 tok/s'])
-    expect(state.statusLines[0]).toMatchObject({ turn: 0 })
+    // Nothing is loaded yet, so the line is tail-anchored until the transcript arrives.
+    expect(state.statusLines[0]).toMatchObject({ turn: -1 })
     expect(state.notices.map((notice) => notice.message)).toEqual(['A Pi extension failed'])
+
 
     const messages: WorkbenchState['messages'] = [
       { role: 'user', content: 'First turn', timestamp: 1 },

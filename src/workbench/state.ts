@@ -25,6 +25,7 @@ export interface StatusLine {
   id: number
   text: string
   createdAt: number
+  /** Turn index of the line's position, or -1 to append at the transcript tail. */
   turn: number
 }
 
@@ -264,7 +265,7 @@ export function addNotice(state: WorkbenchState, kind: NoticeKind, message: stri
     kind,
     message,
     createdAt: Date.now(),
-    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition }),
+    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, currentTurn(state)), transcriptPosition }),
   }
   return { ...state, notices: [...state.notices, notice] }
 }
@@ -276,13 +277,21 @@ export function addNotice(state: WorkbenchState, kind: NoticeKind, message: stri
  * an extension re-reports the same turn (pi-tps corrects a turn once its cost is known).
  */
 export function addStatusLine(state: WorkbenchState, text: string): WorkbenchState {
-  const turn = Math.max(0, state.messages.filter((message) => message.role === 'user').length - 1)
+  const turn = currentTurn(state)
   const line: StatusLine = { id: ++statusLineId, text, createdAt: Date.now(), turn }
   const index = state.statusLines.findIndex((candidate) => candidate.turn === turn)
   return {
     ...state,
     statusLines: index === -1 ? [...state.statusLines, line] : state.statusLines.map((candidate, at) => (at === index ? line : candidate)),
   }
+}
+
+/**
+ * Turn index of the newest loaded user message, -1 when no turn is loaded yet. Notices and
+ * status lines share this anchor so both read the same turn numbering.
+ */
+function currentTurn(state: WorkbenchState): number {
+  return state.messages.filter((message) => message.role === 'user').length - 1
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {
