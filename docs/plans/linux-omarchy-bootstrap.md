@@ -6,8 +6,9 @@ acting on them.
 
 ## Verified state (2026-09-12)
 
-- Fork `main` = fresh fork of upstream: `fd4496d` (`feat(platform): align native runtime and add web companion`),
-  identical to `upstream/main` and `origin/main`. The previous Linux work (35 commits, incl. WP-12/WP-13) is
+- Fork `main` = upstream fork point `fd4496d` (`feat(platform): align native runtime and add web companion`)
+  plus the re-landed Linux foundations, merged from PR #1 (`67653a1`, head `3be39b3`) on 2026-09-12; it no
+  longer mirrors `upstream/main`. The previous Linux work (35 commits, incl. WP-12/WP-13) is
   preserved locally on `backup/main-35ahead` and `feat/linux-adoption-foundations` (`4298ef3`).
 - `gpuix-runtime.json` pins `monotykamary/gpuix@2b94075` and `monotykamary/zed@e94e7f5`. Both pins are the tip
   of each fork's `feat/heddlework-platform-alignment` branch and strictly contain that fork's `main`

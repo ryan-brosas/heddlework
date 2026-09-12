@@ -17,7 +17,9 @@ or Wayland work.
 
 ## Lineage
 
-- `main` tracks the fresh fork of upstream (`monotykamary/heddlework`, currently `fd4496d`).
+- `main` is the fork's own Linux baseline: upstream fork point `fd4496d` plus the re-landed Linux
+  foundations, merged from PR #1 (`67653a1`, head `3be39b3`). Upstream (`monotykamary/heddlework`)
+  is a fetch target, not a merge target for `main` anymore; new work branches from `main`.
 - The pre-reset Linux work (35 commits) is preserved locally on `backup/main-35ahead` (`5bbc57c`)
   and `feat/linux-adoption-foundations` (`4298ef3`). Re-land it per concern; never merge wholesale.
 - `gpuix-runtime.json` pins `monotykamary/gpuix@2b94075` + `monotykamary/zed@e94e7f5` (both are the
@@ -47,6 +49,10 @@ with their implementations.
   enforces this).
 - **Wayland correctness is Linux-only knowledge**: macOS headless layout tests prove nothing about
   decorations, serials, or fractional scaling. Validate on Hyprland and Mutter explicitly.
+- **Perf budgets skip on Linux by design**: `has_test_gpuix_renderer` is `cfg!(test-support &&
+  (macos || windows))` in the pinned gpuix (`packages/native/src/lib.rs`) because wgpu cannot read
+  back rendered images on Linux yet. `test:performance` therefore reports 3 skips on Linux even
+  with a healthy `@gpuix/react` symlink - do not "fix" the symlink; the blocker is upstream gpuix.
 - `.pi/` is local agent-runtime state; `.pi/fabric/mesh/*` handoff files are session-local,
   never commit them.
 - `docs/browser.md` documents the native browser (macOS CEF today); read it before touching that
