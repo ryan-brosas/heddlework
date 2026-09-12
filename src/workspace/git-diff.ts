@@ -4,12 +4,16 @@ import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 const MAX_PATCH_BYTES = 1_500_000
 const MAX_UNTRACKED_FILES = 24
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+// Deterministic diff parsing requires the standard a/ b/ prefixes; global user
+// config (diff.mnemonicprefix, diff.noprefix) rewrites them and would otherwise
+// break every path this module reports.
+const CANONICAL_DIFF_CONFIG = ['-c', 'diff.mnemonicprefix=false', '-c', 'diff.noprefix=false']
 
 export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
   try {
     const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    const trackedPatch = await runGit(cwd, ['diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
-    const numstat = await runGit(cwd, ['diff', '--numstat', 'HEAD', '--'])
+    const trackedPatch = await runGit(cwd, [...CANONICAL_DIFF_CONFIG, 'diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
+    const numstat = await runGit(cwd, [...CANONICAL_DIFF_CONFIG, 'diff', '--numstat', 'HEAD', '--'])
     const untracked = (await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '--']))
       .split('\n')
       .map((path) => path.trim())
@@ -17,7 +21,7 @@ export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
       .slice(0, MAX_UNTRACKED_FILES)
 
     const untrackedPatches = await Promise.all(untracked.map(async (path) => {
-      const result = await runGit(cwd, ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path], [0, 1])
+      const result = await runGit(cwd, [...CANONICAL_DIFF_CONFIG, 'diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path], [0, 1])
       return normalizeNoIndexPatch(result, cwd, path)
     }))
     const patch = [trackedPatch, ...untrackedPatches].filter(Boolean).join('\n')

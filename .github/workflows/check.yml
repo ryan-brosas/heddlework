@@ -13,9 +13,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  # Primary quality gate: Linux (the fork's development lane, Omarchy/Arch x86_64).
+  test-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      HEDDLEWORK_WITHOUT_CEF: '1'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - name: Restore matched native runtime sources and artifacts
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/heddlework-gpuix
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock') }}
+      - name: Install Linux native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libudev-dev
+      - run: bun run setup:native
+      - name: Point native tests at the freshly built runtime
+        run: echo "NAPI_RS_NATIVE_LIBRARY_PATH=$(ls "$PWD"/node_modules/.cache/heddlework-gpuix/*/packages/native/gpuix-native.linux-x64-gnu.node | head -1)" >> "$GITHUB_ENV"
+      - run: bun run typecheck:web
+      - run: bun run build:web
+      - run: bunx playwright install chromium
+      - run: bun run test:browser
+      - run: bun run check
+      - run: bun run build
+        env:
+          HEDDLEWORK_WITHOUT_CEF: '1'
+
+  # Best-effort compatibility: keep macOS building and passing, not the development lane.
+  test-macos:
     runs-on: macos-latest
     timeout-minutes: 60
+    continue-on-error: true
     env:
       HEDDLEWORK_WITHOUT_CEF: '1'
       CARGO_BUILD_JOBS: '2'
