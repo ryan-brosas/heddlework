@@ -1,5 +1,5 @@
 import type { PiForkMessage, PiImageContent, PiMessage } from '../pi/types.ts'
-import { asRecord, contentText, type LiveAssistant, type Notice, type ToolRun } from './state.ts'
+import { asRecord, contentText, type LiveAssistant, type Notice, type StatusLine, type ToolRun } from './state.ts'
 
 interface RevertibleItem {
   revertEntryId?: string | undefined
@@ -154,6 +154,7 @@ export function buildTimeline(
   forkMessages: PiForkMessage[] = [],
   messageIndexOffset = 0,
   notices: Notice[] = [],
+  statusLines: StatusLine[] = [],
 ): TimelineItem[] {
   // Streaming deltas replace liveAssistant/liveTools and leave the transcript arrays
   // identical, so reuse the settled pass instead of rebuilding every item per token.
@@ -198,7 +199,7 @@ export function buildTimeline(
     if (existing?.kind === 'tool') items[index] = { ...existing, tool: { ...existing.tool, ...liveTool } }
   }
 
-  return interleaveTraceNotices(settleAbandonedTools(items), notices)
+  return interleaveTraceNotices(settleAbandonedTools(items), notices, statusLines)
 }
 
 export function currentTurnTracePosition(messages: PiMessage[], liveAssistant: LiveAssistant | undefined, liveTools: ToolRun[], forkMessages: PiForkMessage[] = []): number {
@@ -219,7 +220,7 @@ function settleAbandonedTools(items: TimelineItem[]): TimelineItem[] {
   })
 }
 
-function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): TimelineItem[] {
+function interleaveTraceNotices(items: TimelineItem[], notices: Notice[], statusLines: StatusLine[]): TimelineItem[] {
   const byTurn = new Map<number, Notice[]>()
   for (const notice of notices) {
     if (notice.transcriptTurn === undefined) continue
@@ -230,11 +231,13 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): Timel
   for (const turnNotices of byTurn.values()) {
     turnNotices.sort((left, right) => (left.transcriptPosition ?? 0) - (right.transcriptPosition ?? 0) || left.createdAt - right.createdAt || left.id - right.id)
   }
+  const statusByTurn = new Map(statusLines.map((line) => [line.turn, line]))
 
   const merged: TimelineItem[] = []
   let turn = -1
   let position = 0
   let pending: Notice[] = []
+  let pendingStatus: StatusLine | undefined
   const appendThrough = (limit: number) => {
     while (pending[0] && (pending[0].transcriptPosition ?? 0) <= limit) {
       const notice = pending.shift()!
@@ -243,13 +246,23 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): Timel
     }
   }
   const appendRemaining = () => appendThrough(Number.POSITIVE_INFINITY)
+  // Pi appends a status line to the chat after the turn's content, so it lands on the turn
+  // boundary rather than at a trace position.
+  const appendStatus = () => {
+    if (!pendingStatus) return
+    const line = pendingStatus
+    pendingStatus = undefined
+    merged.push({ id: `status-line-${line.id}`, kind: 'status', text: line.text, timestamp: line.createdAt })
+  }
 
   for (const item of items) {
     if (item.kind === 'user') {
       appendRemaining()
+      appendStatus()
       turn += 1
       position = 0
       pending = [...(byTurn.get(turn) ?? [])]
+      pendingStatus = statusByTurn.get(turn)
       merged.push(item)
       appendThrough(0)
       continue
@@ -264,6 +277,7 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): Timel
     merged.push(item)
   }
   appendRemaining()
+  appendStatus()
   return merged
 }
 

@@ -14,8 +14,18 @@ export interface Notice {
   createdAt: number
   transcriptTurn?: number
   transcriptPosition?: number
-  /** Pi extension banners (`ui.notify`) fade in the harness, so they never join the durable ledger. */
-  transient?: boolean
+}
+
+/**
+ * Pi renders an `info` notify through `showStatus`: a dim status line appended to the session
+ * chat rather than a notification. Lines are turn-anchored so the transcript can place one after
+ * the turn it describes; consecutive statuses for a turn update it instead of stacking.
+ */
+export interface StatusLine {
+  id: number
+  text: string
+  createdAt: number
+  turn: number
 }
 
 export type ThreadPriority = 0 | 1 | 2 | 3 | 4
@@ -111,6 +121,7 @@ export interface WorkbenchState {
   queue: WorkbenchQueueState
   stats: PiSessionStats | undefined
   notices: Notice[]
+  statusLines: StatusLine[]
   threadLifecycle: Record<string, ThreadLifecycle>
   /** Live turn signal per session file, tracked from each session's own harness. */
   sessionActivity: Record<string, boolean>
@@ -129,6 +140,7 @@ export interface WorkbenchState {
 }
 
 let noticeId = 0
+let statusLineId = 0
 
 export function createInitialState(workspacePath: string): WorkbenchState {
   return {
@@ -150,6 +162,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     activity: 'Ready',
     queue: createQueueState(),
     notices: [],
+    statusLines: [],
     threadLifecycle: {},
     sessionActivity: {},
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
@@ -257,21 +270,19 @@ export function addNotice(state: WorkbenchState, kind: NoticeKind, message: stri
 }
 
 /**
- * Pi's `ui.notify` renders as a banner that fades, so extension banners never join the durable
- * ledger and never claim a transcript position. Actionable output keeps the `addNotice` path.
+ * Pi's `showExtensionNotify` sends `info` notifies to `showStatus`, which appends a dim line to the
+ * session chat and rewrites the previous line when statuses arrive back to back. Heddlework keeps
+ * that line with the session instead of the notification ledger, and replaces the turn's line when
+ * an extension re-reports the same turn (pi-tps corrects a turn once its cost is known).
  */
-export function addTransientNotice(state: WorkbenchState, kind: NoticeKind, message: string): WorkbenchState {
-  const notice: Notice = { id: ++noticeId, kind, message, createdAt: Date.now(), transient: true }
-  return { ...state, notices: [...state.notices, notice] }
-}
-
-export function isTransientNotice(notice: Notice): boolean {
-  return notice.transient === true
-}
-
-/** The notification ledger and its unread badge hold durable history, not transient banners. */
-export function isDurableNotice(notice: Notice): boolean {
-  return !isTransientNotice(notice)
+export function addStatusLine(state: WorkbenchState, text: string): WorkbenchState {
+  const turn = Math.max(0, state.messages.filter((message) => message.role === 'user').length - 1)
+  const line: StatusLine = { id: ++statusLineId, text, createdAt: Date.now(), turn }
+  const index = state.statusLines.findIndex((candidate) => candidate.turn === turn)
+  return {
+    ...state,
+    statusLines: index === -1 ? [...state.statusLines, line] : state.statusLines.map((candidate, at) => (at === index ? line : candidate)),
+  }
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

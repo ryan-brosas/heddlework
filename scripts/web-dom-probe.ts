@@ -4,7 +4,18 @@ import { resolve } from 'node:path'
 import { createInitialState } from '../src/workbench/state.ts'
 const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}` })
 window.document.body.innerHTML = '<div id="root"></div>'
-const state = { ...createInitialState('/workspace/mobile'), connection: 'connected' as const, connectionMessage: 'Connected' }
+const state = {
+  ...createInitialState('/workspace/mobile'),
+  connection: 'connected' as const,
+  connectionMessage: 'Connected',
+  // A session status line is chat content (Pi's showStatus), so it must render in the transcript
+  // and must never surface as an extension notification banner.
+  messages: [
+    { role: 'user' as const, content: 'Measure the turn', timestamp: 1 },
+    { role: 'assistant' as const, content: 'Measured.', timestamp: 2 },
+  ],
+  statusLines: [{ id: 1, text: 'TPS 25.6 tok/s', createdAt: 3, turn: 0 }],
+}
 class FakeWebSocket extends window.EventTarget {
   static readonly OPEN = 1; readyState = 0; bufferedAmount = 0
   constructor(readonly url: string) { super(); queueMicrotask(() => { this.readyState = 1; this.dispatchEvent(new window.Event('open')) }) }
@@ -21,5 +32,7 @@ assert(window.document.querySelector('[data-testid="workbench-main"]'), 'Workben
 assert(window.location.hash === '', 'Pairing fragment was not stripped')
 assert(window.sessionStorage.getItem('heddlework.token') === 'a'.repeat(43), 'Pairing token was not retained for this tab')
 assert(!window.document.documentElement.outerHTML.includes('windowdragregion'), 'Native drag props leaked into DOM')
+assert(window.document.body.textContent?.includes('TPS 25.6 tok/s'), 'Session status line did not render in the transcript')
+assert(!window.document.querySelector('[data-testid="composer-notification-stack"]'), 'Extension status leaked into a notification banner')
 console.log('web DOM probe passed')
 process.exit(0)

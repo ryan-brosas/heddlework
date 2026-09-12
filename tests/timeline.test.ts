@@ -123,6 +123,36 @@ describe('buildTimeline', () => {
 
     expect(items.map((item) => item.kind)).toEqual(['user', 'assistant'])
   })
+
+  it('appends a turn status line after the turn content, like Pi showStatus', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'First', timestamp: 1 },
+      { role: 'assistant', content: 'First answer', timestamp: 2 },
+      { role: 'user', content: 'Second', timestamp: 3 },
+    ]
+    const statusLines = [{ id: 3, text: 'TPS 25.6 tok/s', createdAt: 4, turn: 0 }]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, [], statusLines)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'status', 'user'])
+    expect(items[2]).toMatchObject({ kind: 'status', text: 'TPS 25.6 tok/s' })
+  })
+
+  it('keeps only the latest status line for a turn', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'First', timestamp: 1 },
+      { role: 'assistant', content: 'First answer', timestamp: 2 },
+    ]
+    const statusLines = [
+      { id: 3, text: 'TPS 25.6 tok/s', createdAt: 3, turn: 0 },
+      { id: 4, text: 'TPS 25.9 tok/s', createdAt: 4, turn: 0 },
+    ]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, [], statusLines)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'status'])
+    expect(items[2]).toMatchObject({ text: 'TPS 25.9 tok/s' })
+  })
   it('orders notifications at their captured trace positions and by time within a position', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: 'Inspect the project', timestamp: 1 },
