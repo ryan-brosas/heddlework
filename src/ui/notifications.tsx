@@ -1,13 +1,14 @@
 import { formatTimeOfDay } from './format-time.ts'
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useEffect, useRef, useState } from 'react'
-import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
+import { isDurableNotice, type Notice, type NoticeKind, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
+/** Reserves the transient extension-banner strip that sits above the composer rail. */
 export function composerNotificationStackHeight(noticeCount: number): number {
   const visibleCount = Math.min(3, Math.max(0, noticeCount))
   return visibleCount === 0 ? 0 : 48 + (visibleCount - 1) * 18
@@ -87,7 +88,7 @@ export function ComposerNotificationStack({ notices, onDismiss, onClear }: { not
   if (visible.length === 0) return null
 
   return (
-    <div testId="composer-notification-stack" style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', marginBottom: 8 }}>
+    <div testId="composer-notification-stack" style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', marginBottom: 8, pointerEvents: 'auto' }}>
       {visible.map((notice, index) => {
         const newest = index === visible.length - 1
         const depth = visible.length - index - 1
@@ -161,7 +162,7 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, 
 
 export function NotificationLedgerView({ state, fullscreen = false, fullscreenProgress, panelWidth = 422, onClear, onClose }: { state: WorkbenchState; fullscreen?: boolean; fullscreenProgress?: number; panelWidth?: number; onClear(): void; onClose?(): void }) {
   const { mobile } = useResponsiveLayout()
-  const notices = [...state.notices].reverse()
+  const notices = state.notices.filter(isDurableNotice).reverse()
   const virtualWindow = useNativeVirtualWindow(notices.length, `notifications:${notices.length}:${notices[0]?.id ?? ''}:${notices.at(-1)?.id ?? ''}`)
   const visibleNotices = notices.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)

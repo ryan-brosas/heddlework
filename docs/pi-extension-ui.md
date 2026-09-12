@@ -8,7 +8,7 @@ Heddlework handles Pi's `select`, `confirm`, `input`, and `editor` requests in t
 
 Fire-and-forget extension surfaces are also native:
 
-- `notify` and `extension_error` enter the notification stack and ledger.
+- `notify` splits by kind: `info` banners are transient, appearing in a short-lived stack above the composer that expires after `TRANSIENT_NOTICE_TTL_MS` and never enters the ledger, the unread badge, or a transcript position. `warning` and `error` keep the durable path (notification stack and ledger), as does `extension_error`.
 - String `setWidget` content and ANSI-safe `setStatus` entries share a horizontally scrollable rail above the composer. Above-editor widgets enter first, followed by below-editor widgets and then status chips; new items use that same order for staggered motion.
 - `setTitle` updates the window title.
 - `setEditorText` updates the draft.
