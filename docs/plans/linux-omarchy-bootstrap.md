@@ -89,6 +89,11 @@ Local-workspace traps (both hit and fixed 2026-09-12):
   workspace-diff parsing into `changed file` placeholders. Fixed in `src/workspace/git-diff.ts` by
   forcing `-c diff.mnemonicprefix=false -c diff.noprefix=false` on every diff invocation; regression
   coverage in `tests/workspace-diff.test.ts` (GIT_CONFIG_GLOBAL fixture).
+- A `hyprctl -j clients` probe verifies window registration only: app_id/class, pid, geometry,
+  liveness. It does NOT exercise decorations, fractional scaling, minimize/maximize/close, or
+  multi-monitor moves - scope Wayland claims to what the probe covered (2026-09-12 probe verified
+  app_id registration only). Write the jq filter to a file and run `jq -f`; inline jq quoting is
+  eaten by the shell (hit twice 2026-09-12).
 
 ## Open items
 
