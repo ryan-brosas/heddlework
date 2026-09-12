@@ -15,15 +15,20 @@ describe('loadWorkspaceDiff', () => {
     expectFixtureDiff(await loadWorkspaceDiff(await createFixture()))
   })
 
-  // git applies the developer's own diff.* configuration to every invocation, and both of
-  // these settings change or drop the a/ and b/ prefixes the patch parser reads. The loader
-  // must pin the prefixes rather than inherit whatever the invoking machine configured.
-  for (const [key, value] of [
-    ['diff.mnemonicprefix', 'true'],
-    ['diff.noprefix', 'true'],
-  ] as const) {
-    it(`reads file paths while ${key}=${value} is set`, async () => {
-      expectFixtureDiff(await loadWorkspaceDiff(await createFixture([[key, value]])))
+  // git applies the developer's own diff.* configuration to every invocation, and each of
+  // these settings changes or drops the a/ and b/ prefixes the patch parser reads. Pinning
+  // mnemonicprefix/noprefix alone is not enough: diff.srcPrefix (git 2.41+) rewrites the
+  // prefixes on its own. The loader must pin all of them instead of inheriting whatever the
+  // invoking machine configured. On older git the srcPrefix keys are ignored, and that case
+  // degrades to the default prefixes it also asserts.
+  const prefixConfigurations = [
+    { label: 'diff.mnemonicprefix=true', config: [['diff.mnemonicprefix', 'true']] },
+    { label: 'diff.noprefix=true', config: [['diff.noprefix', 'true']] },
+    { label: 'diff.srcPrefix=c/ and diff.dstPrefix=w/', config: [['diff.srcPrefix', 'c/'], ['diff.dstPrefix', 'w/']] },
+  ] as const
+  for (const { label, config } of prefixConfigurations) {
+    it(`reads file paths while ${label} is set`, async () => {
+      expectFixtureDiff(await loadWorkspaceDiff(await createFixture(config)))
     })
   }
 })
