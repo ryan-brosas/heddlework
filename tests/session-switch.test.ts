@@ -97,6 +97,9 @@ class SwitchingTransport implements AgentTransport {
       return {} as T
     }
     if (command.type === 'switch_session') {
+      const barrier = this.#switchBarrier
+      this.#switchBarrier = undefined
+      if (barrier) await barrier
       // Pi keeps the previous session when a switch fails, so active must stay put here.
       if (this.#switchFailure) {
         const message = this.#switchFailure
@@ -106,9 +109,6 @@ class SwitchingTransport implements AgentTransport {
       this.active = [...sessions, workspaceSession, ...this.extras].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
-      const barrier = this.#switchBarrier
-      this.#switchBarrier = undefined
-      if (barrier) await barrier
       return { cancelled: false } as T
     }
     if (command.type === 'get_state') {
@@ -149,6 +149,7 @@ class NavigatingTransport implements AgentTransport {
   readonly statuses = new Set<(status: TransportStatus) => void>()
   readonly requests: RpcCommand[] = []
   treeRequests = 0
+  cloneTarget: string | undefined
   sessionFile: string
 
   constructor(sessionFile: string, private readonly tree: unknown) {
@@ -173,6 +174,11 @@ class NavigatingTransport implements AgentTransport {
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_fork_messages') return { messages: [] } as T
     if (command.type === 'get_session_stats') return { sessionFile: this.sessionFile, sessionId: 'branching' } as T
+    if (command.type === 'get_messages') throw new Error('NavigatingTransport requires the persisted transcript fixture')
+    if ((command.type === 'clone' || command.type === 'fork') && this.cloneTarget) {
+      this.sessionFile = this.cloneTarget
+      return { cancelled: false } as T
+    }
     if (command.type === 'navigate_tree') return { cancelled: false } as T
     if (command.type === 'switch_session') {
       this.sessionFile = String(command.sessionPath)
@@ -381,6 +387,50 @@ describe('clickable session switching', () => {
       await controller.dispose()
     }
   })
+
+  it('preserves concurrent queue, lifecycle and notice updates after a rejected switch', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      const release = transport.holdNextSwitch()
+      transport.failNextSwitch('Rejected delayed switch')
+      const switching = controller.switchSession({ ...sessions[1]!, cwd: '/tmp/project' })
+      const queued = controller.queueInput('Keep this queued input', [], { paused: true })!
+      controller.settleThread('/tmp/background.jsonl')
+      release()
+      await switching
+      const state = controller.getSnapshot()
+      expect(state.session.sessionId).toBe('one')
+      expect(state.queue.items.some((item) => item.id === queued.id)).toBe(true)
+      expect(state.threadLifecycle['/tmp/background.jsonl']?.settledAt).toBeDefined()
+      expect(state.notices.map((notice) => notice.message)).toContain('Thread moved to Settled')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  for (const operation of ['clone', 'fork'] as const) {
+    it(`keeps the authoritative leaf after ${operation} changes the session file`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'heddlework-clone-leaf-'))
+      fixtures.push(directory)
+      const original = await writePersistedSession(directory, 'original', ['original'])
+      const target = await writePersistedSession(directory, 'forked', ['selected', 'abandoned'])
+      const tree = { leafId: 'forked-entry-0', tree: [{ entry: { type: 'message', id: 'forked-entry-0', parentId: null, message: { role: 'user', content: 'selected' } }, children: [] }] }
+      const transport = new NavigatingTransport(original, tree)
+      transport.cloneTarget = target
+      const controller = new WorkbenchController(transport, directory, testControllerDependencies(new StaticCatalog()))
+      try {
+        await controller.start()
+        if (operation === 'clone') await controller.cloneSession()
+        else await controller.forkFrom('original-entry-0')
+        expect(controller.getSnapshot().session.sessionFile).toBe(target)
+        expect(controller.getSnapshot().messages.map((message) => message.content)).toEqual(['selected'])
+      } finally {
+        await controller.dispose()
+      }
+    })
+  }
 
   it('opens a click that landed during a new-session transition', async () => {
     const transport = new SwitchingTransport()

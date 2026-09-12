@@ -1,10 +1,9 @@
-import { spawn } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getPiSessionRoot } from '../src/pi/session-catalog.ts'
 import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES } from '../src/pi/session-history.ts'
-import { resolvePiExecutable } from '../src/pi/rpc-transport.ts'
-import type { RpcRecord } from '../src/pi/types.ts'
+import { PiRpcTransport } from '../src/pi/rpc-transport.ts'
+import type { RpcCommand } from '../src/pi/types.ts'
 
 const REQUEST_TIMEOUT_MS = 300_000
 
@@ -13,67 +12,19 @@ interface Timing {
   readonly milliseconds: number
 }
 
-/** Times each Pi RPC that the session-switch path needs, against the real harness. */
+/** Use the application's transport so failed RPCs and child exits cannot become timings. */
 class PiRpcProbe {
-  readonly #child = spawn(resolvePiExecutable(), ['--mode', 'rpc'], { stdio: ['pipe', 'pipe', 'pipe'] })
-  readonly #pending = new Map<string, (record: RpcRecord) => void>()
-  #buffer = ''
-  #sequence = 0
+  readonly #transport = new PiRpcTransport({ cwd: process.cwd(), fabricBridge: false, requestTimeoutMs: REQUEST_TIMEOUT_MS })
 
-  constructor() {
-    this.#child.stdout.on('data', (chunk: Buffer | string) => this.#consume(chunk.toString()))
-  }
+  ready(): Promise<void> { return this.#transport.start() }
 
-  async ready(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 400))
-  }
-
-  async time(name: string, command: Record<string, unknown>): Promise<Timing> {
+  async time(name: string, command: RpcCommand): Promise<Timing> {
     const startedAt = performance.now()
-    await this.request(command)
+    await this.#transport.request(command)
     return { name, milliseconds: performance.now() - startedAt }
   }
 
-  request(command: Record<string, unknown>): Promise<RpcRecord> {
-    const id = `benchmark_${++this.#sequence}`
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#pending.delete(id)
-        reject(new Error(`Timed out waiting for Pi command: ${String(command.type)}`))
-      }, REQUEST_TIMEOUT_MS)
-      this.#pending.set(id, (record) => {
-        clearTimeout(timer)
-        resolve(record)
-      })
-      this.#child.stdin.write(`${JSON.stringify({ ...command, id })}\n`)
-    })
-  }
-
-  stop(): void {
-    this.#child.kill('SIGTERM')
-  }
-
-  #consume(chunk: string): void {
-    this.#buffer += chunk
-    let end = this.#buffer.indexOf('\n')
-    while (end >= 0) {
-      const line = this.#buffer.slice(0, end)
-      this.#buffer = this.#buffer.slice(end + 1)
-      end = this.#buffer.indexOf('\n')
-      if (!line.trim()) continue
-      let record: RpcRecord
-      try {
-        record = JSON.parse(line) as RpcRecord
-      } catch {
-        continue
-      }
-      if (record.type !== 'response' || !record.id) continue
-      const pending = this.#pending.get(record.id)
-      if (!pending) continue
-      this.#pending.delete(record.id)
-      pending(record)
-    }
-  }
+  stop(): Promise<void> { return this.#transport.stop() }
 }
 
 async function largestSessionFile(): Promise<string> {
@@ -111,7 +62,7 @@ try {
   timings.push(await probe.time('get_fork_messages', { type: 'get_fork_messages' }))
   timings.push(await probe.time('get_tree', { type: 'get_tree' }))
 } finally {
-  probe.stop()
+  await probe.stop()
 }
 
 const byName = new Map(timings.map((timing) => [timing.name, timing.milliseconds]))
@@ -128,7 +79,7 @@ console.log(`${'local transcript page'.padEnd(25)} ${pagerMilliseconds.toFixed(1
 for (const timing of timings) console.log(`${timing.name.padEnd(25)} ${timing.milliseconds.toFixed(1).padStart(12)}`)
 console.log('')
 console.log(`interactive first paint   ${pagerMilliseconds.toFixed(1).padStart(12)}  (optimistic preview from the session JSONL)`)
-console.log(`before: preview            ${(switchMilliseconds + Math.max(treeMilliseconds, stateMilliseconds) + pagerMilliseconds).toFixed(1).padStart(12)}  (awaited switch_session + get_tree before the transcript)`)
+console.log(`before: preview            ${(switchMilliseconds + stateMilliseconds + treeMilliseconds + pagerMilliseconds).toFixed(1).padStart(12)}  (estimated serial switch_session + get_state + get_tree + persisted page)`)
 console.log('')
 console.log(treeMilliseconds > 2_000
   ? 'NOTE get_tree is O(session size) in Pi and Pi serializes RPC commands, so it must stay off the transcript paint path.'

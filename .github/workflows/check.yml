@@ -47,7 +47,10 @@ jobs:
             wayland-protocols
       - run: bun run setup:native
       - name: Point native tests at the freshly built runtime
-        run: echo "NAPI_RS_NATIVE_LIBRARY_PATH=$(ls "$PWD"/node_modules/.cache/heddlework-gpuix/*/packages/native/gpuix-native.linux-x64-gnu.node | head -1)" >> "$GITHUB_ENV"
+        run: |
+          addon="$PWD/node_modules/@gpuix/native/gpuix-native.linux-x64-gnu.node"
+          test -f "$addon"
+          echo "NAPI_RS_NATIVE_LIBRARY_PATH=$addon" >> "$GITHUB_ENV"
       - run: bun run typecheck:web
       - run: bun run build:web
       - run: bunx playwright install chromium

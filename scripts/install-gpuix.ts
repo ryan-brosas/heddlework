@@ -1,11 +1,13 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { REQUIRED_NATIVE_METHODS } from '../src/native-runtime.ts'
 import { nativeBuildCommand, parseGpuixSourcePin } from './gpuix-source.ts'
+import { installNativeAddon, nativeAddonFilename } from './gpuix-artifacts.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const targetAddon = nativeAddonFilename(process.platform, process.arch)
 const pin = parseGpuixSourcePin(JSON.parse(readFileSync(resolve(root, 'gpuix-runtime.json'), 'utf8')))
 const source = process.env.HEDDLEWORK_GPUIX_SOURCE
   ? resolve(process.env.HEDDLEWORK_GPUIX_SOURCE)
@@ -30,9 +32,6 @@ const stamp = JSON.stringify({ ...pin, platform: process.platform, arch: process
 // @gpuix/native loads the binary sitting in its own directory before falling back to the
 // published platform package, so the pinned build has to be installed under its napi name to
 // be the one the app - and the API check below - actually runs.
-const targetAddon = process.platform === 'darwin' ? 'gpuix-native.darwin-arm64.node'
-  : process.platform === 'win32' ? 'gpuix-native.win32-x64-msvc.node'
-  : 'gpuix-native.linux-x64-gnu.node'
 const builtAddon = resolve(source, 'packages/native', targetAddon)
 const installedPackage = resolve(root, 'node_modules/@gpuix/native')
 
@@ -41,15 +40,8 @@ const buildRuntime = async (): Promise<void> => {
   await run(['bun', 'run', 'build'], resolve(source, 'packages/react'))
 }
 
-/** Copy the built addon and its declarations over the package the app resolves. */
-const installAddon = (): boolean => {
-  if (!existsSync(builtAddon) || !existsSync(installedPackage)) return false
-  copyFileSync(builtAddon, resolve(installedPackage, targetAddon))
-  // Declarations must describe the binary that is actually loaded.
-  const builtTypes = resolve(source, 'packages/native/index.d.ts')
-  if (existsSync(builtTypes)) copyFileSync(builtTypes, resolve(installedPackage, 'index.d.ts'))
-  return true
-}
+/** Copy the complete pinned artifacts or fail before checking the installed runtime. */
+const installAddon = (): void => installNativeAddon(resolve(source, 'packages/native'), installedPackage, targetAddon)
 
 const runtimeResponds = async (): Promise<boolean> => {
   try {
@@ -103,8 +95,8 @@ if (existing?.isSymbolicLink()) {
 }
 symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
 
-if (installAddon()) console.log(`[heddlework] installed ${targetAddon} into node_modules/@gpuix/native`)
-else console.warn(`[heddlework] no built addon at ${builtAddon}; node_modules/@gpuix/native keeps its existing binary`)
+installAddon()
+console.log(`[heddlework] installed ${targetAddon} into node_modules/@gpuix/native`)
 
 // The stamp says a build happened; only the runtime can say it still answers the pinned API.
 if (alreadyBuilt && !(await runtimeResponds())) {

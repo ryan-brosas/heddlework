@@ -572,6 +572,7 @@ export class WorkbenchController {
     this.#sessionTransitionDepth += 1
     // Everything the optimistic scope below hides, so a rejected switch can put it back.
     const scope = { state: this.#state, historyPager: this.#historyPager, sessionTree: this.#sessionTree }
+    let rollback: Partial<WorkbenchState> | undefined
     try {
       this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
@@ -589,7 +590,11 @@ export class WorkbenchController {
       // milliseconds. #bootstrap replaces this preview with authoritative state.
       this.#sessionTree = undefined
       this.#historyPager = undefined
-      this.#patch(this.#sessionSwitchPatch(session))
+      const optimistic = this.#sessionSwitchPatch(session)
+      // Restore only fields this preview changed, not concurrent application updates.
+      rollback = Object.fromEntries(Object.keys(optimistic).map((key) => [key, scope.state[key as keyof WorkbenchState]]))
+      if (optimistic.workspacePath === scope.state.workspacePath) delete rollback.queue
+      this.#patch(optimistic)
       const preview = this.#previewSessionTranscript(session)
       const result = await this.#transport.request<{ cancelled?: boolean }>({
         type: 'switch_session',
@@ -603,7 +608,7 @@ export class WorkbenchController {
       await this.#bootstrap(false)
       void this.refreshSessions()
     } catch (error) {
-      this.#setState(() => scope.state)
+      if (rollback) this.#patch({ ...rollback, notices: [...scope.state.notices, ...this.#state.notices] })
       this.#historyPager = scope.historyPager
       this.#sessionTree = scope.sessionTree
       // Pi keeps the previous session open when switch_session rejects, so the optimistic
@@ -1433,10 +1438,6 @@ export class WorkbenchController {
     // serial command loop (seconds on large threads), so the tree is fetched only when
     // tree navigation is opened. Drop any tree cached for a different session.
     if ((session.sessionFile ?? '') !== (this.#state.session.sessionFile ?? '')) this.#sessionTree = undefined
-    // In-memory tree navigation moves Pi's leaf without appending, so the session file's
-    // last line can be the abandoned branch. Only that path needs Pi's leafId, and
-    // get_tree is O(session size) in Pi — so it is fetched here and nowhere else.
-    if (anchorLeaf) await this.#captureSessionLeafAnchor(session.sessionFile)
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected',
@@ -1452,6 +1453,10 @@ export class WorkbenchController {
     })
 
     const current = () => !this.#disposed && generation === this.#bootstrapGeneration
+    // Changing sessionFile clears the previous anchor; capture the new harness leaf after
+    // that change, including fork/clone results whose persisted tip may be another branch.
+    if (anchorLeaf) await this.#captureSessionLeafAnchor(session.sessionFile)
+    if (!current()) return
     const transcriptCurrent = () => current()
       && transcriptGeneration === this.#transcriptRefreshGeneration
       && streamRevision === this.#streamRevision
