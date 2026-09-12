@@ -549,7 +549,9 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
     <TranscriptRowShell user={item.kind === 'user'}>
       {item.kind === 'user' && <UserMessage item={item} onRevert={onRevert} />}
       {item.kind === 'assistant' && <AssistantMessage item={item} onRevert={onRevert} />}
-      {item.kind === 'status' && <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />}
+      {item.kind === 'status' && (item.origin === 'extension'
+        ? <SessionStatusLine text={item.text} />
+        : <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />)}
     </TranscriptRowShell>
   )
 }
@@ -1007,6 +1009,19 @@ function StatusMessage({ text, error, timestamp }: { text: string; error: boolea
     <div style={{ padding: 8, borderRadius: 7, backgroundColor: error ? colors.diffDel : colors.card }}>
       <text style={{ color: error ? colors.error : colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
       {timestamp && <Timestamp value={timestamp} />}
+    </div>
+  )
+}
+
+/**
+ * Pi core's showStatus line for an `info` notify: dim chat content with no notification chrome —
+ * no card, border, icon, timestamp, dismiss control, badge, or ledger entry. Pi rewrites the
+ * previous line when statuses arrive back to back, so a turn keeps its latest readout.
+ */
+function SessionStatusLine({ text }: { text: string }) {
+  return (
+    <div testId="session-status-line" style={{ paddingLeft: 1, paddingRight: 1 }}>
+      <text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
     </div>
   )
 }
