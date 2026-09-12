@@ -109,7 +109,7 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       <SelectContent testId="add-action-content" side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.background, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
         <DropdownSurface testId="add-action-menu" open={dropdown.open} style={{ width: '100%', padding: 5 }}>
           {options.map((option) => {
-            const alwaysEnabled = option.value === 'refresh' || option.value === 'open'
+            const alwaysEnabled = option.value === 'refresh' || option.value === 'open' || option.value === 'new'
             const disabled = alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
             return (
               <SelectItem

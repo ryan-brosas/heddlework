@@ -191,7 +191,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
               onChange={(event) => setSearch(String(event.value ?? ''))}
             />
           </div>
-          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.session.isStreaming || state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
+          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
