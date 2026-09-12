@@ -51,6 +51,11 @@ function resizeStyle(edge: ResizeEdge): Record<string, unknown> {
   return style
 }
 
+// Matches the workbench's own Linux window-state cadence (src/ui/linux-window-chrome.tsx):
+// every read is a blocking round trip to GPUI's UI thread, and the actions below re-read the
+// state directly instead of waiting for the next tick.
+const STATE_POLL_INTERVAL_MS = 200
+
 let statePollingEnabled = true
 
 function readState(): NativeWindowState | undefined {
@@ -74,7 +79,7 @@ function SmokeWindow() {
       if (!statePollingEnabled) return current
       const next = readState()
       return sameWindowState(current, next) ? current : next
-    }), 25)
+    }), STATE_POLL_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [])
 

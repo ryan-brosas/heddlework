@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
+import { requestPortalDirectory, type PortalPickResult } from './portal-file-chooser.ts'
 
 export interface DirectoryPickerCommand {
   command: string
@@ -38,7 +39,10 @@ export function directoryPickerCommand(platform: NodeJS.Platform = process.platf
     ].join('; ')
     return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
   }
-  return { command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] }
+  return {
+    command: 'kdialog',
+    args: ['--getexistingdirectory', homedir(), '--title', 'Open project in Heddlework'],
+  }
 }
 
 export interface WorkspaceDirectoryPick {
@@ -51,23 +55,33 @@ export function directoryPickerCommands(platform: NodeJS.Platform = process.plat
   if (!primary) return []
   if (platform === 'darwin' || platform === 'win32') return [primary]
   const fallbacks = [
-    {
-      command: 'kdialog',
-      args: ['--getexistingdirectory', homedir(), '--title', 'Open project in Heddlework'],
-    },
+    { command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] },
   ]
   return [primary, ...fallbacks]
 }
 
-export async function pickWorkspaceDirectory(): Promise<WorkspaceDirectoryPick> {
-  const pickers = directoryPickerCommands()
+export async function pickWorkspaceDirectory(
+  platform: NodeJS.Platform = process.platform,
+  options: {
+    requestPortal?(): Promise<PortalPickResult>
+    capture?(command: string, args: string[]): Promise<string | undefined>
+  } = {},
+): Promise<WorkspaceDirectoryPick> {
+  const requestPortal = options.requestPortal ?? requestPortalDirectory
+  const capture = options.capture ?? captureProcessOutput
+  if (platform === 'linux') {
+    const portal = await requestPortal()
+    if (portal.status === 'cancelled' || portal.status === 'selected') {
+      return portal.path ? { path: portal.path } : {}
+    }
+  }
+  const pickers = directoryPickerCommands(platform)
   if (pickers.length === 0) return { error: 'No folder picker is available on this system' }
   const failures: string[] = []
   for (const picker of pickers) {
-    const selected = await captureProcessOutput(picker.command, picker.args)
+    const selected = await capture(picker.command, picker.args)
     if (selected !== undefined) {
-      const path = selected.trim()
-      return path ? { path: resolve(path) } : {}
+      return selected.trim() ? { path: resolve(selected.trim()) } : {}
     }
     failures.push(picker.command)
   }

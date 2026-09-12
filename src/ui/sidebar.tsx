@@ -48,7 +48,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
-  const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
+  const [projectScope, setProjectScope] = useState(() => resolve(state.workspacePath))
   const [pickingProject, setPickingProject] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
   const [settledExpanded, setSettledExpanded] = useState(false)
@@ -76,8 +76,15 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     ]
   }, [activeSummary, persistedSessions])
   useEffect(() => {
-    if (!projectOptions.some((option) => option.value === projectScope)) setProjectScope(ALL_PROJECTS_SCOPE)
-  }, [projectOptions, projectScope])
+    if (projectOptions.some((option) => option.value === projectScope)) return
+    const workspace = resolve(state.workspacePath)
+    setProjectScope(projectOptions.some((option) => option.value === workspace) ? workspace : ALL_PROJECTS_SCOPE)
+  }, [projectOptions, projectScope, state.workspacePath])
+  useEffect(() => {
+    if (projectScope === ALL_PROJECTS_SCOPE) return
+    const workspace = resolve(state.workspacePath)
+    if (projectScope !== workspace && projectOptions.some((option) => option.value === workspace)) setProjectScope(workspace)
+  }, [projectOptions, projectScope, state.workspacePath])
   const matchingSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
@@ -135,7 +142,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         session={session}
         projectName={sessionProjectName(session)}
         active={active}
-        running={active && state.session.isStreaming}
+        running={active ? state.session.isStreaming : state.sessionActivity[session.path] === true || state.sessionActivity[resolve(session.path)] === true}
         disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
@@ -167,7 +174,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
         {flowsAvailable && (
-          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
+          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
             <Icon name="gitBranch" size={15} color={flowsActive ? colors.text : colors.textMuted} />
             <text style={{ color: flowsActive ? colors.text : colors.textMuted, fontSize: 12, fontWeight: flowsActive ? 650 : 550 }}>Flows</text>
           </div>

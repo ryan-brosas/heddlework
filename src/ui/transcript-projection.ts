@@ -75,10 +75,20 @@ export function groupWorkItems(items: TimelineItem[], isStreaming = false): Disp
   for (let index = 0; index < grouped.length; index += 1) {
     if (grouped[index]!.kind === 'user') lastUser = index
   }
+  // `currentTurn` asks whether anything after `index` ends the turn. The previous
+  // `grouped.slice(index + 1).every(...)` allocated a suffix array per boundary trace.
+  const userAfter = new Array<boolean>(grouped.length + 1).fill(false)
+  const settledAssistantAfter = new Array<boolean>(grouped.length + 1).fill(false)
+  for (let index = grouped.length - 1; index >= 0; index -= 1) {
+    const entry = grouped[index]!
+    userAfter[index] = userAfter[index + 1]! || entry.kind === 'user'
+    settledAssistantAfter[index] = settledAssistantAfter[index + 1]! || (entry.kind === 'assistant' && !entry.streaming)
+  }
+
   for (let index = 0; index < grouped.length; index += 1) {
     const item = grouped[index]!
     if (item.kind !== 'work-trace' || !item.boundaryId || item.items.some((entry) => entry.kind === 'compaction')) continue
-    const currentTurn = index > lastUser && grouped.slice(index + 1).every((next) => next.kind !== 'user' && !(next.kind === 'assistant' && !next.streaming))
+    const currentTurn = index > lastUser && !userAfter[index + 1]! && !settledAssistantAfter[index + 1]!
     if (!item.items.some(isActiveTraceEntry) && !(isStreaming && currentTurn)) continue
     item.id = `work-trace-after-${item.boundaryId}`
     item.identity = 'boundary'
@@ -140,17 +150,17 @@ export function projectTranscriptRows(items: DisplayTimelineItem[], expandedTrac
   const rows: TranscriptProjectionRow[] = []
   for (const item of items) {
     if (item.kind !== 'work-trace') {
-      rows.push({ id: item.id, kind: 'timeline-item', item })
+      rows.push(reuseRow({ id: item.id, kind: 'timeline-item', item }))
       continue
     }
-    rows.push({ id: item.id, kind: 'trace-header', trace: item })
+    rows.push(reuseRow({ id: item.id, kind: 'trace-header', trace: item }))
     if (expandedTraceIds.has(item.id)) {
       const limit = Math.min(item.items.length, Math.max(0, traceLimits.get(item.id) ?? item.items.length))
       const entries = item.items.slice(0, limit)
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index]!
         if (entry.kind !== 'notice') {
-          rows.push({ id: `${item.id}:entry:${entry.id}`, kind: 'trace-entry', traceId: item.id, item: entry })
+          rows.push(reuseRow({ id: `${item.id}:entry:${entry.id}`, kind: 'trace-entry', traceId: item.id, item: entry }))
           continue
         }
         const notices = [entry]
@@ -161,13 +171,78 @@ export function projectTranscriptRows(items: DisplayTimelineItem[], expandedTrac
           notices.push(next)
           index += 1
         }
-        rows.push({ id: `${item.id}:notices:${notices[0]!.id}`, kind: 'trace-notices', traceId: item.id, notices })
+        rows.push(reuseRow({ id: `${item.id}:notices:${notices[0]!.id}`, kind: 'trace-notices', traceId: item.id, notices }))
       }
-      if (limit < item.items.length) rows.push({ id: `${item.id}:continuation`, kind: 'trace-continuation', traceId: item.id, remaining: item.items.length - limit })
+      if (limit < item.items.length) rows.push(reuseRow({ id: `${item.id}:continuation`, kind: 'trace-continuation', traceId: item.id, remaining: item.items.length - limit }))
     }
-    if (item.changedPaths.length > 0) rows.push({ id: `${item.id}:files`, traceId: item.id, kind: 'trace-files', paths: item.changedPaths })
+    if (item.changedPaths.length > 0) rows.push(reuseRow({ id: `${item.id}:files`, traceId: item.id, kind: 'trace-files', paths: item.changedPaths }))
   }
+  rememberProjectedRows(rows)
   return rows
+}
+
+type WorkTrace = Extract<DisplayTimelineItem, { kind: 'work-trace' }>
+
+/** Row objects are rebuilt on every render, but only the live turn changes.
+ * Reuse the previous row when its backing data is unchanged so memoized row
+ * components can skip settled history entirely. */
+const ROW_IDENTITY_LIMIT = 2_048
+const rowIdentity = new Map<string, TranscriptProjectionRow>()
+
+function sameTraceContent(left: WorkTrace, right: WorkTrace): boolean {
+  if (left === right) return true
+  if (left.id !== right.id || left.identity !== right.identity || left.boundaryId !== right.boundaryId || left.revertEntryId !== right.revertEntryId) return false
+  if (left.items.length !== right.items.length || left.changedPaths.length !== right.changedPaths.length) return false
+  for (let index = 0; index < left.items.length; index += 1) {
+    if (left.items[index] !== right.items[index]) return false
+  }
+  for (let index = 0; index < left.changedPaths.length; index += 1) {
+    if (left.changedPaths[index] !== right.changedPaths[index]) return false
+  }
+  return true
+}
+
+function sameRowContent(previous: TranscriptProjectionRow, next: TranscriptProjectionRow): boolean {
+  if (previous.kind !== next.kind) return false
+  switch (next.kind) {
+    case 'timeline-item':
+      return (previous as Extract<TranscriptProjectionRow, { kind: 'timeline-item' }>).item === next.item
+    case 'trace-header':
+      return sameTraceContent((previous as Extract<TranscriptProjectionRow, { kind: 'trace-header' }>).trace, next.trace)
+    case 'trace-entry':
+      return (previous as Extract<TranscriptProjectionRow, { kind: 'trace-entry' }>).item === next.item
+    case 'trace-notices': {
+      const before = (previous as Extract<TranscriptProjectionRow, { kind: 'trace-notices' }>).notices
+      if (before.length !== next.notices.length) return false
+      for (let index = 0; index < before.length; index += 1) {
+        if (before[index] !== next.notices[index]) return false
+      }
+      return true
+    }
+    case 'trace-continuation':
+      return (previous as Extract<TranscriptProjectionRow, { kind: 'trace-continuation' }>).remaining === next.remaining
+    case 'trace-files':
+      return (previous as Extract<TranscriptProjectionRow, { kind: 'trace-files' }>).paths === next.paths
+  }
+}
+
+function reuseRow<T extends TranscriptProjectionRow>(row: T): T {
+  const previous = rowIdentity.get(row.id)
+  if (previous !== undefined && sameRowContent(previous, row)) return previous as T
+  return row
+}
+
+function rememberProjectedRows(rows: readonly TranscriptProjectionRow[]): void {
+  rowIdentity.clear()
+  for (const row of rows) {
+    if (rowIdentity.size >= ROW_IDENTITY_LIMIT) return
+    rowIdentity.set(row.id, row)
+  }
+}
+
+/** Test-facing: forget the reused row objects. */
+export function resetRowIdentityCache(): void {
+  rowIdentity.clear()
 }
 
 function isTraceItem(item: TimelineItem, absorbedAssistants: ReadonlySet<string>): item is TraceTimelineItem {
