@@ -62,9 +62,13 @@ export function directoryPickerCommands(platform: NodeJS.Platform = process.plat
 
 export async function pickWorkspaceDirectory(
   platform: NodeJS.Platform = process.platform,
-  requestPortal: () => Promise<PortalPickResult> = requestPortalDirectory,
-  capture: (command: string, args: string[]) => Promise<string | undefined> = captureProcessOutput,
+  options: {
+    requestPortal?(): Promise<PortalPickResult>
+    capture?(command: string, args: string[]): Promise<string | undefined>
+  } = {},
 ): Promise<WorkspaceDirectoryPick> {
+  const requestPortal = options.requestPortal ?? requestPortalDirectory
+  const capture = options.capture ?? captureProcessOutput
   if (platform === 'linux') {
     const portal = await requestPortal()
     if (portal.status === 'cancelled' || portal.status === 'selected') {
