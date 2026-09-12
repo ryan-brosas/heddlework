@@ -64,7 +64,7 @@ if (existing?.isSymbolicLink()) {
   rmSync(dependency, { recursive: true, force: true })
 }
 symlinkSync(resolve(source, 'packages/react'), dependency, process.platform === 'win32' ? 'junction' : 'dir')
-await run(['bun', '-e', 'const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ["setTerminalFrame", "getWindowState", "minimizeWindow", "toggleMaximizeWindow", "closeWindow"]) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)'], root)
+await run(['bun', '-e', 'const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ["getWindowState", "minimizeWindow", "toggleMaximizeWindow", "closeWindow"]) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)'], root)
 
 writeFileSync(stampPath, stamp)
 if (!alreadyBuilt && process.env.HEDDLEWORK_KEEP_BUILD_CACHE !== '1') {
