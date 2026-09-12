@@ -62,7 +62,12 @@ export function SessionRow({
   const { compact } = useResponsiveLayout()
   const [hovered, setHovered] = useState(false)
   const [settleHovered, setSettleHovered] = useState(false)
+  const [snoozeHovered, setSnoozeHovered] = useState(false)
   const snoozeMounted = useDropdownPresence(snoozeOpen)
+  // Opaque action hitboxes sit above the card in GPUI, so entering Settle/Snooze clears
+  // the card hover bit. Pin controls while the pointer is on them or the row is live.
+  const showLifecycleActions = compact || hovered || snoozeMounted || active || running
+    || settleHovered || snoozeHovered
   if (lifecycle !== 'active') {
     return (
       <SessionRowInset sidebarWidth={sidebarWidth} height={36}>
@@ -82,7 +87,7 @@ export function SessionRow({
 
   return (
     <SessionRowInset sidebarWidth={sidebarWidth} height={78}>
-    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} tabIndex={disabled ? -1 : 0} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setSettleHovered(false) }} {...(disabled ? {} : { onClick })}>
+    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} tabIndex={disabled ? -1 : 0} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} {...(disabled ? {} : { onClick })}>
       <div testId="sidebar-session-surface" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.transparent, pointerEvents: 'none' }} />
       <div style={{ width: '100%', minWidth: 0, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
         <div style={{ minWidth: 0, flexGrow: 1, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -90,10 +95,10 @@ export function SessionRow({
           <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         </div>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-          {compact || hovered || snoozeMounted || active ? (
+          {showLifecycleActions ? (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
-                <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar, borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={withoutRowClick(onSnooze)}>
+                <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar, borderRadius: 5, hover: { backgroundColor: colors.hover } }} onMouseEnter={() => setSnoozeHovered(true)} onMouseLeave={() => setSnoozeHovered(false)} onClick={withoutRowClick(onSnooze)}>
                   <Icon name="clock" size={12} color={colors.textFaint} />
                 </div>
                 {snoozeMounted && <SnoozeMenu open={snoozeOpen} onSchedule={onSchedule} onClose={onSnooze} />}

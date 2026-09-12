@@ -11,7 +11,9 @@ describe('sidebar session hit target', () => {
     expect(row).toContain('withoutRowClick(onSettle)')
     expect(row).toContain('withoutRowClick(onWake)')
     expect(row).toContain("testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'}")
-    expect(row).toContain('compact || hovered || snoozeMounted || active')
+    expect(row).toContain('showLifecycleActions')
+    expect(row).toContain('settleHovered || snoozeHovered')
+    expect(row).toContain('onMouseEnter={() => setSnoozeHovered(true)}')
     expect(sidebar).not.toContain('disabled={state.session.isStreaming || state.connection !== \'connected\'}')
     expect(sidebar).toContain('disabled={state.connection !== \'connected\'}')
     // pointerEvents auto occludes the wheel (GPUI BlockMouse). List rows must not use it.
@@ -19,5 +21,10 @@ describe('sidebar session hit target', () => {
     expect(card.slice(0, 800)).not.toContain("pointerEvents: 'auto'")
     expect(sidebar).toContain('testId="sidebar-flows"')
     expect(sidebar).toContain('backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebar')
+    expect(sidebar).toContain('testId="sidebar-settled-toggle"')
+    expect(sidebar).toMatch(/sidebar-settled-toggle[\s\S]{0,400}backgroundColor: colors\.sidebar/)
+    // A manual project pick must outrank the workspace auto-follow.
+    expect(sidebar).toContain('projectScopePinned')
+    expect(sidebar).toContain('onChange={selectProjectScope}')
   })
 })
