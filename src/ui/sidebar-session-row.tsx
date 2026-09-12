@@ -72,13 +72,13 @@ export function SessionRow({
   if (lifecycle !== 'active') {
     return (
       <SessionRowInset sidebarWidth={sidebarWidth} height={36}>
-      <div testId={lifecycle === 'settled' ? 'sidebar-settled-row' : 'sidebar-snoozed-row'} tabIndex={disabled ? -1 : 0} style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', hover: { backgroundColor: colors.sidebarHover } }} {...(disabled ? {} : { onClick })}>
+      <div testId={lifecycle === 'settled' ? 'sidebar-settled-row' : 'sidebar-snoozed-row'} tabIndex={disabled ? -1 : 0} style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, backgroundColor: colors.sidebar, cursor: disabled ? 'default' : 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} {...(disabled ? {} : { onClick })}>
         <Icon name={lifecycle === 'snoozed' ? 'clock' : 'squarePen'} size={13} color={lifecycle === 'snoozed' ? colors.info : colors.settledIcon} />
         <div style={{ minWidth: 0, flexGrow: 1 }}>
           <text {...(lifecycle === 'settled' ? { testId: 'sidebar-settled-title' } : {})} style={{ color: lifecycle === 'settled' ? colors.settledText : colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         </div>
         <text style={{ color: lifecycle === 'settled' ? colors.settledMeta : colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? formatTimeOfDay(snoozedUntil) : relativeTime(session.modifiedAt)}</text>
-        <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: colors.sidebar }} onClick={withoutRowClick(onWake)}>
+        <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: hovered ? colors.sidebarHover : colors.sidebar }} onClick={withoutRowClick(onWake)}>
           <Icon name="check" size={12} color={lifecycle === 'settled' ? colors.settledIcon : colors.textFaint} />
         </div>
       </div>
