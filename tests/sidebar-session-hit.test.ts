@@ -11,7 +11,7 @@ describe('sidebar session hit target', () => {
     // Controls fill with the card surface, never the bare sidebar colour, or they show as a
     // dark slab inside an active/hovered card.
     expect(row).toContain("import { TextShimmer } from './motion.ts'")
-    expect(row).toContain('const cardSurface = active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.sidebar')
+    expect(row).toContain('const cardSurface = active ? colors.sidebarActive : pointerOnCard ? colors.sidebarHover : colors.sidebar')
     expect(row).toContain('backgroundColor: cardSurface')
     expect(row).toContain('minWidth: 70')
     // Same rule for the settled/snoozed wake control: it must follow the row surface, or it
@@ -33,7 +33,10 @@ describe('sidebar session hit target', () => {
     expect(row).toContain('testId="sidebar-harness-badge"')
     expect(row.match(/π/gu)?.length).toBe(1)
     expect(row.indexOf('sidebar-harness-badge')).toBeGreaterThan(row.indexOf('testId="sidebar-settle"'))
-    expect(row).toContain('settleHovered || snoozeHovered')
+    // Entering a control clears the card's own hover bit in GPUI, so the surface has to follow
+    // the controls too or the hover fill drops out from under the pointer.
+    expect(row).toContain('const pointerOnCard = hovered || settleHovered || snoozeHovered || snoozeMounted')
+    expect(row).toContain('const showLifecycleActions = compact || active || running || pointerOnCard')
     expect(row).toContain('onMouseEnter={() => setSnoozeHovered(true)}')
     expect(sidebar).not.toContain('disabled={state.session.isStreaming || state.connection !== \'connected\'}')
     expect(sidebar).toContain('disabled={state.connection !== \'connected\'}')

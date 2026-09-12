@@ -260,12 +260,15 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
 }
 
 export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string, transcriptPosition?: number): WorkbenchState {
+  // A notify that arrived before any turn loaded has no honest anchor: claiming turn 0 would
+  // drop it inside the first turn once the transcript arrives. It stays ledger-only instead.
+  const turn = transcriptPosition === undefined ? -1 : currentTurn(state)
   const notice: Notice = {
     id: ++noticeId,
     kind,
     message,
     createdAt: Date.now(),
-    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, currentTurn(state)), transcriptPosition }),
+    ...(transcriptPosition === undefined || turn < 0 ? {} : { transcriptTurn: turn, transcriptPosition }),
   }
   return { ...state, notices: [...state.notices, notice] }
 }
@@ -292,6 +295,22 @@ export function addStatusLine(state: WorkbenchState, text: string): WorkbenchSta
  */
 function currentTurn(state: WorkbenchState): number {
   return state.messages.filter((message) => message.role === 'user').length - 1
+}
+
+/**
+ * Loading earlier messages prepends to the loaded window, so every turn index anchored in the
+ * previous window moves by the number of user messages inserted in front of it; without the
+ * shift a status line or notice renders after an older turn. Negative turns are tail anchors
+ * (and unanchored notices are absent) and do not move.
+ */
+export function shiftTurnAnchors(state: WorkbenchState, prependedTurns: number): WorkbenchState {
+  if (prependedTurns <= 0) return state
+  const shift = (turn: number) => (turn < 0 ? turn : turn + prependedTurns)
+  return {
+    ...state,
+    notices: state.notices.map((notice) => notice.transcriptTurn === undefined ? notice : { ...notice, transcriptTurn: shift(notice.transcriptTurn) }),
+    statusLines: state.statusLines.map((line) => ({ ...line, turn: shift(line.turn) })),
+  }
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

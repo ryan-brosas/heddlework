@@ -40,6 +40,7 @@ import {
   applyRpcEvent,
   contentText,
   createInitialState,
+  shiftTurnAnchors,
   type NoticeKind,
   type ThreadPriority,
   type WorkbenchState,
@@ -225,11 +226,15 @@ export class WorkbenchController {
       if (pager !== this.#historyPager) return
       const known = new Set(this.#state.messages.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
       const older = page.messages.filter((message) => !known.has(messageEntryId(message) ?? ''))
-      this.#patch({
-        messages: [...older, ...this.#state.messages],
+      // Prepending shifts every turn the loaded window already anchored, so the anchors move with
+      // the messages they point at instead of rendering after an older turn.
+      const prependedTurns = older.filter((message) => message.role === 'user').length
+      this.#setState((state) => shiftTurnAnchors({
+        ...state,
+        messages: [...older, ...state.messages],
         messagesHasOlder: page.hasOlder,
         messagesLoadingEarlier: false,
-      })
+      }, prependedTurns))
     } catch (error) {
       if (pager !== this.#historyPager) return
       this.#patch({ messagesHasOlder: false, messagesLoadingEarlier: false })

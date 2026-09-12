@@ -65,10 +65,11 @@ export function SessionRow({
   const [settleHovered, setSettleHovered] = useState(false)
   const [snoozeHovered, setSnoozeHovered] = useState(false)
   const snoozeMounted = useDropdownPresence(snoozeOpen)
-  // Opaque action hitboxes sit above the card in GPUI, so entering Settle/Snooze clears
-  // the card hover bit. Pin controls while the pointer is on them or the row is live.
-  const showLifecycleActions = compact || hovered || snoozeMounted || active || running
-    || settleHovered || snoozeHovered
+  // Opaque action hitboxes sit above the card in GPUI, so entering Settle/Snooze clears the
+  // card hover bit. Treat the controls (and an open menu) as card hover, so both the controls
+  // stay mounted and the surface keeps the fill they are drawn on.
+  const pointerOnCard = hovered || settleHovered || snoozeHovered || snoozeMounted
+  const showLifecycleActions = compact || active || running || pointerOnCard
   if (lifecycle !== 'active') {
     return (
       <SessionRowInset sidebarWidth={sidebarWidth} height={36}>
@@ -89,7 +90,7 @@ export function SessionRow({
   // GPUI controls need an opaque fill to stay hit-testable, so that fill has to match the
   // surface underneath: a `colors.sidebar` fill punches a dark slab into an active or hovered
   // card and, because the slot was fixed-width, spilled past the card padding.
-  const cardSurface = active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.sidebar
+  const cardSurface = active ? colors.sidebarActive : pointerOnCard ? colors.sidebarHover : colors.sidebar
 
   return (
     <SessionRowInset sidebarWidth={sidebarWidth} height={78}>
