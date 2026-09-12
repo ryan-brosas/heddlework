@@ -61,6 +61,7 @@ class SwitchingTransport implements AgentTransport {
   active: PiSessionSummary
   extras: PiSessionSummary[] = []
   startCalls = 0
+  streaming = false
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
   #newSessionBarrier: Promise<void> | undefined
@@ -154,7 +155,7 @@ class SwitchingTransport implements AgentTransport {
       return {
         model: null,
         thinkingLevel: 'off',
-        isStreaming: false,
+        isStreaming: this.streaming,
         sessionFile: this.active.path,
         sessionId: this.active.id,
         sessionName: this.active.title,
@@ -171,6 +172,8 @@ class SwitchingTransport implements AgentTransport {
   }
 
   emitEvent(event: RpcRecord): void {
+    if (event.type === 'agent_start') this.streaming = true
+    if (event.type === 'agent_settled') this.streaming = false
     for (const listener of this.events) listener(event)
   }
 
@@ -315,6 +318,30 @@ describe('clickable session switching', () => {
     }
   })
 
+  it('restores a background turn when returning to its thread', async () => {
+    const transport = new SwitchingTransport()
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    try {
+      await controller.start()
+      transport.emitEvent({ type: 'agent_start' })
+      transport.emitEvent({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: { command: 'sleep 30' } })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      expect(controller.getSnapshot().liveTools).toHaveLength(1)
+      const settledRequests = transport.requests.length
+      await controller.switchSession(sessions[1]!)
+      expect(transport.requests.slice(settledRequests)).toEqual([])
+      expect(controller.getSnapshot().session.sessionId).toBe('two')
+      expect(controller.getSnapshot().sessionActivity['/tmp/one.jsonl']).toBe(true)
+      await controller.switchSession(sessions[0]!)
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      expect(controller.getSnapshot().activity).toBe('Working')
+      expect(controller.getSnapshot().liveTools).toHaveLength(1)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('switches by session file when two threads share an id', async () => {
     const forked: PiSessionSummary = { id: 'one', path: '/tmp/one-fork.jsonl', cwd: '/tmp/project-fork', title: 'Forked thread', firstMessage: 'Forked', messageCount: 1, createdAt: 4, modifiedAt: 4 }
     const transport = new SwitchingTransport()
@@ -423,11 +450,12 @@ describe('clickable session switching', () => {
       const switching = controller.switchSession(sessions[1]!)
       try {
         expect(controller.getSnapshot().dialog).toBeUndefined()
-        expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
+        // Cancelling the dialog would abort the background Pi turn.
+        expect(transport.sent).not.toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
 
         transport.emitEvent({ type: 'extension_ui_request', id: 'transition-dialog', method: 'confirm', title: 'Transition action' })
         expect(controller.getSnapshot().dialog).toBeUndefined()
-        expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'transition-dialog', cancelled: true })
+        expect(transport.sent).not.toContainEqual({ type: 'extension_ui_response', id: 'transition-dialog', cancelled: true })
       } finally {
         release()
         await switching

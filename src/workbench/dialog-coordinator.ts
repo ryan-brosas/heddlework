@@ -48,13 +48,8 @@ export class WorkbenchDialogCoordinator {
 
   handleExtensionUi(request: ExtensionUiRequest, sessionTransitioning: boolean): void {
     if (sessionTransitioning) {
-      if (isInteractiveRequest(request)) {
-        try {
-          this.#host.send({ type: 'extension_ui_response', id: request.id, cancelled: true })
-        } catch {
-          // The abandoned session no longer owns visible UI; switching remains authoritative.
-        }
-      }
+      // Hide incoming UI for the session we are leaving; do not cancel Pi.
+      // Cancelling the dialog aborts the background turn.
       return
     }
     if (request.method === 'notify') {
@@ -193,13 +188,18 @@ export class WorkbenchDialogCoordinator {
     }
   }
 
+  /** Drop visible dialogs without telling Pi. Background harnesses keep waiting. */
+  hideVisible(): void {
+    this.#askUserDialogDriver = undefined
+    this.#host.patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
+    this.#clearDialogTimer()
+  }
+
   cancelAll(): void {
     const state = this.#host.getState()
     const pending = [state.dialog, ...state.dialogQueue]
       .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
-    this.#askUserDialogDriver = undefined
-    this.#host.patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
-    this.#clearDialogTimer()
+    this.hideVisible()
     for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
   }
 
