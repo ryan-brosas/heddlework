@@ -27,8 +27,12 @@ Indexed and usable: `remorses/gpuix`, `zed-industries/zed` (wayland seams: `crat
 `omacom/omarchy` (default branch `quattro`), `monotykamary/heddlework`.
 
 Ingested 2026-09-12 via a `heddlework-lane` connection in `/home/utopia/sourcebot/config.json`
-(backup: `backups/config.pre-linux-lane.json`), with revisions
-`feat/heddlework-platform-alignment` + `feat/linux-omarchy-bootstrap`:
+(backup: `backups/config.pre-linux-lane.json`; 2026-09-12 branch revision fix backup:
+`backups/config.pre-linux-workspace-foundations.json`), with revisions
+`feat/heddlework-platform-alignment` + `feat/linux-omarchy-bootstrap`
++ `feat/linux-workspace-foundations` (added 2026-09-12 after the fork recreation, so the
+active Linux work branch is indexed — project AGENTS.md makes Sourcebot the code-truth
+authority and carries the standing explicit `ask_codebase` request):
 
 1. `monotykamary/gpuix` - alignment branch indexed at the pin `2b94075` (`isIndexed: true`).
 2. `monotykamary/zed` - alignment branch indexed at the pin `e94e7f5` (`isIndexed: true`).
@@ -145,11 +149,24 @@ Two facts drive this, and both are Pi-side, not renderer-side:
   previous thread under the wrong header.
 
 Measured end to end through `WorkbenchController` against real Pi and the same 117 MiB session:
-first transcript paint **31 860 ms -> 8 ms** after the click; `switchSession` settles when Pi's own
-`switch_session` returns (~3.7-8 s). Regression coverage lives in `tests/session-switch.test.ts`
-(instant preview, deferred click settlement, rollback after a rejected switch, no `get_tree` on the
-switch/refresh path, leaf anchor after navigation, anchor kept until the file grows, anchor dropped
-across a session switch). Each rule was mutation-checked: reverting it fails its test.
+first transcript paint **31 860 ms -> 8 ms** after the click. Regression coverage lives in `tests/session-switch.test.ts`.
+
+**Session-scoped harnesses (2026-09-12).** `switch_session` itself still costs ~7.5 s on a 117 MiB
+thread (Pi parses the whole file), Pi's RPC loop is serial, and `runtimeHost.switchSession` aborts
+the in-flight turn (`teardownCurrent` -> `session.abort()`) - so switching stopped running work no
+matter what the client did. `WorkbenchController` therefore no longer shares one Pi RPC process:
+each session gets a dedicated harness (`pi --mode rpc --session <file>`, ~4.9 s cold open on the
+117 MiB thread, paid once per session), pooled per session file and reused on return. A switch is a
+pointer swap plus the optimistic preview; the previous harness keeps running its turn, so work
+continues while another thread is open. `createSessionTransport` is injected
+(`createWorkbenchControllerPlugin` mirrors the app's transport options; tests spawn fakes).
+Removed on the switch path: the client-side `abort` and `switch_session` requests. Events/status
+route only from the active harness (guarded `#attachActiveTransport`); the pool re-keys after
+`new_session` re-files the active harness and every pooled harness stops on dispose. `/reload`
+still stop/starts and `switch_session`s the active harness. Background turns stay visible: each
+harness is watched (`#attachBackgroundTracking`) and `state.sessionActivity[file]` drives the
+sidebar's running badge for non-open threads (`src/ui/sidebar.tsx`), with crashed background
+harnesses dropped from the pool so the next open respawns them.
 
 ## Open items
 
