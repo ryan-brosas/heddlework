@@ -3,7 +3,9 @@ import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { createInitialState } from '../src/workbench/state.ts'
 import { colors } from '../src/ui/theme.ts'
-const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}` })
+// Desktop width: 1024 is exactly the tablet breakpoint, and a compact layout forces the
+// lifecycle controls onto every card, which would make the idle mark-only branch untestable.
+const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}`, width: 1_280, height: 900 })
 window.document.body.innerHTML = '<div id="root"></div>'
 const initial = createInitialState('/workspace/mobile')
 const sessionPath = '/workspace/mobile/session-1.jsonl'
@@ -23,6 +25,17 @@ const state = {
     messageCount: 2,
     createdAt: 1,
     modifiedAt: Date.now(),
+  }, {
+    // A second, idle session: `showLifecycleActions` is false there, so that card must render the
+    // harness mark alone, with no lifecycle controls and no running treatment.
+    id: 'session-2',
+    path: '/workspace/mobile/session-2.jsonl',
+    cwd: '/workspace/mobile',
+    title: 'Idle thread',
+    firstMessage: 'Idle thread',
+    messageCount: 1,
+    createdAt: 1,
+    modifiedAt: Date.now() - 5 * 60 * 1_000,
   }],
   // A session status line is chat content (Pi's showStatus), so it must render in the transcript
   // and must never surface as an extension notification banner.
@@ -58,11 +71,14 @@ assert(statusLine.textContent?.trim() === 'TPS 25.6 tok/s', `Pi showStatus line 
 const statusLineCss = statusLine.getAttribute('style') ?? ''
 assert(!/(^|;)\s*(background-color|border-width|border-color)\s*:/u.test(statusLineCss), `Pi showStatus line rendered notification chrome: ${statusLineCss}`)
 assert(!window.document.querySelector('[data-testid="session-status-line"] [data-testid^="timestamp"]'), 'Pi showStatus line rendered a timestamp')
-// The sidebar starts collapsed, and the session card only exists once it is open.
+// At desktop width the sidebar is inline; a compact window would render it as a closed overlay.
 const sidebarToggle = window.document.querySelector('[data-testid="toggle-left-sidebar"]')
-assert(sidebarToggle, 'Sidebar toggle did not render')
-sidebarToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-await Bun.sleep(250)
+if (window.document.querySelector('[data-testid="sidebar"]') === null) {
+  assert(sidebarToggle, 'Sidebar toggle did not render')
+  sidebarToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await Bun.sleep(250)
+}
+assert(window.document.querySelector('[data-testid="sidebar"]') !== null, 'Sidebar did not render')
 // The session card controls sit above the card, so their opaque fill has to match the surface
 // underneath: filling with the bare sidebar colour punches a dark slab into an active card and
 // spilled past the card padding when the action slot was fixed-width.
@@ -87,7 +103,7 @@ assert(fillOf(snooze) === surfaceFill, `Snooze control filled ${fillOf(snooze)} 
 assert(fillOf(settle) === surfaceFill, `Settle control filled ${fillOf(settle)} instead of the card surface ${surfaceFill}`)
 // The Pi mark is the card's harness identity: it must coexist with the lifecycle controls on a
 // live card, stay the rightmost element of the row, and keep its brand colour unclipped.
-const badge = window.document.querySelector('[data-testid="sidebar-harness-badge"]')
+const badge = card.querySelector('[data-testid="sidebar-harness-badge"]')
 assert(badge, 'Active card lost the Pi harness mark to the lifecycle controls')
 assert(badge.textContent === 'π', `Harness mark rendered ${JSON.stringify(badge.textContent)}`)
 assert(/color:\s*#E9705A/iu.test(styleOf(badge)), `Harness mark lost its brand colour: ${styleOf(badge)}`)
@@ -97,10 +113,25 @@ assert(badgeRow, 'Harness mark had no parent row')
 assert(badgeRow.querySelector('[data-testid="sidebar-snooze"]') !== null, 'Harness mark replaced the snooze control')
 assert(Array.from(badgeRow.children).at(-1) === badge, 'Harness mark was not the rightmost element of the row')
 // The running label is the animated shimmer, and it sits on the metadata row beside the branch.
-const status = window.document.querySelector('[data-testid="sidebar-session-status"]')
+const status = card.querySelector('[data-testid="sidebar-session-status"]')
 assert(status, 'Running session rendered no status label')
 assert(status.classList.contains('gx-shimmer'), `Running session label was not the animated shimmer: ${status.outerHTML}`)
 assert(/animation-duration/u.test(styleOf(status)), 'Shimmer label carried no animation duration')
 assert(status.parentElement?.textContent?.includes('main') === true, 'Status label did not sit on the session metadata row beside the branch')
+// The idle card takes the other branch of the same decision: no lifecycle controls, so the
+// harness mark is the only element in the action slot, and the running shimmer stays scoped to
+// the session that is actually running.
+const idleCard = window.document.querySelector('[data-testid="sidebar-session-card"]')
+assert(idleCard, 'Idle session card did not render')
+const idleBadge = idleCard.querySelector('[data-testid="sidebar-harness-badge"]')
+assert(idleBadge, 'Idle card lost the Pi harness mark')
+const idleSlot = idleBadge.parentElement
+assert(idleSlot, 'Idle harness mark had no parent row')
+assert(Array.from(idleSlot.children).at(-1) === idleBadge, 'Idle harness mark was not the rightmost element of the row')
+assert(idleSlot.children.length === 1, `Idle action slot rendered ${idleSlot.children.length} children; only the harness mark belongs there`)
+const idleStatus = idleCard.querySelector('[data-testid="sidebar-session-status"]')
+assert(idleStatus, 'Idle card lost its status label')
+assert(!idleStatus.classList.contains('gx-shimmer'), 'Idle card showed the running shimmer')
+assert(/^\d+m$/u.test(idleStatus.textContent ?? ''), `Idle card status was ${JSON.stringify(idleStatus.textContent)}`)
 console.log('web DOM probe passed')
 process.exit(0)
