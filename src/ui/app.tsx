@@ -21,7 +21,7 @@ import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
-import { WindowMetricsProvider, WINDOW_METRICS_INTERVAL_MS, windowInsetsPollInterval, type WindowMetrics } from './window-metrics.tsx'
+import { WindowMetricsProvider, windowInsetsPollInterval, windowSizePollInterval, type WindowMetrics } from './window-metrics.tsx'
 import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
@@ -29,7 +29,7 @@ import type { TerminalSessionService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
-import { LinuxResizeHandles, LinuxWindowChrome, useNativeWindowChrome } from './linux-window-chrome.tsx'
+import { LINUX_CHROME_IDLE_POLL_MS, LINUX_CHROME_STREAMING_POLL_MS, LinuxResizeHandles, LinuxWindowChrome, useNativeWindowChrome } from './linux-window-chrome.tsx'
 import type { WindowControlRenderer } from './window-controls.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
@@ -67,8 +67,9 @@ export function WorkbenchApp({
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
   const windowControls = renderer as WindowControlRenderer
-  const nativeChrome = useNativeWindowChrome(windowControls)
-  const windowSize = useWindowSize({ intervalMs: WINDOW_METRICS_INTERVAL_MS })
+  const deferLinuxUiPolls = state.session.isStreaming || state.activity === 'Opening thread'
+  const nativeChrome = useNativeWindowChrome(windowControls, deferLinuxUiPolls ? LINUX_CHROME_STREAMING_POLL_MS : LINUX_CHROME_IDLE_POLL_MS)
+  const windowSize = useWindowSize({ intervalMs: windowSizePollInterval(deferLinuxUiPolls) })
   const windowInsets = useWindowInsets({ intervalMs: windowInsetsPollInterval() })
   const windowMetrics = useMemo<WindowMetrics>(() => ({ size: windowSize, insets: windowInsets }), [windowSize, windowInsets])
   const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
@@ -345,7 +346,7 @@ export function WorkbenchApp({
     <WindowMetricsProvider metrics={windowMetrics}>
       <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
         {nativeChrome.height > 0 && nativeChrome.state && (
-          <LinuxWindowChrome renderer={windowControls} state={nativeChrome.state} title={state.windowTitle} onQuit={onQuit} reducedMotion={typeof process !== 'undefined' && process.env.HEDDLEWORK_REDUCED_MOTION === '1'} />
+          <LinuxWindowChrome renderer={windowControls} state={nativeChrome.state} title={state.windowTitle} onQuit={onQuit} onRefresh={nativeChrome.refresh} reducedMotion={typeof process !== 'undefined' && process.env.HEDDLEWORK_REDUCED_MOTION === '1'} />
         )}
         <div
           testId="workbench-safe-area"

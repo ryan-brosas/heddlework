@@ -13,7 +13,7 @@
  */
 import React, { useMemo } from 'react'
 import { createRenderer, createRoot, flushSync, startFrameLoop, useWindowInsets, useWindowSize } from '@gpuix/react'
-import { WINDOW_METRICS_INTERVAL_MS, WindowMetricsProvider, useWindowMetrics, windowInsetsPollInterval } from '../src/ui/window-metrics.tsx'
+import { WindowMetricsProvider, useWindowMetrics, windowInsetsPollInterval, windowSizePollInterval } from '../src/ui/window-metrics.tsx'
 
 const PHASE_MS = Number(process.env.HEDDLEWORK_METRICS_PHASE_MS ?? 3_000)
 
@@ -60,7 +60,7 @@ function LegacyWidePanel() {
 
 function SharedPhase() {
   // Mirrors src/ui/app.tsx, which owns the tree's only window-metrics subscription.
-  const size = useWindowSize({ intervalMs: WINDOW_METRICS_INTERVAL_MS })
+  const size = useWindowSize({ intervalMs: windowSizePollInterval() })
   const insets = useWindowInsets({ intervalMs: windowInsetsPollInterval() })
   const metrics = useMemo(() => ({ size, insets }), [size, insets])
   return (
@@ -98,7 +98,7 @@ async function main() {
       <LegacyWidePanel />
     </>
   ))
-  const after = await measure(`after - one shared subscription at ${WINDOW_METRICS_INTERVAL_MS}ms (insets ${windowInsetsPollInterval()}ms)`, <SharedPhase />)
+  const after = await measure(`after - one shared subscription at ${windowSizePollInterval()}ms (insets ${windowInsetsPollInterval()}ms)`, <SharedPhase />)
   console.log(JSON.stringify({ phaseMs: PHASE_MS, before, after }, null, 2))
   finish(undefined)
 }
