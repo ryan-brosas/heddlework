@@ -28,37 +28,34 @@ describe('workspace directory picker', () => {
   })
 
   it('uses the portal selection on Linux and does not open a CLI fallback', async () => {
-    const result = await pickWorkspaceDirectory(
-      'linux',
-      async () => ({ status: 'selected', path: '/tmp/heddlework-project' }),
-      async () => {
+    const result = await pickWorkspaceDirectory('linux', {
+      requestPortal: async () => ({ status: 'selected', path: '/tmp/heddlework-project' }),
+      capture: async () => {
         throw new Error('CLI fallback must not run after a portal selection')
       },
-    )
+    })
     expect(result).toEqual({ path: '/tmp/heddlework-project' })
   })
 
   it('treats a portal cancel as a dismiss and does not open a CLI fallback', async () => {
-    const result = await pickWorkspaceDirectory(
-      'linux',
-      async () => ({ status: 'cancelled' }),
-      async () => {
+    const result = await pickWorkspaceDirectory('linux', {
+      requestPortal: async () => ({ status: 'cancelled' }),
+      capture: async () => {
         throw new Error('CLI fallback must not run after a portal cancel')
       },
-    )
+    })
     expect(result).toEqual({})
   })
 
   it('degrades to kdialog when the portal is unavailable', async () => {
     const commands: string[] = []
-    const result = await pickWorkspaceDirectory(
-      'linux',
-      async () => ({ status: 'unavailable', error: 'File dialog portal is not reachable' }),
-      async (command) => {
+    const result = await pickWorkspaceDirectory('linux', {
+      requestPortal: async () => ({ status: 'unavailable', error: 'File dialog portal is not reachable' }),
+      capture: async (command) => {
         commands.push(command)
         return command === 'kdialog' ? '/tmp/from-kdialog\n' : undefined
       },
-    )
+    })
     expect(commands[0]).toBe('kdialog')
     expect(result.path).toBe('/tmp/from-kdialog')
   })
