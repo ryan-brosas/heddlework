@@ -26,13 +26,22 @@ Indexed and usable: `remorses/gpuix`, `zed-industries/zed` (wayland seams: `crat
 `set_app_id` / `set_app_identity`, `feature = "wayland"` gates; no `xdg-activation` hits in the indexed snapshot),
 `omacom/omarchy` (default branch `quattro`), `monotykamary/heddlework`.
 
-Not indexed - ingest these, then re-run the searches (no MCP ingestion tool; do it in the Sourcebot UI/config):
+Ingested 2026-09-12 via a `heddlework-lane` connection in `/home/utopia/sourcebot/config.json`
+(backup: `backups/config.pre-linux-lane.json`), with revisions
+`feat/heddlework-platform-alignment` + `feat/linux-omarchy-bootstrap`:
 
-1. `monotykamary/gpuix` - the pinned fork; the upstream index does not contain the platform-alignment work.
-2. `monotykamary/zed` - same for the patched GPUI.
-3. `ryan-brosas/heddlework` - this fork, once it diverges again.
+1. `monotykamary/gpuix` - alignment branch indexed at the pin `2b94075` (`isIndexed: true`).
+2. `monotykamary/zed` - alignment branch indexed at the pin `e94e7f5` (`isIndexed: true`).
+3. `ryan-brosas/heddlework` - fork (`exclude.forks` deliberately off); default branch indexed.
+   `feat/linux-omarchy-bootstrap` indexes once it is pushed to origin. The pre-reset
+   `feat/linux-adoption-foundations` exists remotely but is not in the revisions list.
 
-Until ingested, read the pinned forks locally (`node_modules/.cache/heddlework-gpuix/...` is a real git checkout).
+Verified cross-repo finds from the new corpus: the fork's GPUI `activate()`
+(`crates/gpui/src/platform/linux/wayland/window.rs:850-865`, monotykamary/zed) requests an
+xdg-activation token bound to app_id + serial + surface - the prior art for Heddlework's
+focus-on-launch and app-identity workstream. Fractional scaling is wp_fractional_scale v1 in
+`crates/gpui/src/platform/linux/wayland/client.rs`; Ghostty's Wayland activation prior art is
+`src/apprt/gtk/winproto/wayland.zig`.
 
 ## Zed <> GPUix Wayland workstream
 
