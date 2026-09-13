@@ -34,6 +34,10 @@ bun run check                   # typecheck + typecheck:web + test + test:perfor
 bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
 ```
 
+IDE-based source audits - the MCP Steroid sweep harness, its per-script `readAction` rule, the
+proven false-positive taxonomy, and the current coverage baseline - are documented in
+`docs/quality-audit.md`; read it before re-running an inspection pass.
+
 Tests are Bun tests (`import { describe, expect, it } from 'bun:test'`): run a single file with
 `bun test tests/<name>.test.ts`. Vitest cannot load them (`Cannot find package 'bun:test'`).
 
