@@ -99,7 +99,27 @@ Review checklist this adds (grep-visible, so keep it cheap):
 - Optional enhancements (service worker registration, clipboard, math renderer, external pickers)
   must consume their own failure; only required paths may reject.
 
+3. **Third surface: terminal spawn.** `BunPtyBackend.spawn` throws
+   `Bun.Terminal is not available in this runtime` on any runtime without pty support, and
+   `TerminalPanel`/`TerminalDock`/`TerminalToolbar` launched `spawn`/`ensureSession`/`close` with
+   `void`. The failure now becomes `TerminalServiceSnapshot.lastError` (rendered by
+   `TerminalView`) via `TerminalSessionService.dispatch`.
+
+### Structural audits over-report on delegation
+
+A follow-up script that flagged every controller `async` method whose *own body* lacks `catch`
+reported 7 of 23 methods — and 7 `void controller.X()` UI call sites — as leaks. All seven were
+safe: `submit`/`compact` delegate to `#sendPrompt`/`#runBuiltinSlashCommand` (both wrapped),
+`queueFabricPeerGate` to `#requestFabricPeers` (resolves, never rejects), `loadMoreSessions` and
+`refreshWorkspaceDiff` to `refreshSessions` and `WorkspaceDiff.load` (both self-catch), `dispose`
+is awaited by callers that handle it, and `reconnect`'s only throw path, `PiRpcTransport.stop`,
+has no rejection path while real connection failures are already reported by `start()`. Structure
+is not reachability — prove the leak by execution (see the terminal probe below) before rewriting a
+call site.
+
 Verified red→green in this tranche with the owning gates: `bun test tests/flow-runtime.test.ts`
-(asserted `lastError`) and `bun scripts/web-dom-e2e.ts` (asserted `process.on('unhandledRejection')`
-stays empty while a code-block copy is refused, then succeeds).
+(asserted `lastError`), `bun scripts/web-dom-e2e.ts` (asserted `process.on('unhandledRejection')`
+stays empty while a code-block copy is refused, then succeeds), and
+`bun test tests/terminal-service.test.ts` (a refused spawn leaked an unhandled rejection before,
+and publishes `lastError` now).
 
