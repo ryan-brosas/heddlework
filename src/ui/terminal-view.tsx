@@ -299,7 +299,7 @@ async function pasteClipboardText(): Promise<string | undefined> {
         const text = await new Response(proc.stdout).text()
         if (text) return text
       } catch {
-        continue
+        // try the next clipboard command
       }
     }
   } catch {

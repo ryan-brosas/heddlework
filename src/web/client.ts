@@ -66,7 +66,6 @@ export class WorkspaceClient {
       this.#flush()
     })
   }
-  sendAndReport(command: WorkbenchCommand): Promise<void> { return this.send(command).then(() => undefined, (error: unknown) => { this.reportError(error) }) }
   reportError(error: unknown): void { this.#set({ lastError: error instanceof Error ? error.message : String(error) }) }
 
   #open(): void {

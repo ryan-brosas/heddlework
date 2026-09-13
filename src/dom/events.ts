@@ -1,6 +1,7 @@
 // Builds gpuix EventPayload objects from DOM events so src/ui handlers read the same fields on both hosts.
 
 import type { EventPayload } from '@gpuix/react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 
 // Optional payload fields may be absent but never explicitly undefined under exactOptionalPropertyTypes.
 export type PayloadExtra = { [K in keyof EventPayload]?: EventPayload[K] | undefined }
@@ -20,12 +21,12 @@ const KEY_NAMES: Record<string, string> = {
   Backspace: 'backspace', Delete: 'delete', Tab: 'tab', ' ': 'space', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
 }
 
-export function keyName(event: KeyboardEvent | React.KeyboardEvent): string {
+export function keyName(event: KeyboardEvent | ReactKeyboardEvent): string {
   const key = event.key
   return KEY_NAMES[key] ?? (key.length === 1 ? key.toLowerCase() : key.toLowerCase())
 }
 
-export function mousePayload(elementId: number, eventType: string, event: MouseEvent | React.MouseEvent, extra: PayloadExtra = {}): EventPayload {
+export function mousePayload(elementId: number, eventType: string, event: MouseEvent | ReactMouseEvent, extra: PayloadExtra = {}): EventPayload {
   return compactPayload({ elementId, eventType }, {
     x: event.clientX,
     y: event.clientY,
@@ -37,7 +38,7 @@ export function mousePayload(elementId: number, eventType: string, event: MouseE
   })
 }
 
-export function keyPayload(elementId: number, eventType: string, event: KeyboardEvent | React.KeyboardEvent): EventPayload {
+export function keyPayload(elementId: number, eventType: string, event: KeyboardEvent | ReactKeyboardEvent): EventPayload {
   const name = keyName(event)
   return compactPayload({ elementId, eventType }, {
     key: name,
