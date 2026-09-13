@@ -123,3 +123,16 @@ stays empty while a code-block copy is refused, then succeeds), and
 `bun test tests/terminal-service.test.ts` (a refused spawn leaked an unhandled rejection before,
 and publishes `lastError` now).
 
+### Cross-implementation surface drift (`asTerminalSessionService`)
+
+`src/client/remote-terminal-service.ts` substitutes the desktop `TerminalSessionService` in the web
+companion through `as unknown as TerminalSessionService`, which the compiler cannot check because
+private fields make the two classes nominally incompatible. Adding `dispatch` to the desktop service
+and the terminal call sites therefore passed `bun run check` (it does not run Playwright) and failed
+CI's `test:browser` with `t.dispatch is not a function`. The web companion now implements
+`dispatch` (routing to `client.reportError`), and `RemoteTerminalSurfaceParity` asserts the whole
+public surface at compile time: deleting the member fails `typecheck:web` with
+`Type 'true' is not assignable to type 'never'` (negative-controlled). Keep that guard when changing
+either class, and treat `bun run build:web && bun run test:browser` as part of the pre-push gate.
+
+

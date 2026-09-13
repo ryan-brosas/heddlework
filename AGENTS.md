@@ -32,7 +32,12 @@ or Wayland work.
 bun install --frozen-lockfile   # never mutate the lockfile by hand
 bun run check                   # typecheck + typecheck:web + test + test:performance + web-dom-e2e
 bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
+bun run build:web && bun run test:browser   # Playwright Chromium; CI runs this before `check`
 ```
+
+`check` does not include `test:browser`, so a change to a surface the web companion substitutes
+(`asTerminalSessionService` in `src/client/remote-terminal-service.ts`) can pass `check` and still
+fail CI in the browser probe.
 
 IDE-based source audits - the MCP Steroid sweep harness, its per-script `readAction` rule, the
 proven false-positive taxonomy, and the current coverage baseline - are documented in
