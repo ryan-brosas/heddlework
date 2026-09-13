@@ -43,7 +43,7 @@ export class FlowRuntime {
   readonly #createId: (prefix: 'HW' | 'SCH', now: number) => string
   readonly #tickIntervalMs: number
   readonly #listeners = new Set<() => void>()
-  #document: FlowRuntimeDocument
+  readonly #document: FlowRuntimeDocument
   #snapshot: FlowRuntimeSnapshot
   #timer: ReturnType<typeof setInterval> | undefined
   #unsubscribeHost: (() => void) | undefined

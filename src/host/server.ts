@@ -240,7 +240,6 @@ export class ServerMessageSendQueue {
   }
 
   get hasActiveMessage(): boolean { return this.#active !== undefined }
-  get queuedBytes(): number { return this.#queuedBytes }
 
   enqueue(message: ServerMessage): void {
     if (this.#disposed) return

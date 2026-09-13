@@ -124,7 +124,6 @@ export function useWindowInsets(_options?: { intervalMs?: number | false }) {
 }
 
 export function findRanges(): Array<[number, number]> { return [] }
-export function useTextSearch() { return { query: '', setQuery: () => undefined, matches: [], activeIndex: 0, next: () => undefined, previous: () => undefined } }
 
 const EVENT_PROPS = new Set(['onClick', 'onAuxClick', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'onMouseMove', 'onMouseDownOutside', 'onKeyDown', 'onKeyUp', 'onFocus', 'onBlur', 'onScroll', 'onChange', 'onSubmit', 'onToggleFile', 'onShowMore', 'onLineClick', 'onLinkClick', 'onVisibleRange', 'onHighlight', 'onBrowserState', 'onBrowserOpen', 'onBrowserError'])
 const HOST_ONLY = new Set(['style', 'testId', 'motion', 'highlight', 'autoFocus', 'tabIndex', 'children', 'ref', 'key', 'windowDragRegion', 'windowResizeEdge', ...EVENT_PROPS])
@@ -144,7 +143,7 @@ function useInstance(type: string, props: AnyProps, ref: React.ForwardedRef<unkn
 }
 
 // Outside-press dismissal mirrors gpuix: any mousedown whose target is not inside the element fires the handler.
-function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
+function useMouseDownOutside(id: number, nodeRef: React.RefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
   useEffect(() => {
     if (!handler) return undefined
     const listener = (event: MouseEvent) => {
@@ -157,7 +156,7 @@ function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLEle
   }, [handler, id, nodeRef])
 }
 
-function useMotion(nodeRef: React.MutableRefObject<HTMLElement | null>, motion: AnyProps | undefined) {
+function useMotion(nodeRef: React.RefObject<HTMLElement | null>, motion: AnyProps | undefined) {
   const first = useRef(true)
   const animate = motion?.animate as Record<string, number> | undefined
   const transition = motion?.transition as { duration?: number; delay?: number; ease?: unknown } | undefined
@@ -505,9 +504,6 @@ export function handleGpuixEvent(): void {}
 export function createRoot(): never { throw new Error('createRoot is not available on the DOM host') }
 export function flushSync<T>(fn: () => T): T { return fn() }
 export function enableAutomation(): void {}
-export const MAC_CPU_THROTTLES = [] as const
-export function readMacCpuThrottle(): undefined { return undefined }
-export function applyMacCpuThrottleFromEnv(): void {}
 
 export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator, SelectTrigger, SelectValue } from '@gpuix/react/select'
 export { Combobox, ComboboxContent, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxLabel, ComboboxList, ComboboxSeparator, ComboboxTrigger, ComboboxValue } from '@gpuix/react/combobox'

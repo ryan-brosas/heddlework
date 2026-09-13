@@ -60,6 +60,7 @@ describe('VtEmulator', () => {
     const output = ESC + '[?2026h'
       + ESC + '[2;3H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + '▀██▖' + ESC + '[0m'
       + ESC + '[3;2H' + ESC + '[38;2;250;240;230m' + ESC + '[48;2;20;30;40m' + '▙▛' + ESC + '[0m'
+      + ESC + '[4;2H' + ESC + '[38;5;196m' + ESC + '[48;5;22m' + '█' + ESC + '[0m'
       + ESC + '[?2026l'
     const text = new VtEmulator(8, 4)
     const bytes = new VtEmulator(8, 4)
@@ -75,6 +76,9 @@ describe('VtEmulator', () => {
     expect(bytes.snapshot()).toEqual(text.snapshot())
     expect(fragmented.snapshot()).toEqual(text.snapshot())
     expect(bytes.synchronizedOutput).toBe(false)
+    const indexed = bytes.snapshot().viewport[3]!.cells[1]!
+    expect(indexed.fg).toEqual({ kind: 'indexed', index: 196 })
+    expect(indexed.bg).toEqual({ kind: 'indexed', index: 22 })
   })
 
   it('matches OpenTUI changed-cell runs with mixed glyphs and color modes', () => {

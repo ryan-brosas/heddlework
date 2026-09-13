@@ -201,20 +201,6 @@ export function layoutSessionTreeOptions(options: readonly PiSessionTreeOption[]
   return rows
 }
 
-export function sessionTreeLeafDescendsFrom(sessionTree: PiSessionTree, ancestorId: string | null): boolean {
-  if (ancestorId === null) return true
-  const parents = new Map<string, string | null>()
-  visitNodes(sessionTree.tree, (node) => parents.set(node.entry.id, node.entry.parentId))
-  let cursor: string | null | undefined = sessionTree.leafId
-  const visited = new Set<string>()
-  while (cursor !== null && cursor !== undefined && !visited.has(cursor)) {
-    if (cursor === ancestorId) return true
-    visited.add(cursor)
-    cursor = parents.get(cursor)
-  }
-  return false
-}
-
 export function treeNavigationLeavesBranch(sessionTree: PiSessionTree, targetId: string): boolean {
   const oldLeafId = sessionTree.leafId
   if (!oldLeafId || oldLeafId === targetId) return false

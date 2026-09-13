@@ -86,7 +86,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   useEffect(() => {
     setProjectScope((selected) => resolveProjectScope(selected, projectOptions))
   }, [projectOptions])
-  const matchingSessions = useMemo(() => {
+  const visibleSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
     for (const session of persistedSessions) unique.set(session.path, session)
@@ -98,7 +98,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       ? scoped.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
       : scoped
   }, [activeSummary, normalizedSearch, persistedSessions, projectScope])
-  const visibleSessions = matchingSessions
   const now = clock
   useEffect(() => {
     if (initialSessionScrollApplied.current || state.sessionsLoading || visibleSessions.length === 0) return
@@ -329,10 +328,6 @@ function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expa
       <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>
     </div>
   )
-}
-
-function SidebarTextAction({ label, onClick }: { label: string; onClick(): void }) {
-  return <div tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick}><text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550 }}>{label}</text></div>
 }
 
 function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
