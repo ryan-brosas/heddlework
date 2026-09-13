@@ -140,7 +140,9 @@ export const TerminalView = memo(function TerminalView({
             rendering={rendering}
           />
         : <TerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
-      ) : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
+      ) : serviceSnapshot.lastError
+        ? <text testId={'terminal-error-' + placement} style={{ color: colors.textFaint, fontSize: 11 }}>{`Terminal unavailable: ${serviceSnapshot.lastError}`}</text>
+        : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
       <div
         ref={(instance: { id: number } | null) => { inputId.current = instance?.id }}
         testId={'terminal-input-' + placement}

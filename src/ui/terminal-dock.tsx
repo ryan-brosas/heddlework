@@ -43,14 +43,14 @@ export function TerminalDock({
 
   useEffect(() => {
     if (!open) return
-    void service.ensureSession('bottom')
+    service.dispatch(service.ensureSession('bottom'))
   }, [open, service])
 
   const onNew = useCallback(() => {
-    void service.spawn().then((id) => {
+    service.dispatch(service.spawn().then((id) => {
       service.select('bottom', id)
       requestFocus(id)
-    })
+    }))
   }, [requestFocus, service])
 
   const viewHeight = Math.max(1, height - TERMINAL_DOCK_HEADER)

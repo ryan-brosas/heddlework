@@ -30,14 +30,14 @@ export function TerminalPanel({
   }, [activeId, service])
 
   useEffect(() => {
-    void service.ensureSession('right')
+    service.dispatch(service.ensureSession('right'))
   }, [service])
 
   const onNew = useCallback(() => {
-    void service.spawn().then((id) => {
+    service.dispatch(service.spawn().then((id) => {
       service.select('right', id)
       grabFocus(id)
-    })
+    }))
   }, [grabFocus, service])
 
   const bodyHeight = Math.max(1, windowSize.height - 52 - 36)
