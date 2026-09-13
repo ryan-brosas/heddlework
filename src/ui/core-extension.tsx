@@ -1,4 +1,4 @@
-import React, { useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { WorkbenchPlugin } from '../core/kernel.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'

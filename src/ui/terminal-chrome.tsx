@@ -1,4 +1,3 @@
-import React from 'react'
 import type { TerminalSessionId, TerminalSessionInfo } from '../terminal/types.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { Icon } from './icons.tsx'

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useWindowMetrics } from './window-metrics.tsx'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { WorkbenchSurfaceProps } from './extensions.ts'

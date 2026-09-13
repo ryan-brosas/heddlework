@@ -1,5 +1,5 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'

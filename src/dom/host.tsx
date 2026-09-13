@@ -123,8 +123,6 @@ export function useWindowInsets(_options?: { intervalMs?: number | false }) {
   return { safeArea: zero, ime, effective: ime, keyboardTop: metrics.keyboardTop, keyboardVisible: metrics.keyboardInset > 80, visibleHeight: metrics.visibleHeight }
 }
 
-export function findRanges(): Array<[number, number]> { return [] }
-
 const EVENT_PROPS = new Set(['onClick', 'onAuxClick', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'onMouseMove', 'onMouseDownOutside', 'onKeyDown', 'onKeyUp', 'onFocus', 'onBlur', 'onScroll', 'onChange', 'onSubmit', 'onToggleFile', 'onShowMore', 'onLineClick', 'onLinkClick', 'onVisibleRange', 'onHighlight', 'onBrowserState', 'onBrowserOpen', 'onBrowserError'])
 const HOST_ONLY = new Set(['style', 'testId', 'motion', 'highlight', 'autoFocus', 'tabIndex', 'children', 'ref', 'key', 'windowDragRegion', 'windowResizeEdge', ...EVENT_PROPS])
 
@@ -503,7 +501,6 @@ export const motion = { div: MotionDiv }
 export function handleGpuixEvent(): void {}
 export function createRoot(): never { throw new Error('createRoot is not available on the DOM host') }
 export function flushSync<T>(fn: () => T): T { return fn() }
-export function enableAutomation(): void {}
 
 export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator, SelectTrigger, SelectValue } from '@gpuix/react/select'
 export { Combobox, ComboboxContent, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxLabel, ComboboxList, ComboboxSeparator, ComboboxTrigger, ComboboxValue } from '@gpuix/react/combobox'

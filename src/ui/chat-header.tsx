@@ -1,5 +1,4 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React from 'react'
 import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'

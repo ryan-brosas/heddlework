@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { RemoteWorkbenchController, asWorkbenchController } from '../dom/remote-controller.ts'
 import { domRenderer, GpuixContext } from '../dom/host.tsx'

@@ -1,4 +1,3 @@
-import React from 'react'
 import { GpuixRenderer, render, resetRender } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'

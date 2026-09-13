@@ -34,7 +34,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   settingsActive,
   notificationsActive,
   unreadCount,
-  appearance,
   onSelectSession,
   onFlows = () => undefined,
   onSettings,
@@ -250,6 +249,8 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   && previous.settingsActive === next.settingsActive
   && previous.notificationsActive === next.notificationsActive
   && previous.unreadCount === next.unreadCount
+  // The body paints from the module-level palette that applyResolvedTheme mutates in place,
+  // so a light/dark switch must break memo here even though the prop is never read directly.
   && previous.appearance === next.appearance
   && previous.state.sessions === next.state.sessions
   && previous.state.sessionsLoading === next.state.sessionsLoading

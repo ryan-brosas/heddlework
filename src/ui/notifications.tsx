@@ -1,6 +1,6 @@
 import { formatTimeOfDay } from './format-time.ts'
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
@@ -225,5 +225,4 @@ function noticeColor(kind: NoticeKind): string {
   if (kind === 'warning') return colors.warning
   return colors.success
 }
-
 

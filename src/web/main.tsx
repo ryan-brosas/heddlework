@@ -1,5 +1,5 @@
 import '../dom/process-shim.ts'
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { installCreateElementBridge } from '../dom/host.tsx'
 import { ConnectPage } from './connect-page.tsx'

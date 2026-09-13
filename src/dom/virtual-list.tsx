@@ -24,8 +24,6 @@ interface Props {
   onVisibleRange?(event: EventPayload): void
 }
 
-const TAIL_SLACK_PX = 24
-
 export function DomVirtualList({ elementId, setNode, children, style, alignment = 'top', followTail = false, estimatedItemHeight = 72, testId, itemCount, windowStart = 0, onScroll, onVisibleRange }: Props) {
   const scroller = useRef<HTMLDivElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)

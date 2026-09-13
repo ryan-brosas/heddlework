@@ -1,4 +1,3 @@
-import React from 'react'
 import type { SlashCommand } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { AskUserQuestionnaire } from '../workbench/ask-user.ts'
