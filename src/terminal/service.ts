@@ -6,7 +6,6 @@ import type {
   TerminalCleanup,
   TerminalGridSnapshot,
   TerminalPlacement,
-  TerminalProcessStatus,
   TerminalServiceSnapshot,
   TerminalSessionId,
   TerminalSessionInfo,

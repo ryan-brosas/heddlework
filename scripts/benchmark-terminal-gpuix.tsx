@@ -11,7 +11,7 @@ import {
   type DebugFrameOverlayStats,
   type Root,
 } from '@gpuix/react'
-import { BunPtyBackend, type TerminalBackend, type TerminalOutputMetadata, type TerminalProcess } from '../src/terminal/backend.ts'
+import { BunPtyBackend, type TerminalBackend, type TerminalProcess } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 import type { TerminalProcessStatus, TerminalSessionId, TerminalSpawnRequest } from '../src/terminal/types.ts'
 import { terminalGridSize } from '../src/ui/terminal-metrics.ts'

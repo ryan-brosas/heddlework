@@ -1,6 +1,5 @@
 import React from 'react'
 import { rmSync, writeFileSync } from 'node:fs'
-import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
@@ -14,9 +13,25 @@ import { FlowRail } from '../src/ui/flow-rail.tsx'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from '../src/ui/responsive.tsx'
 import { colors } from '../src/ui/theme.ts'
 import { createInitialState } from '../src/workbench/state.ts'
-import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { createTestUiRegistry, expectScrollWheelLatency, testControllerDependencies } from './helpers/workbench.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
+
+async function renderFlowsView(session: PiSessionSummary) {
+  const state = { ...createInitialState('/tmp'), connection: 'connected' as const, sessions: [session] }
+  const controller = new WorkbenchController(new DemoTransport(), '/tmp', testControllerDependencies())
+  const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
+  const root = createTestRoot({ width: 1_352, height: 760 })
+  root.render(
+    <ResponsiveLayoutProvider layout={resolveResponsiveLayout(1_352)}>
+      <div style={{ width: 1_352, height: 760, display: 'flex', flexDirection: 'row' }}>
+        <FlowsView state={state} controller={controller} runtime={runtime} presenters={new Map()} onClose={() => undefined} onOpenSession={() => undefined} />
+      </div>
+    </ResponsiveLayoutProvider>,
+  )
+  const automation = await connectTest(root.renderer)
+  return { controller, runtime, root, automation }
+}
 
 describeNative('Flows surface', () => {
   it('keeps the failed rail marker aligned with the other rail glyphs', async () => {
@@ -658,12 +673,7 @@ describeNative('Flows surface', () => {
       await automation.call('scrollWheel', { x: surface.x + surface.width / 2, y: surface.y + surface.height / 2, deltaX: 0, deltaY: 120 })
       root.renderer.flush()
 
-      const wheelStarted = performance.now()
-      for (let index = 0; index < 20; index += 1) {
-        await automation.call('scrollWheel', { x: surface.x + surface.width / 2, y: surface.y + surface.height / 2, deltaX: 0, deltaY: index % 2 ? -120 : 120 })
-        root.renderer.flush()
-      }
-      expect(performance.now() - wheelStarted).toBeLessThan(400)
+      await expectScrollWheelLatency(automation, root, surface)
 
       for (let attempt = 0; attempt < 40 && root.renderer.findByTestId('flows-work-list')!.children.length < 1_201; attempt += 1) {
         await Bun.sleep(20)
@@ -725,18 +735,7 @@ describeNative('Flows surface', () => {
       firstMessage: '[Flow HW-GRAPH]\n[Flow Task HW-GRAPH-1]\n\nTask:\nBuild the projected branch graph', messageCount: records.length,
       createdAt: now - 4_000, modifiedAt: now - 1_000, lastAssistantText: 'Joined result', lastAssistantStopReason: 'stop',
     }
-    const state = { ...createInitialState('/tmp'), connection: 'connected' as const, sessions: [session] }
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp', testControllerDependencies())
-    const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
-    const root = createTestRoot({ width: 1_352, height: 760 })
-    root.render(
-      <ResponsiveLayoutProvider layout={resolveResponsiveLayout(1_352)}>
-        <div style={{ width: 1_352, height: 760, display: 'flex', flexDirection: 'row' }}>
-          <FlowsView state={state} controller={controller} runtime={runtime} presenters={new Map()} onClose={() => undefined} onOpenSession={() => undefined} />
-        </div>
-      </ResponsiveLayoutProvider>,
-    )
-    const automation = await connectTest(root.renderer)
+    const { controller, runtime, root, automation } = await renderFlowsView(session)
     try {
       await automation.getByTestId('flow-task-HW-GRAPH-1').click()
       await waitFor(() => {
@@ -774,18 +773,7 @@ describeNative('Flows surface', () => {
       id: 'activity-session', path: sessionPath, cwd: '/tmp', title: 'Activity projection', firstMessage: 'Inspect the activity projection', messageCount: records.length,
       createdAt: now - 5_000, modifiedAt: now - 1_000, lastAssistantText: 'The activity projection is complete.', lastAssistantStopReason: 'stop',
     }
-    const state = { ...createInitialState('/tmp'), connection: 'connected' as const, sessions: [session] }
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp', testControllerDependencies())
-    const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
-    const root = createTestRoot({ width: 1_352, height: 760 })
-    root.render(
-      <ResponsiveLayoutProvider layout={resolveResponsiveLayout(1_352)}>
-        <div style={{ width: 1_352, height: 760, display: 'flex', flexDirection: 'row' }}>
-          <FlowsView state={state} controller={controller} runtime={runtime} presenters={new Map()} onClose={() => undefined} onOpenSession={() => undefined} />
-        </div>
-      </ResponsiveLayoutProvider>,
-    )
-    const automation = await connectTest(root.renderer)
+    const { controller, runtime, root, automation } = await renderFlowsView(session)
     try {
       await automation.getByTestId('flow-task-PI-ACTIVITY').click()
       await waitFor(() => {

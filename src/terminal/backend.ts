@@ -42,13 +42,8 @@ export class TerminalOutputBuffer {
     let index = 0
     let segmentStart = 0
     while (index < chunk.byteLength && this.#sequence > 0) {
-      const mode = this.#scan(chunk[index]!)
+      segmentStart = this.#scanByte(chunk, index, segmentStart)
       index += 1
-      if (mode === 1) this.#synchronized = true
-      if (mode === -1) {
-        this.#completeFrame(chunk, segmentStart, index)
-        segmentStart = index
-      }
     }
     while (index < chunk.byteLength) {
       const enable = this.#synchronized ? -1 : chunk.indexOf(0x68, index)
@@ -78,13 +73,8 @@ export class TerminalOutputBuffer {
       if (escape !== -1) {
         index = escape
         while (index < chunk.byteLength) {
-          const mode = this.#scan(chunk[index]!)
+          segmentStart = this.#scanByte(chunk, index, segmentStart)
           index += 1
-          if (mode === 1) this.#synchronized = true
-          if (mode === -1) {
-            this.#completeFrame(chunk, segmentStart, index)
-            segmentStart = index
-          }
         }
       }
     }
@@ -117,6 +107,17 @@ export class TerminalOutputBuffer {
     this.#staleTimer = undefined
     this.#synchronized = false
     this.flush()
+  }
+
+  #scanByte(chunk: Uint8Array, index: number, segmentStart: number): number {
+    const mode = this.#scan(chunk[index]!)
+    if (mode === 1) this.#synchronized = true
+    if (mode === -1) {
+      const frameEnd = index + 1
+      this.#completeFrame(chunk, segmentStart, frameEnd)
+      return frameEnd
+    }
+    return segmentStart
   }
 
   #completeFrame(chunk: Uint8Array, start: number, end: number): void {

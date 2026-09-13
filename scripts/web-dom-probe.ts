@@ -2,7 +2,6 @@ import { Window } from 'happy-dom'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { createInitialState } from '../src/workbench/state.ts'
-import { colors } from '../src/ui/theme.ts'
 // Desktop width: 1024 is exactly the tablet breakpoint, and a compact layout forces the
 // lifecycle controls onto every card, which would make the idle mark-only branch untestable.
 const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}`, width: 1_280, height: 900 })
