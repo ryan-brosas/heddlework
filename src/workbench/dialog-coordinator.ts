@@ -5,7 +5,6 @@ import {
   addNotice,
   addStatusLine,
   type ExtensionDialog,
-  type ExtensionWidget,
   type WorkbenchState,
 } from './state.ts'
 import { currentTurnTracePosition } from './timeline.ts'
@@ -79,12 +78,11 @@ export class WorkbenchDialogCoordinator {
       const key = request.widgetKey ?? request.id
       const widgets = { ...state.widgets }
       if (request.widgetLines) {
-        const widget: ExtensionWidget = {
+        widgets[key] = {
           key,
           lines: request.widgetLines,
           placement: request.widgetPlacement ?? 'aboveEditor',
         }
-        widgets[key] = widget
       } else {
         delete widgets[key]
       }
@@ -291,10 +289,6 @@ export class WorkbenchDialogCoordinator {
     if (this.#dialogTimer) clearTimeout(this.#dialogTimer)
     this.#dialogTimer = undefined
   }
-}
-
-function isInteractiveRequest(request: ExtensionUiRequest): boolean {
-  return request.method === 'select' || request.method === 'confirm' || request.method === 'input' || request.method === 'editor'
 }
 
 function hasActiveConversation(state: WorkbenchState): boolean {

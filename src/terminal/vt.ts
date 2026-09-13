@@ -115,6 +115,12 @@ function csiParam(params: readonly number[], index: number, fallback: number): n
   return value === 0 ? fallback : value
 }
 
+function packRgbParams(params: Int32Array): number {
+  return (Math.max(0, Math.min(255, params[2]!)) << 16)
+    | (Math.max(0, Math.min(255, params[3]!)) << 8)
+    | Math.max(0, Math.min(255, params[4]!))
+}
+
 function scanNumericCsi(text: string, start: number, params: Int32Array): number {
   let count = 0
   let value = 0
@@ -999,9 +1005,7 @@ export class VtEmulator {
       || Number(params[5]) !== 5
       || Number(params[0]) !== 38
       || Number(params[1]) !== 2) return -1
-    const foreground = (Math.max(0, Math.min(255, params[2]!)) << 16)
-      | (Math.max(0, Math.min(255, params[3]!)) << 8)
-      | Math.max(0, Math.min(255, params[4]!))
+    const foreground = packRgbParams(params)
 
     if (text.charCodeAt(foregroundEnd) !== 0x1b || text.charCodeAt(foregroundEnd + 1) !== 0x5b) return -1
     const backgroundEnd = scanNumericCsi(text, foregroundEnd + 2, params)
@@ -1010,9 +1014,7 @@ export class VtEmulator {
       || Number(params[5]) !== 5
       || Number(params[0]) !== 48
       || Number(params[1]) !== 2) return -1
-    const background = (Math.max(0, Math.min(255, params[2]!)) << 16)
-      | (Math.max(0, Math.min(255, params[3]!)) << 8)
-      | Math.max(0, Math.min(255, params[4]!))
+    const background = packRgbParams(params)
 
     let runEnd = backgroundEnd
     while (runEnd < text.length) {
