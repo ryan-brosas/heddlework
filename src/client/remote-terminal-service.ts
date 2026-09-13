@@ -1,11 +1,9 @@
 import type { WorkspaceClient } from '../web/client.ts'
 import { MAX_TERMINAL_WRITE_CHARS, type RemoteTerminalFrame, type RemoteTerminalSnapshot } from '../protocol/terminal.ts'
-import { SHARED_TERMINAL_APPEARANCE } from '../terminal/appearance-defaults.ts'
+import { DEFAULT_REMOTE_TERMINAL_APPEARANCE } from '../terminal/appearance-defaults.ts'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalServiceSnapshot, TerminalSessionId, TerminalSpawnRequest } from '../terminal/types.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 
-/** Browser default: the CSS system stack instead of the native terminal's font, everything else shared. */
-export const DEFAULT_REMOTE_TERMINAL_APPEARANCE: TerminalAppearance = Object.freeze({ fontFamily: 'ui-monospace', ...SHARED_TERMINAL_APPEARANCE })
 const FG = { kind: 'default-fg' } as const
 const BG = { kind: 'default-bg' } as const
 const EMPTY_REMOTE: RemoteTerminalSnapshot = { sessions: [] }

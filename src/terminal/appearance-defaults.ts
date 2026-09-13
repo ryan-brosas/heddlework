@@ -10,3 +10,9 @@ export const SHARED_TERMINAL_APPEARANCE = Object.freeze({
   nerdFontEnabled: false,
   muteEmojiColors: true,
 } satisfies Omit<TerminalAppearance, 'fontFamily'>)
+
+/** Native terminal default: the desktop font stack. */
+export const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearance = Object.freeze({ fontFamily: 'Menlo', ...SHARED_TERMINAL_APPEARANCE })
+
+/** Browser default: the CSS system stack instead of the native font. */
+export const DEFAULT_REMOTE_TERMINAL_APPEARANCE: TerminalAppearance = Object.freeze({ fontFamily: 'ui-monospace', ...SHARED_TERMINAL_APPEARANCE })
