@@ -16,7 +16,9 @@ if (hasCredentials) {
 }
 stripPairingParameters()
 function Root() { const [connected, setConnected] = useState(hasCredentials); return connected ? <WebWorkbench /> : <ConnectPage onConnected={() => setConnected(true)} /> }
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || (location.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(location.hostname)))) void navigator.serviceWorker.register('/sw.js')
+// The offline shell is an enhancement, not a prerequisite: a browser that refuses the
+// registration must not surface an unhandled rejection in an otherwise healthy session.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || (location.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(location.hostname)))) void navigator.serviceWorker.register('/sw.js').catch(() => undefined)
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing #root')
 createRoot(root).render(<Root />)
