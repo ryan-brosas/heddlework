@@ -34,6 +34,9 @@ bun run check                   # typecheck + typecheck:web + test + test:perfor
 bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
 ```
 
+Tests are Bun tests (`import { describe, expect, it } from 'bun:test'`): run a single file with
+`bun test tests/<name>.test.ts`. Vitest cannot load them (`Cannot find package 'bun:test'`).
+
 `check:native` and `check:ai-slop` do not exist in the fresh-fork package.json. Re-add them only
 with their implementations.
 
