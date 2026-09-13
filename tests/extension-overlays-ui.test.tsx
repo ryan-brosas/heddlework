@@ -1,10 +1,10 @@
 import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { handleGpuixEvent } from '@gpuix/react'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
@@ -13,6 +13,7 @@ import { WorkbenchApp } from '../src/ui/app.tsx'
 import { colors } from '../src/ui/theme.ts'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 class OverlayTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
@@ -47,7 +48,6 @@ class OverlayTransport implements AgentTransport {
   emitStatus(status: TransportStatus): void { for (const listener of this.statuses) listener(status) }
 }
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const screenshotDirectory = resolve(import.meta.dir, '../screenshots')
 
 function screenshotPath(name: string): string {
@@ -122,7 +122,7 @@ describeNative('conversation extension overlays', () => {
   })
 
   it('tab-completes the active slash command without inserting a tab character', async () => {
-    const { transport, controller, root, automation } = await openOverlayWorkbench()
+    const { controller, root, automation } = await openOverlayWorkbench()
     try {
       await automation.getByTestId('composer').click()
       await automation.getByTestId('composer').fill('/led')

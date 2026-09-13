@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
@@ -11,6 +11,7 @@ import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { colors } from '../src/ui/theme.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 class ManualTransport implements AgentTransport {
   constructor(readonly initialMessages: PiMessage[] = []) {}
@@ -294,8 +295,6 @@ class TreeTransport extends ManualTransport {
     return super.request<T>(command)
   }
 }
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('Pi extension conversation overlay', () => {
 

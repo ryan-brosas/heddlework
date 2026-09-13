@@ -1,9 +1,10 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { ChipSelect, matchSelectOptions, type SelectOption } from '../src/ui/primitives.tsx'
 import { applyResolvedTheme, colors, lightColors } from '../src/ui/theme.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 describe('select option matching', () => {
   it('uses Localterm-style fuzzy matching across model names and provider IDs', () => {
@@ -13,7 +14,6 @@ describe('select option matching', () => {
   })
 })
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const options: SelectOption[] = Array.from({ length: 24 }, (_, index) => ({
   value: `provider/model-${index}`,
   label: `Model ${index}`,
@@ -84,7 +84,6 @@ describeNative('bounded select content', () => {
     await automation.close()
     root.unmount()
   })
-
 
   it('bounds ten-thousand model rows and rematerializes the deep native viewport', async () => {
     const root = createTestRoot()

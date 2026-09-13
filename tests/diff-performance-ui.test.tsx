@@ -1,10 +1,10 @@
 import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { NativeDiffViewport, WrappedDiff } from '../src/ui/diff-panel.tsx'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 // `check` repeats these budgets in a fresh process after the functional suite.
 const enforceBudgets = process.env.HEDDLEWORK_PERFORMANCE_BUDGETS === '1'
 

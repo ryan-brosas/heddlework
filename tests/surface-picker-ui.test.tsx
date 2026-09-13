@@ -1,11 +1,10 @@
-import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { SurfacePickerPanel, type SurfaceDescriptor } from '../src/ui/surface-picker.tsx'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from '../src/ui/responsive.tsx'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const surfaces: SurfaceDescriptor[] = ['Browser', 'Terminal', 'Files', 'Diff', 'Agents'].map((title) => ({
   id: title.toLowerCase(), title, icon: 'globe', description: title === 'Agents' ? 'Watch subagents and workflows run.' : 'Open this workspace surface.',
 }))

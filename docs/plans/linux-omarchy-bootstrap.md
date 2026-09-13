@@ -215,3 +215,6 @@ harnesses dropped from the pool so the next open respawns them.
 - **Open project** on Linux talks to `org.freedesktop.portal.FileChooser` first (listen for Response before
   OpenFile). kdialog then zenity are fallbacks only when the portal is unavailable. This is a TypeScript
   gdbus/dbus-monitor seam, not a GPUIX pin or Omarchy palette change.
+- Native-renderer suites are a structural Linux skip, not a failure: the pinned gpuix test renderer is built
+  for macOS and Windows only, so ~97 `bun test` skips per run are expected. `tests/helpers/native-renderer.ts`
+  owns the gate and prints the reason once per run; do not read those skips as coverage.

@@ -1,10 +1,8 @@
-import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { ChangedFilesCard } from '../src/ui/transcript.tsx'
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
+import { describeNative } from './helpers/native-renderer.ts'
 
 describeNative('changed-files summary', () => {
   it('opens the existing Diff surface', async () => {
