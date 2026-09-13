@@ -104,6 +104,10 @@ export function queueLaneHead(items: readonly QueuedInput[], lane: QueueLane): Q
   return items.find((item) => queueLane(item) === lane)
 }
 
+export function queueHasFlow(items: readonly QueuedInput[], runId: string): boolean {
+  return items.some((item) => item.flow?.runId === runId)
+}
+
 export function moveQueuedInput(items: readonly QueuedInput[], id: string, targetIndex: number): QueuedInput[] {
   const ordered = queueItemsInDeliveryOrder(items)
   const item = ordered.find((candidate) => candidate.id === id)

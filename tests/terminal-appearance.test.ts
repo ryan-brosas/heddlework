@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { DEFAULT_REMOTE_TERMINAL_APPEARANCE } from '../src/client/remote-terminal-service.ts'
+import { DEFAULT_TERMINAL_APPEARANCE } from '../src/terminal/appearance.ts'
 import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 
@@ -43,5 +45,12 @@ describe('terminal appearance persistence', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('terminal appearance defaults', () => {
+  it('differs between the native terminal and the browser client only in fontFamily', () => {
+    const fields = Object.keys(DEFAULT_TERMINAL_APPEARANCE) as (keyof typeof DEFAULT_TERMINAL_APPEARANCE)[]
+    expect(fields.filter((field) => DEFAULT_TERMINAL_APPEARANCE[field] !== DEFAULT_REMOTE_TERMINAL_APPEARANCE[field])).toEqual(['fontFamily'])
   })
 })

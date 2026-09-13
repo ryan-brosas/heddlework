@@ -4,7 +4,7 @@ import type { WorkbenchCommand } from '../protocol/index.ts'
 import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
-import type { QueueInputDraft, QueueLane } from '../workbench/queue.ts'
+import { queueHasFlow, type QueueInputDraft, type QueueLane } from '../workbench/queue.ts'
 import type { WorkspaceClient } from '../web/client.ts'
 
 export class RemoteWorkbenchController {
@@ -13,7 +13,7 @@ export class RemoteWorkbenchController {
   #snapshot: WorkbenchState | undefined
   #localEditorText: string | undefined
   #editorTimer: ReturnType<typeof setTimeout> | undefined
-  #unsubscribe: () => void
+  readonly #unsubscribe: () => void
   constructor(client: WorkspaceClient) { this.#client = client; this.#snapshot = materialize(client.getSnapshot().state); this.#unsubscribe = client.subscribe(() => this.#pull()) }
   readonly subscribe = (listener: () => void): (() => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   readonly getSnapshot = (): WorkbenchState => { if (!this.#snapshot) throw new Error('Remote workbench is not ready'); return this.#snapshot }
@@ -26,7 +26,7 @@ export class RemoteWorkbenchController {
   async submit(text: string, options: { queue?: boolean } = {}): Promise<void> { this.#localEditorText = undefined; await this.#send({ type: 'submit', text, ...(options.queue ? { queue: true } : {}) }) }
   queueInput(text: string, _images: readonly ComposerImage[] = [], options: { paused?: boolean; lane?: QueueLane } = {}): undefined { void this.#send({ type: 'queueInput', text, ...(options.lane ? { lane: options.lane } : {}), ...(options.paused === undefined ? {} : { paused: options.paused }) }); return undefined }
   enqueueQueueInputs(inputs: readonly QueueInputDraft[], options: { start?: boolean; paused?: boolean } = {}): never[] { for (const input of inputs) this.queueInput(input.text, input.images, { ...(input.lane ? { lane: input.lane } : {}), ...(options.paused === undefined ? {} : { paused: options.paused }) }); return [] }
-  hasQueuedFlow(runId: string): boolean { return this.getSnapshot().queue.items.some((item) => item.flow?.runId === runId) }
+  hasQueuedFlow(runId: string): boolean { return queueHasFlow(this.getSnapshot().queue.items, runId) }
   removeQueuedFlow(runId: string): void { void this.#send({ type: 'removeQueuedFlow', runId }) }
   updateQueuedInput(id: string, text: string): void { void this.#send({ type: 'updateQueuedInput', id, text }) }
   removeQueuedInput(id: string): void { void this.#send({ type: 'removeQueuedInput', id }) }

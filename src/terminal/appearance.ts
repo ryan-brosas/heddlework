@@ -1,14 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { SHARED_TERMINAL_APPEARANCE } from './appearance-defaults.ts'
 import type { TerminalAppearance } from './types.ts'
 
 export const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearance = Object.freeze({
   fontFamily: 'Menlo',
-  nerdFontFamily: 'Symbols Nerd Font Mono',
-  ligaturesEnabled: true,
-  nerdFontEnabled: false,
-  muteEmojiColors: true,
+  ...SHARED_TERMINAL_APPEARANCE,
 })
 
 export function resolveTerminalAppearance(

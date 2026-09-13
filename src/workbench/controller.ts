@@ -50,6 +50,7 @@ import {
   createQueueState,
   moveQueuedInput,
   moveQueuedInputToLaneTail,
+  queueHasFlow,
   queueLaneHead,
   queuedInputControl,
   type QueuedControl,
@@ -359,7 +360,7 @@ export class WorkbenchController {
   }
 
   hasQueuedFlow(runId: string): boolean {
-    return this.#state.queue.items.some((item) => item.flow?.runId === runId)
+    return queueHasFlow(this.#state.queue.items, runId)
   }
 
   removeQueuedFlow(runId: string): void {
