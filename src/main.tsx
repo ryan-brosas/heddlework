@@ -127,7 +127,7 @@ function shutdown(initialError?: unknown): void {
       failures.push(error)
     }
 
-    let nativeStopped = false
+    let nativeStopped: boolean
     try {
       resetRender()
       nativeStopped = true
