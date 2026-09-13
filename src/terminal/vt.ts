@@ -32,6 +32,66 @@ const HIDE_CURSOR = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c])
 
 type ParserState = 'ground' | 'escape' | 'csi' | 'osc' | 'dcs' | 'charset'
 
+// SGR color run inside the synchronized framebuffer fast path: ESC [ {38;2;R;G;B | 38;5;I | 39} m
+// for the foreground slot (0x33) or ESC [ {48;2;R;G;B | 48;5;I | 49} m for the background slot (0x34).
+function scanDecimal(input: Uint8Array, scan: number): { value: number; scan: number } | undefined {
+  let byte = input[scan] ?? -1
+  if (byte < 0x30 || byte > 0x39) return undefined
+  let value = 0
+  do {
+    value = value * 10 + byte - 0x30
+    scan += 1
+    byte = input[scan] ?? -1
+  } while (byte >= 0x30 && byte <= 0x39)
+  return { value, scan }
+}
+
+function scanSgrColor(input: Uint8Array, scan: number, slot: 0x33 | 0x34): { color: number; scan: number } | undefined {
+  if (input[scan] === 0x1b
+    && input[scan + 1] === 0x5b
+    && input[scan + 2] === slot
+    && input[scan + 3] === 0x38
+    && input[scan + 4] === 0x3b
+    && input[scan + 5] === 0x32
+    && input[scan + 6] === 0x3b) {
+    scan += 7
+    const red = scanDecimal(input, scan)
+    if (red === undefined) return undefined
+    if (input[red.scan] !== 0x3b) return undefined
+    scan = red.scan + 1
+    const green = scanDecimal(input, scan)
+    if (green === undefined) return undefined
+    if (input[green.scan] !== 0x3b) return undefined
+    scan = green.scan + 1
+    const blue = scanDecimal(input, scan)
+    if (blue === undefined) return undefined
+    if (input[blue.scan] !== 0x6d) return undefined
+    scan = blue.scan + 1
+    return {
+      color: (Math.min(255, red.value) << 16) | (Math.min(255, green.value) << 8) | Math.min(255, blue.value),
+      scan,
+    }
+  }
+  if (input[scan] === 0x1b
+    && input[scan + 1] === 0x5b
+    && input[scan + 2] === slot
+    && input[scan + 3] === 0x38
+    && input[scan + 4] === 0x3b
+    && input[scan + 5] === 0x35
+    && input[scan + 6] === 0x3b) {
+    scan += 7
+    const indexed = scanDecimal(input, scan)
+    if (indexed === undefined) return undefined
+    if (input[indexed.scan] !== 0x6d) return undefined
+    scan = indexed.scan + 1
+    return { color: TERMINAL_PACKED_COLOR_INDEXED | Math.min(255, indexed.value), scan }
+  }
+  if (input[scan] === 0x1b && input[scan + 1] === 0x5b && input[scan + 2] === slot && input[scan + 3] === 0x39 && input[scan + 4] === 0x6d) {
+    return { color: slot === 0x33 ? DEFAULT_FG : DEFAULT_BG, scan: scan + 5 }
+  }
+  return undefined
+}
+
 interface MutableRow {
   cells: Uint32Array
   graphemes: Map<number, string> | undefined
@@ -647,155 +707,15 @@ export class VtEmulator {
       if (byte !== 0x48) break
       scan += 1
 
-      let foreground: number
-      if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x33
-        && input[scan + 3] === 0x38
-        && input[scan + 4] === 0x3b
-        && input[scan + 5] === 0x32
-        && input[scan + 6] === 0x3b) {
-        scan += 7
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let red = 0
-        do {
-          red = red * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x3b) break
+      const foregroundScan = scanSgrColor(input, scan, 0x33)
+      if (foregroundScan === undefined) break
+      scan = foregroundScan.scan
+      const foreground = foregroundScan.color
 
-        scan += 1
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let green = 0
-        do {
-          green = green * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x3b) break
-
-        scan += 1
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let blue = 0
-        do {
-          blue = blue * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x6d) break
-        scan += 1
-        red = Math.min(255, red)
-        green = Math.min(255, green)
-        blue = Math.min(255, blue)
-        foreground = (red << 16) | (green << 8) | blue
-      } else if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x33
-        && input[scan + 3] === 0x38
-        && input[scan + 4] === 0x3b
-        && input[scan + 5] === 0x35
-        && input[scan + 6] === 0x3b) {
-        scan += 7
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let color = 0
-        do {
-          color = color * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x6d) break
-        scan += 1
-        foreground = TERMINAL_PACKED_COLOR_INDEXED | Math.min(255, color)
-      } else if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x33
-        && input[scan + 3] === 0x39
-        && input[scan + 4] === 0x6d) {
-        scan += 5
-        foreground = DEFAULT_FG
-      } else {
-        break
-      }
-
-      let background: number
-      if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x34
-        && input[scan + 3] === 0x38
-        && input[scan + 4] === 0x3b
-        && input[scan + 5] === 0x32
-        && input[scan + 6] === 0x3b) {
-        scan += 7
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let red = 0
-        do {
-          red = red * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x3b) break
-
-        scan += 1
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let green = 0
-        do {
-          green = green * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x3b) break
-
-        scan += 1
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let blue = 0
-        do {
-          blue = blue * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x6d) break
-        scan += 1
-        red = Math.min(255, red)
-        green = Math.min(255, green)
-        blue = Math.min(255, blue)
-        background = (red << 16) | (green << 8) | blue
-      } else if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x34
-        && input[scan + 3] === 0x38
-        && input[scan + 4] === 0x3b
-        && input[scan + 5] === 0x35
-        && input[scan + 6] === 0x3b) {
-        scan += 7
-        byte = input[scan] ?? -1
-        if (byte < 0x30 || byte > 0x39) break
-        let color = 0
-        do {
-          color = color * 10 + byte - 0x30
-          scan += 1
-          byte = input[scan] ?? -1
-        } while (byte >= 0x30 && byte <= 0x39)
-        if (byte !== 0x6d) break
-        scan += 1
-        background = TERMINAL_PACKED_COLOR_INDEXED | Math.min(255, color)
-      } else if (input[scan] === 0x1b
-        && input[scan + 1] === 0x5b
-        && input[scan + 2] === 0x34
-        && input[scan + 3] === 0x39
-        && input[scan + 4] === 0x6d) {
-        scan += 5
-        background = DEFAULT_BG
-      } else {
-        break
-      }
+      const backgroundScan = scanSgrColor(input, scan, 0x34)
+      if (backgroundScan === undefined) break
+      scan = backgroundScan.scan
+      const background = backgroundScan.color
 
       while (input[scan] === 0x1b
         && input[scan + 1] === 0x5b
