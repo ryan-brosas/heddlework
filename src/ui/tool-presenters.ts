@@ -1,5 +1,5 @@
 import { slotToken, type WorkbenchPlugin } from '../core/kernel.ts'
-import type { ToolRun } from '../workbench/state.ts'
+import { asRecord, type ToolRun } from '../workbench/state.ts'
 
 export interface FabricAuditPresentation {
   ref: string
@@ -102,10 +102,6 @@ export function resolveToolPresentation(tool: ToolRun, presenters: ReadonlyMap<s
   const diff = findStringProperty(tool.details, 'diff') ?? findDiff(tool.output)
   if (diff) return { kind: 'diff', content: diff }
   return { kind: 'code', content: tool.output ?? '', language: tool.name === 'grep' ? 'text' : undefined }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function runDisplay(value: unknown): { name: string; description?: string } {

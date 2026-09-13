@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { claimBrowserDataRoot, readBrowserState, writeBrowserState } from './persistence.ts'
+import { boundsEqual, roundToHalf } from './adapter.ts'
 import {
   DEFAULT_BROWSER_PROFILES,
   UNAVAILABLE_BROWSER_ENGINE,
@@ -310,10 +311,10 @@ export class BrowserSessionService {
   setPlacement(tabId: string, bounds: BrowserSurfaceBounds, visible: boolean): void {
     if (!this.#tabs.has(tabId)) return
     const normalized = {
-      x: finite(bounds.x),
-      y: finite(bounds.y),
-      width: Math.max(1, finite(bounds.width)),
-      height: Math.max(1, finite(bounds.height)),
+      x: roundToHalf(bounds.x),
+      y: roundToHalf(bounds.y),
+      width: Math.max(1, roundToHalf(bounds.width)),
+      height: Math.max(1, roundToHalf(bounds.height)),
     }
     const previous = this.#placement
     if (previous?.tabId === tabId && previous.visible === visible && boundsEqual(previous.bounds, normalized)) return
@@ -467,14 +468,6 @@ function cleanTitle(value: string | undefined): string | undefined {
 
 function finiteTimestamp(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : Date.now()
-}
-
-function finite(value: number): number {
-  return Number.isFinite(value) ? Math.round(value * 2) / 2 : 0
-}
-
-function boundsEqual(a: BrowserSurfaceBounds, b: BrowserSurfaceBounds): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 function lockedBrowserEngine(message: string): BrowserEngineStatus {

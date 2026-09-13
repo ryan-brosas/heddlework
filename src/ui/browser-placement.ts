@@ -1,3 +1,4 @@
+import { boundsEqual, roundToHalf } from '../browser/adapter.ts'
 import type { BrowserSurfaceBounds } from '../browser/types.ts'
 
 export const BROWSER_PLACEMENT_ACTIVE_POLL_MS = 16
@@ -17,10 +18,10 @@ export function sampleBrowserPlacement(
   if (!raw || raw.length < 4) return { sample: previous, changed: false, nextDelayMs: BROWSER_PLACEMENT_IDLE_POLL_MS }
   const sample: BrowserPlacementSample = {
     bounds: {
-      x: normalizeCoordinate(raw[0] ?? 0),
-      y: normalizeCoordinate(raw[1] ?? 0),
-      width: Math.max(1, normalizeCoordinate(raw[2] ?? 1)),
-      height: Math.max(1, normalizeCoordinate(raw[3] ?? 1)),
+      x: roundToHalf(raw[0] ?? 0),
+      y: roundToHalf(raw[1] ?? 0),
+      width: Math.max(1, roundToHalf(raw[2] ?? 1)),
+      height: Math.max(1, roundToHalf(raw[3] ?? 1)),
     },
     visible,
   }
@@ -30,12 +31,4 @@ export function sampleBrowserPlacement(
     changed,
     nextDelayMs: changed ? BROWSER_PLACEMENT_ACTIVE_POLL_MS : BROWSER_PLACEMENT_IDLE_POLL_MS,
   }
-}
-
-function normalizeCoordinate(value: number): number {
-  return Number.isFinite(value) ? Math.round(value * 2) / 2 : 0
-}
-
-function boundsEqual(a: BrowserSurfaceBounds, b: BrowserSurfaceBounds): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
