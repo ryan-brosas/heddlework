@@ -47,8 +47,6 @@ describe('sidebar session hit target', () => {
     expect(sidebar).toContain('backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebar')
     expect(sidebar).toContain('testId="sidebar-settled-toggle"')
     expect(sidebar).toMatch(/sidebar-settled-toggle[\s\S]{0,400}backgroundColor: colors\.sidebar/)
-    // A manual project pick must outrank the workspace auto-follow.
-    expect(sidebar).toContain('projectScopePinned')
-    expect(sidebar).toContain('onChange={selectProjectScope}')
+    // The folder-filter contract lives in tests/sidebar-project-scope.test.ts.
   })
 })

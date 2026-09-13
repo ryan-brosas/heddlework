@@ -12,6 +12,13 @@ const sessions: PiSessionSummary[] = [
   { id: 'one', path: '/tmp/one.jsonl', cwd: '/tmp/project', title: 'First thread', firstMessage: 'First', messageCount: 1, createdAt: 1, modifiedAt: 1 },
   { id: 'two', path: '/tmp/two.jsonl', cwd: '/tmp/project-two', title: 'Second thread', firstMessage: 'Second', messageCount: 1, createdAt: 2, modifiedAt: 2 },
 ]
+
+const branchingEntries = [
+  { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
+  { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
+  { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
+  { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
+]
 const workspaceSession: PiSessionSummary = { id: 'three', path: '/tmp/three.jsonl', cwd: '/tmp/project-three', title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: 3, modifiedAt: 3 }
 
 const fixtures: string[] = []
@@ -734,12 +741,7 @@ describe('clickable session switching', () => {
     const directory = await mkdtemp(join(tmpdir(), 'heddlework-switch-leaf-'))
     fixtures.push(directory)
     const sessionPath = join(directory, 'branching.jsonl')
-    const entries = [
-      { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
-      { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
-      { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
-      { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
-    ]
+    const entries = branchingEntries
     const writeEntries = (records: ReadonlyArray<Record<string, unknown>>) => writeFile(sessionPath, records.map((record) => JSON.stringify(record)).join('\n') + '\n')
     await writeEntries(entries)
     // Pi moved the leaf to the assistant turn without appending, so the file still ends on the abandoned branch.
@@ -776,12 +778,7 @@ describe('clickable session switching', () => {
     const directory = await mkdtemp(join(tmpdir(), 'heddlework-switch-anchor-'))
     fixtures.push(directory)
     const sessionPath = join(directory, 'branching.jsonl')
-    const entries = [
-      { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
-      { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
-      { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
-      { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
-    ]
+    const entries = branchingEntries
     await writeFile(sessionPath, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
     const otherPath = join(directory, 'other.jsonl')
     await writeFile(otherPath, [JSON.stringify({ type: 'message', id: 'other-1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'elsewhere', timestamp: 1 } })].join('\n') + '\n')

@@ -15,7 +15,15 @@ import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 
 const SIDEBAR_WIDTH = 256
-const ALL_PROJECTS_SCOPE = '__all-projects__'
+export const ALL_PROJECTS_SCOPE = '__all-projects__'
+
+/**
+ * The folder filter is user-owned: browsing starts on every project and only a pick moves it.
+ * Opening a session from another folder changes the workspace, never this selection.
+ */
+export function resolveProjectScope(selected: string, options: readonly { value: string }[]): string {
+  return options.some((option) => option.value === selected) ? selected : ALL_PROJECTS_SCOPE
+}
 
 export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   width = SIDEBAR_WIDTH,
@@ -48,7 +56,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
-  const [projectScope, setProjectScope] = useState(() => resolve(state.workspacePath))
+  const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
   const [pickingProject, setPickingProject] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
   const [settledExpanded, setSettledExpanded] = useState(false)
@@ -57,7 +65,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const sessionLastOffset = useRef(0)
   const sessionListRef = useRef<NativeElementHandle | null>(null)
   const initialSessionScrollApplied = useRef(false)
-  const projectScopePinned = useRef(false)
   const activePath = state.session.sessionFile
   const persistedSessions = useMemo(() => state.sessions.filter((session) => session.messageCount > 0), [state.sessions])
   const activeSummary = useMemo(
@@ -76,16 +83,9 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       ...[...projects].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label)),
     ]
   }, [activeSummary, persistedSessions])
-  // The workspace drives the scope until the user picks one; an explicit pick outranks it.
-  const selectProjectScope = (value: string) => {
-    projectScopePinned.current = true
-    setProjectScope(value)
-  }
   useEffect(() => {
-    if (projectScopePinned.current) return
-    const workspace = resolve(state.workspacePath)
-    setProjectScope(projectOptions.some((option) => option.value === workspace) ? workspace : ALL_PROJECTS_SCOPE)
-  }, [projectOptions, state.workspacePath])
+    setProjectScope((selected) => resolveProjectScope(selected, projectOptions))
+  }, [projectOptions])
   const matchingSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
@@ -196,7 +196,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <ProjectFilter value={projectScope} options={projectOptions} onChange={selectProjectScope} />
+          <ProjectFilter value={projectScope} options={projectOptions} onChange={setProjectScope} />
           <IconButton
             testId="sidebar-new-project"
             icon="folderPlus"

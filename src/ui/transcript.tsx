@@ -24,7 +24,6 @@ import {
   currentWorkWave,
   emptyWorkTrace,
   groupWorkItems,
-  isActiveTraceEntry,
   isCompactionWorkTrace,
   liveWorkTraceId,
   pendingWorkTraceId,
@@ -925,20 +924,6 @@ function markdownPreview(value: string): string {
 
 function compactOneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
-}
-
-function formatFabricValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value.slice(0, 18_000)
-  try {
-    return JSON.stringify(value, null, 2).slice(0, 18_000)
-  } catch {
-    return String(value).slice(0, 18_000)
-  }
-}
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1_000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1_000).toFixed(1)}s`
 }
 
 function MessageImage({ image }: { image: PiImageContent }) {

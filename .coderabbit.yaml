@@ -1,0 +1,19 @@
+# CodeRabbit repository configuration.
+# Schema: https://docs.coderabbit.ai/reference/configuration-template
+# The fork runs on CodeRabbit's OSS tier, where automatic review starts paused
+# ("manual review required"); this file re-enables it per-repository so every
+# push and PR is reviewed without a manual "@coderabbitai review" trigger.
+chat:
+  auto_reply: true
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_pause_after_reviewed_commits: 0
+    base_branches:
+      - main

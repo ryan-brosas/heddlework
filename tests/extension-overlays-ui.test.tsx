@@ -55,14 +55,19 @@ function screenshotPath(name: string): string {
   return resolve(screenshotDirectory, name)
 }
 
+async function openOverlayWorkbench(options: { workspace?: string; window?: { width: number; height: number } } = {}) {
+  const transport = new OverlayTransport()
+  const controller = new WorkbenchController(transport, options.workspace ?? '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+  const root = createTestRoot(options.window)
+  root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
+  await controller.start()
+  const automation = await connectTest(root.renderer)
+  return { transport, controller, root, automation }
+}
+
 describeNative('conversation extension overlays', () => {
   it('shows extension statuses and command discovery above the composer', async () => {
-    const transport = new OverlayTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
-    const root = createTestRoot()
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
-    await controller.start()
-    const automation = await connectTest(root.renderer)
+    const { transport, controller, root, automation } = await openOverlayWorkbench()
     try {
       transport.emit({ type: 'extension_ui_request', id: 'ledger-status', method: 'setStatus', statusKey: 'ledger', statusText: '\u001b[32m$18.40 · agent 0.7h · human 0.4h\u001b[0m' })
       transport.emit({ type: 'extension_ui_request', id: 'below-widget', method: 'setWidget', widgetKey: 'ledger-detail', widgetLines: ['Below-editor ledger detail'], widgetPlacement: 'belowEditor' })
@@ -117,12 +122,7 @@ describeNative('conversation extension overlays', () => {
   })
 
   it('tab-completes the active slash command without inserting a tab character', async () => {
-    const transport = new OverlayTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
-    const root = createTestRoot()
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
-    await controller.start()
-    const automation = await connectTest(root.renderer)
+    const { transport, controller, root, automation } = await openOverlayWorkbench()
     try {
       await automation.getByTestId('composer').click()
       await automation.getByTestId('composer').fill('/led')
@@ -148,12 +148,7 @@ describeNative('conversation extension overlays', () => {
   })
 
   it('keeps conversation actions above persistent extension statuses', async () => {
-    const transport = new OverlayTransport()
-    const controller = new WorkbenchController(transport, '/tmp/status-spacing', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
-    const root = createTestRoot({ width: 1_280, height: 800 })
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
-    await controller.start()
-    const automation = await connectTest(root.renderer)
+    const { transport, controller, root, automation } = await openOverlayWorkbench({ workspace: '/tmp/status-spacing', window: { width: 1_280, height: 800 } })
     try {
       await Bun.sleep(30)
       root.renderer.flush()
@@ -193,12 +188,7 @@ describeNative('conversation extension overlays', () => {
   })
 
   it('renders nested Fabric settings as static searchable rows in the main conversation area', async () => {
-    const transport = new OverlayTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
-    const root = createTestRoot()
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
-    await controller.start()
-    const automation = await connectTest(root.renderer)
+    const { transport, controller, root, automation } = await openOverlayWorkbench()
     try {
       transport.emit({ type: 'extension_ui_request', id: 'fabric-settings', method: 'select', title: 'Fabric settings\nEditing: Project overrides (.pi/fabric.json)', options: [
         'Full code mode · true — Fabric owns Pi core tools through fabric_exec.',
@@ -287,12 +277,7 @@ describeNative('conversation extension overlays', () => {
   })
 
   it('renders and iterates the ask-user questionnaire, review, and collapsed states', async () => {
-    const transport = new OverlayTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
-    const root = createTestRoot()
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
-    await controller.start()
-    const automation = await connectTest(root.renderer)
+    const { transport, controller, root, automation } = await openOverlayWorkbench()
     try {
       transport.emit({ type: 'agent_start' })
       transport.emit({

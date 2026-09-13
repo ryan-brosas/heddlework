@@ -193,7 +193,12 @@ export class WorkbenchController {
   }
 
   #attachActiveTransport(transport: AgentTransport): void {
-    const detachPrevious = this.#detachActiveTransport
+    // Withdraw the previous attachment first. Session transports are pooled and can be
+    // attached again later; a deferred chain would leave the old listeners registered on
+    // that same transport, and with the identity guard passing they would apply every
+    // event twice (streaming deltas doubled in the live transcript).
+    this.#detachActiveTransport?.()
+    this.#detachActiveTransport = undefined
     this.#transport = transport
     const onEvent = (event: RpcRecord): void => {
       if (this.#transport === transport) this.#handleEvent(event)
@@ -206,7 +211,6 @@ export class WorkbenchController {
     this.#detachActiveTransport = () => {
       offEvent()
       offStatus()
-      detachPrevious?.()
     }
   }
 

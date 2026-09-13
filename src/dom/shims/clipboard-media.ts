@@ -29,18 +29,7 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function editorTextAfterImagePaste(previous: string, current: string): string {
-  if (previous === current) return current
-  let prefix = 0
-  while (prefix < previous.length && previous[prefix] === current[prefix]) prefix += 1
-  let suffix = 0
-  while (suffix < previous.length - prefix && previous[previous.length - suffix - 1] === current[current.length - suffix - 1]) suffix += 1
-  const inserted = current.slice(prefix, current.length - suffix).trim().replace(/^['"]|['"]$/g, '')
-  const normalized = inserted.toLowerCase()
-  const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].some((extension) => normalized.endsWith(extension))
-  const isPath = normalized.startsWith('file://') || normalized.includes('/') || normalized.includes('\\')
-  return isImage && isPath ? previous : current
-}
+export { editorTextAfterImagePaste } from '../../ui/clipboard-paste-text.ts'
 
 export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileName?: string): ComposerImage {
   if (bytes.byteLength === 0) throw new Error('Clipboard image is empty')

@@ -7,6 +7,7 @@ import { Icon, type IconName } from './icons.tsx'
 import { TranscriptInlineAction } from './transcript-actions.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { headlineArg } from './call-preview.ts'
+import { formatDuration, formatFabricValue } from './fabric-format.ts'
 import {
   resolveToolPresentation,
   type FabricAuditPresentation,
@@ -227,20 +228,6 @@ function fabricAuditHeadline(audit: FabricAuditPresentation): string {
   const tool = [audit.provider, audit.tool].filter(Boolean).join('.') || audit.ref
   const detail = headlineArg(audit.args)
   return detail ? `${tool} ${detail}` : tool
-}
-
-function formatFabricValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value.slice(0, 18_000)
-  try {
-    return JSON.stringify(value, null, 2).slice(0, 18_000)
-  } catch {
-    return String(value).slice(0, 18_000)
-  }
-}
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1_000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1_000).toFixed(1)}s`
 }
 
 function toolCopyText(tool: ToolRun, args: string, content: string): string {

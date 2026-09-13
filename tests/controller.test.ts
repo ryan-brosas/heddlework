@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
+import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
+import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
@@ -20,7 +22,49 @@ function isFullySettled(controller: WorkbenchController): boolean {
   return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0
 }
 
+class ScriptedTransport {
+  readonly #eventListeners = new Set<(event: RpcRecord) => void>()
+  readonly #statusListeners = new Set<(status: TransportStatus) => void>()
+
+  async start(): Promise<void> {}
+  async stop(): Promise<void> {}
+  async request<T = unknown>(command: RpcCommand): Promise<T> {
+    throw new Error(`Unexpected command: ${command.type}`)
+  }
+  send(_record: RpcRecord): void {}
+  getStderr(): string { return '' }
+  onEvent(listener: (event: RpcRecord) => void): () => void {
+    this.#eventListeners.add(listener)
+    return () => this.#eventListeners.delete(listener)
+  }
+  onStatus(listener: (status: TransportStatus) => void): () => void {
+    this.#statusListeners.add(listener)
+    return () => this.#statusListeners.delete(listener)
+  }
+  emit(event: RpcRecord): void {
+    for (const listener of this.#eventListeners) listener(event)
+  }
+}
+
 describe('WorkbenchController', () => {
+  it('applies each streaming delta once when a pooled transport is attached again', async () => {
+    const transport = new ScriptedTransport()
+    const controller = new WorkbenchController(transport as unknown as AgentTransport, '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      // A session switch away and back re-attaches the pooled transport.
+      controller.attachTransport(transport as unknown as AgentTransport)
+
+      transport.emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'Good' } })
+      transport.emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: '.. Now' } })
+
+      const blocks = controller.getSnapshot().liveAssistant?.blocks ?? []
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0]?.kind).toBe('thinking')
+      expect(blocks[0]?.text).toBe('Good.. Now')
+    } finally {
+      await controller.dispose()
+    }
+  })
   it('boots, streams a task, and rehydrates the authoritative transcript', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
