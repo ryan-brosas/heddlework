@@ -432,7 +432,7 @@ async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: bo
         lastAssistantText = contentText(message.content).trim().slice(0, 4_000)
         lastAssistantStopReason = typeof message.stopReason === 'string' ? message.stopReason : undefined
       } catch {
-        continue
+        // Skip unparseable lines; the loop advances either way.
       }
     }
     return { nameFound, ...(name ? { name } : {}), lastResponseAt, ...(lastAssistantText ? { lastAssistantText } : {}), ...(lastAssistantStopReason ? { lastAssistantStopReason } : {}) }

@@ -636,7 +636,6 @@ function ExecutionTraceHeader({
   const naturalHeight = !expanded && running ? Math.max(COLLAPSED_TRACE_ROW_HEIGHT, collapsedPreviewHeight(collapsedTools, preview, presenters)) : 0
   const leasedHeight = leasePreviewHeight(trace.boundaryId ?? trace.items[0]?.id ?? trace.id, naturalHeight, running)
   const extraHeight = Math.max(0, leasedHeight - naturalHeight)
-  const height = leasedHeight
   return (
     <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2, userSelect: 'none' }}>
       <div
@@ -651,7 +650,7 @@ function ExecutionTraceHeader({
         <TraceChevron expanded={expanded} />
       </div>
       {!expanded && (
-        <WorkPreviewTransition height={height}>
+        <WorkPreviewTransition height={leasedHeight}>
           {running && preview && <TracePreview item={preview} />}
           {running && collapsedTools.length > 0 ? <CollapsedTraceTools items={collapsedTools} presenters={presenters} hidden={Math.max(0, wave.tools.length - collapsedTools.length)} /> : null}
           {running && extraHeight > 0 && <div testId="transcript-lease" style={{ width: '100%', height: extraHeight }} />}

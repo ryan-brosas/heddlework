@@ -144,7 +144,7 @@ function useInstance(type: string, props: AnyProps, ref: React.ForwardedRef<unkn
 }
 
 // Outside-press dismissal mirrors gpuix: any mousedown whose target is not inside the element fires the handler.
-function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
+function useMouseDownOutside(id: number, nodeRef: React.RefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
   useEffect(() => {
     if (!handler) return undefined
     const listener = (event: MouseEvent) => {
@@ -157,7 +157,7 @@ function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLEle
   }, [handler, id, nodeRef])
 }
 
-function useMotion(nodeRef: React.MutableRefObject<HTMLElement | null>, motion: AnyProps | undefined) {
+function useMotion(nodeRef: React.RefObject<HTMLElement | null>, motion: AnyProps | undefined) {
   const first = useRef(true)
   const animate = motion?.animate as Record<string, number> | undefined
   const transition = motion?.transition as { duration?: number; delay?: number; ease?: unknown } | undefined
