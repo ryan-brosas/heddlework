@@ -46,6 +46,14 @@ export interface BrowserAutomationAdapter {
   screenshot(tabId: string, grant: BrowserAutomationGrant): Promise<Uint8Array>
 }
 
+export function roundToHalf(value: number): number {
+  return Number.isFinite(value) ? Math.round(value * 2) / 2 : 0
+}
+
+export function boundsEqual(a: BrowserSurfaceBounds, b: BrowserSurfaceBounds): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
 export function mayAutomateBrowser(grant: BrowserAutomationGrant, now = Date.now()): boolean {
   if (grant.access === 'denied') return false
   if (grant.access === 'allowed') return true

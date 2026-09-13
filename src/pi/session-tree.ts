@@ -1,3 +1,4 @@
+import { asRecord } from '../workbench/state.ts'
 import type { PiMessage } from './types.ts'
 
 export interface PiSessionEntry {
@@ -330,8 +331,4 @@ function visitNodes(nodes: readonly PiSessionTreeNode[], visit: (node: PiSession
     visit(node)
     for (let index = node.children.length - 1; index >= 0; index -= 1) pending.push(node.children[index]!)
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
