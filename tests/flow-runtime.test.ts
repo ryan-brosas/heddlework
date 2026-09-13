@@ -80,6 +80,24 @@ describe('FlowRuntime', () => {
     expect(restored.getSnapshot().schedules[0]).toMatchObject({ id: schedule.id, title: 'Nightly audit', enabled: false })
   })
 
+  it('captures background dispatch failures in the runtime snapshot', async () => {
+    const host = new RuntimeHost()
+    const runtime = new FlowRuntime(host, { path: false, now: () => 1_000, createId: (prefix) => `${prefix}-FAILURE` })
+    const schedule = runtime.createSchedule({
+      title: 'Failure boundary',
+      prompts: ['Keep the timer alive'],
+      mode: 'sequential',
+      workspacePath: host.state.workspacePath,
+      timing: { kind: 'once', at: 2_000 },
+    })
+    host.getSnapshot = () => { throw new Error('host snapshot unavailable') }
+
+    expect(runtime.runScheduleNow(schedule.id)).toBeDefined()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().lastError).toBe('host snapshot unavailable')
+  })
+
   it('holds a due job durably until its workspace runtime is active', async () => {
     const host = new RuntimeHost('/tmp/current-project')
     let sequence = 0

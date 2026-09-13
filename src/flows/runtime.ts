@@ -68,10 +68,10 @@ export class FlowRuntime {
 
   start(): void {
     if (this.#timer) return
-    this.#unsubscribeHost = this.#host.subscribe(() => { void this.flushPending() })
-    this.#timer = setInterval(() => { void this.tick() }, this.#tickIntervalMs)
+    this.#unsubscribeHost = this.#host.subscribe(() => { this.#dispatch(this.flushPending()) })
+    this.#timer = setInterval(() => { this.#dispatch(this.tick()) }, this.#tickIntervalMs)
     this.#timer.unref?.()
-    void this.tick()
+    this.#dispatch(this.tick())
   }
 
   dispose(): void {
@@ -80,6 +80,21 @@ export class FlowRuntime {
     this.#unsubscribeHost?.()
     this.#unsubscribeHost = undefined
     this.#listeners.clear()
+  }
+
+  // Background work owns no caller, so a rejected dispatch must become runtime state instead of a
+  // floating rejection: the desktop host treats an unhandled rejection as fatal (main.tsx shuts the
+  // application down with a non-zero exit), and the subscription and interval paths would otherwise
+  // take the whole workspace with them over one unavailable snapshot.
+  #dispatch(task: Promise<void>): void {
+    void task.catch((error: unknown) => {
+      this.#snapshot = { ...snapshotFrom(this.#document), lastError: error instanceof Error ? error.message : String(error) }
+      try {
+        this.#emit()
+      } catch {
+        // A listener failure must not re-enter this boundary as a second rejection.
+      }
+    })
   }
 
   createSchedule(input: FlowScheduleInput): FlowSchedule {
@@ -129,7 +144,7 @@ export class FlowRuntime {
     schedule.updatedAt = now
     this.#document.pending.push(launch)
     this.#commit()
-    void this.flushPending()
+    this.#dispatch(this.flushPending())
     return launch
   }
 
