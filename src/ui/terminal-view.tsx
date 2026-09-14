@@ -306,4 +306,3 @@ const TerminalCursor = memo(function TerminalCursor({ x, y, color }: { x: number
     />
   )
 })
-
