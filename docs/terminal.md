@@ -19,14 +19,18 @@ Terminal key routing resolves copy, paste, and interrupt commands **before** ter
 
 Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
 
-A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount or writer replacement. Published feedback never contains the clipboard payload or an exception detail.
+A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount, on a session change, or on writer replacement. One view instance serves every session, so the action is scoped to the session and a copy still in flight for a session that was left cannot report over its successor. Published feedback never contains the clipboard payload or an exception detail.
 
 Clipboard I/O is injectable in both directions (`TerminalView`'s `copy` and `readPaste` props) so the production dispatch seam, its failure feedback, and paste delivery are regression-tested without a native GPUIX renderer or an operating-system clipboard.
 
 On Linux the clipboard helpers (`wl-copy`/`xclip`) fork a selection owner that outlives the command and
-inherits its stdio, so Node's `close` event never fires. `runClipboardProcess` therefore completes on
-the helper's own exit after a bounded stdout drain; waiting for `close` left every clipboard write
-pending forever, which made terminal copy silently do nothing on both Wayland and X11.
+inherits its stdio, so Node's `close` event never fires. `runClipboardProcess` therefore carries two
+completion rules. A **write** completes on the helper's own exit after a short bounded drain; waiting for
+`close` left every clipboard write pending forever, which made terminal copy silently do nothing on both
+Wayland and X11. A **read** passes `completion: 'stdout-end'` and completes when stdout ends, bounded at
+3 s: a reader's output *is* its payload, so answering it from the fixed write window could truncate a
+large clipboard image, while the bound keeps a helper that hands its stdio to a survivor from wedging
+the read.
 
 ### Compositor verification
 
