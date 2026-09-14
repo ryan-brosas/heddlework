@@ -53,4 +53,29 @@ describe('clipboard helper completion', () => {
     const result = await runClipboardProcess('/bin/sh', ['-c', 'exit 3'])
     expect(result.ok).toBe(false)
   })
+
+  itUnix("waits for a reader's stdout to end, because that output is the payload", async () => {
+    // The helper exits immediately while a descendant keeps writing to the inherited stdout. An
+    // exit-based answer would return only PAYLOAD; a reader's result is complete only once stdout ends.
+    const result = await runClipboardProcess(
+      '/bin/sh',
+      ['-c', 'printf PAYLOAD; (sleep 0.4; printf TAIL) & exit 0'],
+      { completion: 'stdout-end' },
+    )
+    expect(result.ok).toBe(true)
+    expect(result.stdout.toString('utf8')).toBe('PAYLOADTAIL')
+  }, 8_000)
+
+  itUnix('bounds a reader whose stdio a survivor never releases', async () => {
+    // A reader whose stdout is inherited by a long-lived descendant must not wedge the clipboard read:
+    // the bound releases the captured output instead of waiting for a stream that never ends.
+    const started = Date.now()
+    const result = await runClipboardProcess(
+      '/bin/sh',
+      ['-c', 'printf PAYLOAD; (sleep 8) & exit 0'],
+      { completion: 'stdout-end' },
+    )
+    expect(result.stdout.toString('utf8')).toBe('PAYLOAD')
+    expect(Date.now() - started).toBeLessThan(5_000)
+  }, 10_000)
 })

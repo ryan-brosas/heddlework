@@ -8,6 +8,7 @@ import {
   TERMINAL_PASTE_ECHO,
   TERMINAL_SMOKE_SHELL,
 } from '../scripts/linux-terminal-smoke-contract.ts'
+import { createTerminalSmokeCopyRecorder } from '../scripts/linux-terminal-smoke-evidence.ts'
 
 /** Loosely typed on purpose: several cases deliberately build evidence the parser must reject. */
 function evidence(patch: Record<string, unknown> = {}): string {
@@ -33,9 +34,31 @@ describe('linux terminal smoke contract', () => {
     expect(TERMINAL_SMOKE_SHELL).toContain('dd bs=4096')
     expect(TERMINAL_SMOKE_SHELL).toContain("ETX=$(printf '\\003')")
     expect(TERMINAL_SMOKE_SHELL).toContain('*"$ETX"*')
+    // The interrupt branch matches one bare ETX: an interrupt delivered with extra bytes is a
+    // different failure than the shortcut contract allows, so the child reports the byte count and
+    // exits nonzero instead of passing as a clean interrupt.
+    expect(TERMINAL_SMOKE_SHELL).toContain('"$ETX")')
+    expect(TERMINAL_SMOKE_SHELL).toContain('unexpected-bytes')
+    expect(TERMINAL_SMOKE_SHELL).toContain('exit 3')
     // The marker is echoed only when it arrives on stdin, which keeps the transcript short enough to
     // read the live viewport that the driver asserts on.
     expect(TERMINAL_SMOKE_SHELL).toContain('*"$MARKER"*')
+  })
+
+  it('records a clipboard call only once its outcome is known', async () => {
+    let release: ((outcome: boolean) => void) | undefined
+    const recorder = createTerminalSmokeCopyRecorder(
+      () => new Promise<boolean>((resolve) => { release = resolve }),
+    )
+    const pending = recorder.write(TERMINAL_COPY_SOURCE)
+    // Evidence is polled while a write is in flight: counting the call first let a poll observe
+    // `calls: 1` with `wroteClipboard` still false, which reads as a failed clipboard write.
+    expect(recorder.state.calls).toBe(0)
+    release?.(true)
+    await pending
+    expect(recorder.state.calls).toBe(1)
+    expect(recorder.state.wroteClipboard).toBe(true)
+    expect(recorder.state.text).toBe(TERMINAL_COPY_SOURCE)
   })
 
   it('parses the evidence the compositor driver asserts on', () => {

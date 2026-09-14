@@ -18,7 +18,6 @@ export function createTerminalSmokeCopyRecorder(write: TerminalCopy): TerminalSm
   return {
     state,
     write: async (text: string) => {
-      state.calls += 1
       state.text = text
       try {
         const outcome = await write(text)
@@ -28,6 +27,10 @@ export function createTerminalSmokeCopyRecorder(write: TerminalCopy): TerminalSm
       } catch (error) {
         state.wroteClipboard = false
         throw error
+      } finally {
+        // The call count is evidence of a finished attempt, not a started one: incrementing before
+        // the outcome is known let a poll observe `calls: 1` while `wroteClipboard` was still false.
+        state.calls += 1
       }
     },
   }

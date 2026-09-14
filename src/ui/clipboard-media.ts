@@ -39,10 +39,10 @@ export async function readClipboardImage(): Promise<ComposerImage | undefined> {
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (!text) return false
   const input = Buffer.from(text, 'utf8')
-  if (process.platform === 'darwin') return (await runClipboardProcess('/usr/bin/pbcopy', [], input)).ok
-  if (process.platform === 'win32') return (await runClipboardProcess('clip.exe', [], input)).ok
+  if (process.platform === 'darwin') return (await runClipboardProcess('/usr/bin/pbcopy', [], { input })).ok
+  if (process.platform === 'win32') return (await runClipboardProcess('clip.exe', [], { input })).ok
   for (const [command, args] of [['wl-copy', []], ['xclip', ['-selection', 'clipboard']]] as const) {
-    const result = await runClipboardProcess(command, [...args], input)
+    const result = await runClipboardProcess(command, [...args], { input })
     if (result.ok) return true
   }
   return false
@@ -99,7 +99,7 @@ function materializeImagePreview(data: string, mimeType: string): string | undef
 async function readMacClipboardImage(): Promise<ComposerImage | undefined> {
   ensureImageDirectory()
   const path = join(IMAGE_CACHE_DIRECTORY, `clipboard-${randomUUID()}.png`)
-  const result = await runClipboardProcess('/usr/bin/osascript', ['-', path], Buffer.from(APPLE_SCRIPT))
+  const result = await runClipboardProcess('/usr/bin/osascript', ['-', path], { input: Buffer.from(APPLE_SCRIPT), completion: 'stdout-end' })
   if (result.ok && existsSync(path)) {
     const bytes = readFileSync(path)
     rmSync(path, { force: true })
@@ -108,7 +108,7 @@ async function readMacClipboardImage(): Promise<ComposerImage | undefined> {
     rmSync(path, { force: true })
   }
 
-  const fileResult = await runClipboardProcess('/usr/bin/osascript', ['-e', APPLE_FILE_SCRIPT])
+  const fileResult = await runClipboardProcess('/usr/bin/osascript', ['-e', APPLE_FILE_SCRIPT], { completion: 'stdout-end' })
   if (!fileResult.ok) return undefined
   const filePath = fileResult.stdout.toString('utf8').trim()
   if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) return undefined
@@ -123,7 +123,7 @@ async function readLinuxClipboardImage(): Promise<ComposerImage | undefined> {
     ['xclip', ['-selection', 'clipboard', '-t', 'image/jpeg', '-o'], 'image/jpeg'],
   ]
   for (const [command, args, mimeType] of attempts) {
-    const result = await runClipboardProcess(command, args)
+    const result = await runClipboardProcess(command, args, { completion: 'stdout-end' })
     if (result.ok && result.stdout.byteLength > 0) return createComposerImage(result.stdout, mimeType)
   }
   return undefined
@@ -139,7 +139,7 @@ async function readWindowsClipboardImage(): Promise<ComposerImage | undefined> {
     '$image.Save($stream, [Drawing.Imaging.ImageFormat]::Png)',
     '[Convert]::ToBase64String($stream.ToArray())',
   ].join('; ')
-  const result = await runClipboardProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script])
+  const result = await runClipboardProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { completion: 'stdout-end' })
   if (!result.ok) return undefined
   const encoded = result.stdout.toString('utf8').trim()
   return encoded ? createComposerImage(Buffer.from(encoded, 'base64'), 'image/png') : undefined
@@ -172,10 +172,27 @@ function ensureImageDirectory(): void {
 }
 
 /**
- * Grace period between a clipboard tool exiting and giving up on draining its stdout. A reader
- * such as `wl-paste` closes its stdout as it exits, so this delay is normally not paid at all.
+ * How a clipboard helper reports completion.
+ *
+ * `exit` is the writer rule: `wl-copy` and `xclip` daemonize a selection owner that inherits this
+ * process's stdio, so `close` never fires and the helper's own exit is what proves the write
+ * happened. `stdout-end` is the reader rule: a reader's payload *is* its stdout, so its payload is
+ * complete only once stdout ends. Answering a reader from a fixed grace window instead could
+ * truncate a large clipboard image to whatever had arrived by then.
+ */
+type ClipboardCompletion = 'exit' | 'stdout-end'
+
+/**
+ * Short drain window for writers, whose stdout is not the payload. Normally not paid at all: a tool
+ * that closes its stdout as it exits finishes through the `close` path first.
  */
 const PROCESS_DRAIN_GRACE_MS = 250
+
+/**
+ * Hard bound for a reader that exited while something else still holds its stdio (a forked holder or
+ * a descendant). Without it, waiting for stdout end could leave a clipboard read pending forever.
+ */
+const PROCESS_READ_TIMEOUT_MS = 3_000
 
 /**
  * Run a clipboard helper and report its exit status plus stdout. Exported so the completion rule
@@ -184,10 +201,15 @@ const PROCESS_DRAIN_GRACE_MS = 250
  * `close` cannot be the only completion signal: `wl-copy` and `xclip` daemonize a selection owner
  * that inherits this process's stdio, so `close` never fires even though the tool itself exited 0.
  * Awaiting it left every Linux clipboard write pending forever, which made terminal copy silently do
- * nothing. Completion therefore follows the helper's own exit, after a bounded drain that still
- * captures a reader's full stdout.
+ * nothing. Writers therefore complete on their own exit, while readers (`completion:
+ * 'stdout-end'`) complete when stdout ends, because their output is the payload being returned.
  */
-export async function runClipboardProcess(command: string, args: string[], input?: Uint8Array): Promise<{ ok: boolean; stdout: Buffer }> {
+export async function runClipboardProcess(
+  command: string,
+  args: string[],
+  options: { readonly input?: Uint8Array; readonly completion?: ClipboardCompletion } = {},
+): Promise<{ ok: boolean; stdout: Buffer }> {
+  const { input, completion = 'exit' } = options
   return await new Promise((resolve) => {
     let settled = false
     let exited = false
@@ -221,7 +243,13 @@ export async function runClipboardProcess(command: string, args: string[], input
       exited = true
       exitCode = code
       if (stdoutEnded) return finishWithStatus(code)
-      drainTimer = setTimeout(() => finishWithStatus(code), PROCESS_DRAIN_GRACE_MS)
+      // A reader waits for stdout to end, because that output is the payload being returned; a
+      // writer only needs the short drain window, because a daemonized selection owner keeps the
+      // inherited stdout open long enough that waiting for it would hang.
+      drainTimer = setTimeout(
+        () => finishWithStatus(code),
+        completion === 'stdout-end' ? PROCESS_READ_TIMEOUT_MS : PROCESS_DRAIN_GRACE_MS,
+      )
     })
     if (input) child.stdin.end(input)
     else child.stdin.end()

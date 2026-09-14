@@ -194,6 +194,11 @@ and inherits its stdio, so the promise in `src/ui/clipboard-media.ts` waited for
 never fires. Measured on this box: `wl-copy` exited 0 in 33 ms while `copyTextToClipboard` was still
 pending after 4 s. The helper now completes on the command's own exit after a bounded stdout drain
 (`runClipboardProcess`), and a real Wayland round trip through `wl-paste` returns the written text.
+The two directions need different completion rules, so the runner carries both: a **writer**
+completes on the helper's own exit (the daemonized selection owner keeps the inherited stdout open,
+so waiting for it would hang forever), while a **reader** completes when stdout ends, bounded at
+3 s, because a reader's output *is* its payload and answering from a fixed grace window could
+truncate a large clipboard image. Readers pass `completion: 'stdout-end'`.
 Deterministic coverage: `tests/clipboard-media.test.ts` (daemonized descendant holding stdio) and the
 real-PTY shortcut contract in `tests/terminal-pty.test.ts`.
 
