@@ -54,4 +54,3 @@ describe('clipboard helper completion', () => {
     expect(result.ok).toBe(false)
   })
 })
-
