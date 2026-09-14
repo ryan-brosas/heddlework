@@ -8,6 +8,21 @@ Heddlework owns PTY sessions in-process. The byte stream, VT state, and painter 
 - **Right surface** — the existing `terminal` workbench surface.
 - Both placements share `TerminalSessionService`. The most recently focused placement owns PTY rows and columns. When the bottom placement enters fullscreen, an open right terminal stays alive but its hidden projection is suspended so one session is not staged and painted twice.
 
+## Keyboard and clipboard
+
+Terminal key routing resolves copy, paste, and interrupt commands **before** terminal encoding, in the shared `dispatchTerminalKey` seam (`src/terminal/keys.ts`) that `TerminalView.onKeyDown` calls. Precedence is explicit because an unqualified `ctrl`+`c` check would otherwise swallow the copy shortcut and send ETX to the foreground process.
+
+- **Copy**: `Ctrl+Shift+C` (Linux/Windows) and `Command+C` (macOS). A copy command writes **zero PTY bytes**, including when the clipboard write fails.
+- **Interrupt**: plain `Ctrl+C` writes exactly one ETX, never a copy.
+- **Paste**: `Ctrl+V` / `Command+V` reads the clipboard once and writes it to the focused session, wrapped in bracketed-paste markers when the emulator enabled DEC mode 2004. A failed read stays local and never falls through to key encoding.
+- **Direct events**: `textInput` and `paste` events carry their own text and bypass keyboard encoding.
+
+Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
+
+A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount or writer replacement. Published feedback never contains the clipboard payload or an exception detail.
+
+Clipboard writers are injectable (`TerminalView`'s `copy` prop) so the production dispatch seam and failure behavior are regression-tested without a native GPUIX renderer.
+
 ## Runtime
 
 - Default backend: `Bun.Terminal` through `BunPtyBackend`.
