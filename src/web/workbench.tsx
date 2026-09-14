@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { WorkbenchKernel } from '../core/kernel.ts'
-import { RemoteWorkbenchController, asWorkbenchController } from '../dom/remote-controller.ts'
+import { RemoteWorkbenchController } from '../dom/remote-controller.ts'
 import { domRenderer, GpuixContext } from '../dom/host.tsx'
 import { WorkbenchApp } from '../ui/app.tsx'
 import { createCoreUiExtension } from '../ui/core-extension.tsx'
@@ -9,7 +9,7 @@ import { colors } from '../ui/theme.ts'
 import { defaultThemeManager } from '../ui/theme-manager.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../ui/tool-presenters.ts'
 import { workspaceClient } from './store.ts'
-import { RemoteTerminalService, asTerminalSessionService } from '../client/remote-terminal-service.ts'
+import { RemoteTerminalService } from '../client/remote-terminal-service.ts'
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
@@ -19,17 +19,15 @@ export function WebWorkbench() {
   const client = workspaceClient()
   const view = useSyncExternalStore(client.subscribe.bind(client), client.getSnapshot.bind(client), client.getSnapshot.bind(client))
   const remote = useMemo(() => new RemoteWorkbenchController(client), [client])
-  const controller = useMemo(() => asWorkbenchController(remote), [remote])
   const remoteTerminals = useMemo(() => new RemoteTerminalService(client), [client])
-  const terminals = useMemo(() => asTerminalSessionService(remoteTerminals), [remoteTerminals])
-  const registry = useMemo(() => { const value = new WorkbenchUiRegistry(); value.register(createCoreUiExtension(controller)); return value }, [controller])
+  const registry = useMemo(() => { const value = new WorkbenchUiRegistry(); value.register(createCoreUiExtension(remote)); return value }, [remote])
   useEffect(() => { defaultThemeManager.start(); return () => { void remote.dispose(); void remoteTerminals.dispose(); registry.dispose() } }, [registry, remote, remoteTerminals])
   useEffect(() => {
     document.documentElement.style.colorScheme = defaultThemeManager.getSnapshot().resolved
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors.background)
   }, [view.state])
   if (view.status !== 'open' || !view.state) return <ConnectionStatus status={view.status} error={view.lastError} />
-  return <GpuixContext.Provider value={{ renderer: domRenderer }}><WorkbenchApp controller={controller} presenters={presenters} ui={registry} themeManager={defaultThemeManager} terminals={terminals} onQuit={() => client.disconnect()} /></GpuixContext.Provider>
+  return <GpuixContext.Provider value={{ renderer: domRenderer }}><WorkbenchApp controller={remote} presenters={presenters} ui={registry} themeManager={defaultThemeManager} terminals={remoteTerminals} onQuit={() => client.disconnect()} /></GpuixContext.Provider>
 }
 
 function ConnectionStatus({ status, error }: { status: string; error?: string | undefined }) {

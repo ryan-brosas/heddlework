@@ -1,6 +1,6 @@
 // Browser clipboard helpers with the same exports as src/ui/clipboard-media.ts. Images stay as data URLs.
 
-import type { ComposerImage, PiContentBlock, PiMessage } from '../../pi/types.ts'
+import type { ComposerImage, PiMessage } from '../../pi/types.ts'
 
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024
 
@@ -52,19 +52,6 @@ export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileNa
 
 export function hydrateMessageImages(messages: PiMessage[]): PiMessage[] {
   return messages
-}
-
-export function imageBlocks(message: PiMessage): Array<PiContentBlock & { type: 'image'; data: string; mimeType: string }> {
-  if (!Array.isArray(message.content)) return []
-  return message.content.filter((block): block is PiContentBlock & { type: 'image'; data: string; mimeType: string } => (
-    block.type === 'image' && typeof block.data === 'string' && block.data.length > 0 && typeof block.mimeType === 'string'
-  ))
-}
-
-export function messageImageSrc(image: { data?: string; mimeType?: string; previewPath?: string }): string | undefined {
-  if (image.previewPath?.startsWith('data:') || image.previewPath?.startsWith('http')) return image.previewPath
-  if (image.data && image.mimeType) return `data:${image.mimeType};base64,${image.data}`
-  return undefined
 }
 
 function base64(bytes: Uint8Array): string {

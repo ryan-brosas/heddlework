@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ThreadPriority } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'

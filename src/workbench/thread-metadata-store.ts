@@ -99,8 +99,3 @@ function readDocument(path: string | false): ThreadMetadataDocument {
     return { version: 1, threads: {} }
   }
 }
-
-export const memoryThreadMetadataStore: ThreadMetadataStoreService = {
-  load: () => ({}),
-  save: () => undefined,
-}

@@ -30,9 +30,21 @@ or Wayland work.
 
 ```bash
 bun install --frozen-lockfile   # never mutate the lockfile by hand
-bun run check                   # typecheck + typecheck:web + test + test:performance + web-dom-e2e
-bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
+bun run verify                  # full gate, exactly what CI runs: build:web + test:browser + check + build
+bun run check                   # fast subset; omits Playwright, so it can pass while verify fails
 ```
+
+`check` does not include `test:browser`; `verify` is the single aggregate CI and a prepared
+checkout both run, so a web-companion-only break cannot pass locally and fail in CI. The web
+companion implements the `TerminalService` contract exported by `src/terminal/service.ts`
+(`implements` + shared type, checked by `typecheck:web`) instead of an unchecked cast.
+
+IDE-based source audits - the MCP Steroid sweep harness, its per-script `readAction` rule, the
+proven false-positive taxonomy, and the current coverage baseline - are documented in
+`docs/quality-audit.md`; read it before re-running an inspection pass.
+
+Tests are Bun tests (`import { describe, expect, it } from 'bun:test'`): run a single file with
+`bun test tests/<name>.test.ts`. Vitest cannot load them (`Cannot find package 'bun:test'`).
 
 `check:native` and `check:ai-slop` do not exist in the fresh-fork package.json. Re-add them only
 with their implementations.

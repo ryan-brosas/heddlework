@@ -2,7 +2,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef }
 import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
@@ -25,7 +25,7 @@ export const TerminalView = memo(function TerminalView({
   appearance,
   focusSerial = 1,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   sessionId: TerminalSessionId | undefined
   placement: TerminalPlacement
   width: number
@@ -140,7 +140,9 @@ export const TerminalView = memo(function TerminalView({
             rendering={rendering}
           />
         : <TerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
-      ) : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
+      ) : serviceSnapshot.lastError
+        ? <text testId={'terminal-error-' + placement} style={{ color: colors.textFaint, fontSize: 11 }}>{`Terminal unavailable: ${serviceSnapshot.lastError}`}</text>
+        : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
       <div
         ref={(instance: { id: number } | null) => { inputId.current = instance?.id }}
         testId={'terminal-input-' + placement}
@@ -176,7 +178,7 @@ const NativeTerminalGrid = memo(function NativeTerminalGrid({
   theme,
   rendering,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   sessionId: TerminalSessionId
   snapshot: TerminalGridSnapshot | undefined
   cols: number
@@ -295,11 +297,11 @@ async function pasteClipboardText(): Promise<string | undefined> {
     }
     for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
       try {
-        const proc = Bun.spawn(command as unknown as string[], { stdout: 'pipe' })
+        const proc = Bun.spawn([...command], { stdout: 'pipe' })
         const text = await new Response(proc.stdout).text()
         if (text) return text
       } catch {
-        continue
+        // try the next clipboard command
       }
     }
   } catch {

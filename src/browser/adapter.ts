@@ -2,7 +2,6 @@ import type {
   BrowserAgentAccess,
   BrowserEngineKind,
   BrowserNativeState,
-  BrowserRuntimeProfile,
   BrowserSurfaceBounds,
 } from './types.ts'
 
@@ -26,11 +25,6 @@ export interface BrowserSurfaceSession {
   print(): void
   clearData(): Promise<void>
   dispose(): void
-}
-
-export interface BrowserSurfaceAdapter {
-  readonly engine: BrowserEngineKind
-  open(profile: BrowserRuntimeProfile, events: BrowserSurfaceEvents): Promise<BrowserSurfaceSession>
 }
 
 export interface BrowserAutomationGrant {

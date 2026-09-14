@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { isCurrentPiSession, sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
@@ -34,7 +34,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   settingsActive,
   notificationsActive,
   unreadCount,
-  appearance,
   onSelectSession,
   onFlows = () => undefined,
   onSettings,
@@ -42,7 +41,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }: {
   width?: number
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   flowsAvailable?: boolean
   flowsActive?: boolean
   settingsActive: boolean
@@ -86,7 +85,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   useEffect(() => {
     setProjectScope((selected) => resolveProjectScope(selected, projectOptions))
   }, [projectOptions])
-  const matchingSessions = useMemo(() => {
+  const visibleSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
     for (const session of persistedSessions) unique.set(session.path, session)
@@ -98,7 +97,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       ? scoped.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
       : scoped
   }, [activeSummary, normalizedSearch, persistedSessions, projectScope])
-  const visibleSessions = matchingSessions
   const now = clock
   useEffect(() => {
     if (initialSessionScrollApplied.current || state.sessionsLoading || visibleSessions.length === 0) return
@@ -251,6 +249,8 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   && previous.settingsActive === next.settingsActive
   && previous.notificationsActive === next.notificationsActive
   && previous.unreadCount === next.unreadCount
+  // The body paints from the module-level palette that applyResolvedTheme mutates in place,
+  // so a light/dark switch must break memo here even though the prop is never read directly.
   && previous.appearance === next.appearance
   && previous.state.sessions === next.state.sessions
   && previous.state.sessionsLoading === next.state.sessionsLoading
@@ -329,10 +329,6 @@ function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expa
       <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>
     </div>
   )
-}
-
-function SidebarTextAction({ label, onClick }: { label: string; onClick(): void }) {
-  return <div tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick}><text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550 }}>{label}</text></div>
 }
 
 function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {

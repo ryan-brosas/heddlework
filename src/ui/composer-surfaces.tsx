@@ -1,6 +1,5 @@
-import React from 'react'
 import type { SlashCommand } from '../pi/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { AskUserQuestionnaire } from '../workbench/ask-user.ts'
 import type { ExtensionWidget } from '../workbench/state.ts'
 import { MotionDiv } from './motion.ts'
@@ -31,7 +30,7 @@ export function extensionSurfaceRailReserveHeight(
   return EXTENSION_SURFACE_BASE_RESERVE_HEIGHT + Math.max(0, maxWidgetLines - 1) * EXTENSION_WIDGET_EXTRA_LINE_RESERVE_HEIGHT
 }
 
-export function QuestionnaireWaitingDock({ questionnaire, controller }: { questionnaire: AskUserQuestionnaire; controller: WorkbenchController }) {
+export function QuestionnaireWaitingDock({ questionnaire, controller }: { questionnaire: AskUserQuestionnaire; controller: WorkbenchService }) {
   const { mobile } = useResponsiveLayout()
   return (
     <div testId="ask-user-collapsed" style={{ width: '100%', maxWidth: 768, minHeight: QUESTIONNAIRE_WAITING_DOCK_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: QUESTIONNAIRE_WAITING_DOCK_MARGIN, paddingLeft: 11, paddingRight: 8, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, pointerEvents: 'auto' }}>

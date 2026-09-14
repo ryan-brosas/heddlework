@@ -1,6 +1,6 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React, { useCallback, useEffect, useState } from 'react'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import { useCallback, useEffect, useState } from 'react'
+import type { TerminalService } from '../terminal/service.ts'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
 import { TERMINAL_DOCK_HEADER, TERMINAL_DOCK_RESIZE } from './terminal-metrics.ts'
@@ -22,7 +22,7 @@ export function TerminalDock({
   onToggleFullscreen,
   onClose,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   open: boolean
   fullscreen: boolean
   fullscreenProgress: number
@@ -43,14 +43,14 @@ export function TerminalDock({
 
   useEffect(() => {
     if (!open) return
-    void service.ensureSession('bottom')
+    service.dispatch(service.ensureSession('bottom'))
   }, [open, service])
 
   const onNew = useCallback(() => {
-    void service.spawn().then((id) => {
+    service.dispatch(service.spawn().then((id) => {
       service.select('bottom', id)
       requestFocus(id)
-    })
+    }))
   }, [requestFocus, service])
 
   const viewHeight = Math.max(1, height - TERMINAL_DOCK_HEADER)

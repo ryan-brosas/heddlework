@@ -1,7 +1,6 @@
-import React from 'react'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { BrowserSessionService } from '../src/browser/service.ts'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
@@ -9,8 +8,8 @@ import { BrowserPanel } from '../src/ui/browser-panel.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const browsers: BrowserSessionService[] = []
 const controllers: WorkbenchController[] = []
 

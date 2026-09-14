@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
-import type { ComposerImage, PiContentBlock, PiMessage } from '../pi/types.ts'
+import type { ComposerImage, PiMessage } from '../pi/types.ts'
 
 const IMAGE_CACHE_DIRECTORY = join(tmpdir(), 'heddlework-images-v1')
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024
@@ -82,13 +82,6 @@ export function hydrateMessageImages(messages: PiMessage[]): PiMessage[] {
     })
     return changed ? { ...message, content } : message
   })
-}
-
-export function imageBlocks(message: PiMessage): Array<PiContentBlock & { type: 'image'; data: string; mimeType: string }> {
-  if (!Array.isArray(message.content)) return []
-  return message.content.filter((block): block is PiContentBlock & { type: 'image'; data: string; mimeType: string } => (
-    block.type === 'image' && typeof block.data === 'string' && typeof block.mimeType === 'string'
-  ))
 }
 
 function materializeImagePreview(data: string, mimeType: string): string | undefined {

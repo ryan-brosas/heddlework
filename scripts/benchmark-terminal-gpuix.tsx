@@ -1,4 +1,3 @@
-import React from 'react'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {

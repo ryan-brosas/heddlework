@@ -1,8 +1,7 @@
-import React from 'react'
 import { rmSync, writeFileSync } from 'node:fs'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
 import { FlowRuntime } from '../src/flows/runtime.ts'
@@ -14,8 +13,7 @@ import { ResponsiveLayoutProvider, resolveResponsiveLayout } from '../src/ui/res
 import { colors } from '../src/ui/theme.ts'
 import { createInitialState } from '../src/workbench/state.ts'
 import { createTestUiRegistry, expectScrollWheelLatency, testControllerDependencies } from './helpers/workbench.ts'
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
+import { describeNative } from './helpers/native-renderer.ts'
 
 async function renderFlowsView(session: PiSessionSummary) {
   const state = { ...createInitialState('/tmp'), connection: 'connected' as const, sessions: [session] }
@@ -122,7 +120,6 @@ describeNative('Flows surface', () => {
       await controller.dispose()
     }
   }, 10_000)
-
 
   it('fans an ordinary active Work row into live Fabric participants and a join', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/flows-live-fabric', testControllerDependencies())
@@ -695,7 +692,6 @@ describeNative('Flows surface', () => {
       await controller.dispose()
     }
   }, 10_000)
-
 
   it('replays nested Fabric branches and their join on a parallel task page', async () => {
     const now = Date.now()

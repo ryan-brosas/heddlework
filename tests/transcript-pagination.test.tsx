@@ -1,7 +1,7 @@
 import React from 'react'
-import { describe, expect, it, spyOn } from 'bun:test'
+import { expect, it, spyOn } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import type { PiForkMessage, PiMessage } from '../src/pi/types.ts'
 import { Transcript } from '../src/ui/transcript.tsx'
 import { createInitialState } from '../src/workbench/state.ts'
@@ -10,14 +10,13 @@ import { coreToolPresentersPlugin, toolPresenterSlot } from '../src/ui/tool-pres
 import { colors } from '../src/ui/theme.ts'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { expectScrollWheelLatency } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 const messages: PiMessage[] = Array.from({ length: 120 }, (_, index): PiMessage[] => [
   { role: 'user', content: `Prompt ${index}`, timestamp: index * 2 },
   { role: 'assistant', content: [{ type: 'text', text: `Answer ${index}` }], timestamp: index * 2 + 1 },
 ]).flat()
 const forkMessages: PiForkMessage[] = Array.from({ length: 120 }, (_, index) => ({ entryId: `entry-${index}`, text: `Prompt ${index}` }))
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('reverse-infinite transcript', () => {
   it('keeps one bottom-aligned native list while the reader changes direction', async () => {

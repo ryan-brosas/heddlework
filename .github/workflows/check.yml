@@ -51,11 +51,9 @@ jobs:
           addon="$PWD/node_modules/@gpuix/native/gpuix-native.linux-x64-gnu.node"
           test -f "$addon"
           echo "NAPI_RS_NATIVE_LIBRARY_PATH=$addon" >> "$GITHUB_ENV"
-      - run: bun run typecheck:web
-      - run: bun run build:web
       - run: bunx playwright install chromium
-      - run: bun run test:browser
-      - run: bun run check
-      - run: bun run build
-        env:
-          HEDDLEWORK_WITHOUT_CEF: '1'
+      # One aggregate command, shared with a prepared local checkout, so the CI lane and the
+      # documented pre-push gate cannot drift. `check` alone omits the browser probe, which is how a
+      # web-companion-only break once reached CI green-adjacent.
+      - name: Full verification gate
+        run: bun run verify

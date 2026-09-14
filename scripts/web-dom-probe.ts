@@ -6,6 +6,15 @@ import { createInitialState } from '../src/workbench/state.ts'
 // lifecycle controls onto every card, which would make the idle mark-only branch untestable.
 const window = new Window({ url: `http://localhost/#token=${'a'.repeat(43)}`, width: 1_280, height: 900 })
 window.document.body.innerHTML = '<div id="root"></div>'
+const unhandledRejections: unknown[] = []
+process.on('unhandledRejection', (reason) => unhandledRejections.push(reason))
+let rejectClipboardWrite = true
+let copiedText: string | undefined
+Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => {
+  if (rejectClipboardWrite) throw new Error('clipboard denied')
+  copiedText = text
+} } })
+Object.defineProperty(window.navigator, 'serviceWorker', { configurable: true, value: { register: async () => { throw new Error('service worker unavailable') } } })
 const initial = createInitialState('/workspace/mobile')
 const sessionPath = '/workspace/mobile/session-1.jsonl'
 const state = {
@@ -40,7 +49,7 @@ const state = {
   // and must never surface as an extension notification banner.
   messages: [
     { role: 'user' as const, content: 'Measure the turn', timestamp: 1 },
-    { role: 'assistant' as const, content: 'Measured.', timestamp: 2 },
+    { role: 'assistant' as const, content: 'Measured.\n\n```ts\nconst measured = true\n```', timestamp: 2 },
   ],
   statusLines: [{ id: 1, text: 'TPS 25.6 tok/s', createdAt: 3, turn: 0 }],
 }
@@ -62,6 +71,19 @@ assert(window.sessionStorage.getItem('heddlework.token') === 'a'.repeat(43), 'Pa
 assert(!window.document.documentElement.outerHTML.includes('windowdragregion'), 'Native drag props leaked into DOM')
 assert(window.document.body.textContent?.includes('TPS 25.6 tok/s'), 'Session status line did not render in the transcript')
 assert(!window.document.querySelector('[data-testid="composer-notification-stack"]'), 'Extension status leaked into a notification banner')
+const codeCopy = window.document.querySelector('.gx-md-copy')
+assert(codeCopy, 'Markdown code block did not render its copy action')
+// Read through a call: an `asserts` comparison narrows textContent to the compared literal.
+const copyLabel = (): string => codeCopy.textContent ?? ''
+codeCopy.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await Bun.sleep(0)
+assert(copyLabel() === 'Copy', 'Rejected clipboard write reported success')
+rejectClipboardWrite = false
+codeCopy.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await Bun.sleep(0)
+assert(copiedText?.includes('const measured = true') === true, 'Code block did not use the shared clipboard writer')
+assert(copyLabel() === 'Copied', 'Successful clipboard write did not update the copy action')
+assert(unhandledRejections.length === 0, `Web entry points leaked unhandled rejections: ${unhandledRejections.map(String).join(', ')}`)
 // Pi's showStatus line carries no notification chrome: no card, no border, no timestamp. Asserting the
 // exact text also proves no time-of-day element was appended beside it.
 const statusLine = window.document.querySelector('[data-testid="session-status-line"]')

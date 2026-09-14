@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import {
   cycleSessionTreeFilterMode,
@@ -8,7 +8,7 @@ import {
   type PiSessionTreeFilterMode,
   type PiSessionTreeRow,
 } from '../pi/session-tree.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import {
   questionnaireFromTool,
   questionnaireMatchesDialog,
@@ -36,7 +36,7 @@ interface AnswerDraft {
   custom: string
 }
 
-export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
   const { mobile } = useResponsiveLayout()
   const questionnaire = useMemo(() => {
     const candidates = state.liveTools.flatMap((tool) => {
@@ -83,7 +83,7 @@ function GenericDialogSurface({ dialog, queued, onRespond }: { dialog: Extension
   )
 }
 
-function QuestionnaireOverlay({ questionnaire, submitting, controller }: { questionnaire: AskUserQuestionnaire; submitting: boolean; controller: WorkbenchController }) {
+function QuestionnaireOverlay({ questionnaire, submitting, controller }: { questionnaire: AskUserQuestionnaire; submitting: boolean; controller: WorkbenchService }) {
   const { mobile } = useResponsiveLayout()
   const [currentTab, setCurrentTab] = useState(0)
   const [drafts, setDrafts] = useState<AnswerDraft[]>(() => questionnaire.questions.map((question) => ({

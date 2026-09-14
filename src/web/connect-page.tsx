@@ -8,7 +8,7 @@ export function ConnectPage({ onConnected }: { onConnected(): void }) {
   const [host, setHost] = useState(location.origin)
   const [token, setToken] = useState('')
   const [error, setError] = useState<string>()
-  const connect = (event: React.FormEvent) => {
+  const connect: React.SubmitEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault()
     try {
       const normalized = normalizeHostUrl(host)

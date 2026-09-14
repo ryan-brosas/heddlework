@@ -1,4 +1,3 @@
-import React from 'react'
 import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
 
@@ -59,7 +58,6 @@ export function Button({ label, onClick, disabled = false, tone = 'default', tes
 
 export function IconButton({
   icon,
-  label,
   onClick,
   active = false,
   disabled = false,
