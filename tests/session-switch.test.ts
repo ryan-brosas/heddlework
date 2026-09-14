@@ -73,6 +73,7 @@ class SwitchingTransport implements AgentTransport {
   #notifyDuringBootstrap = false
   #startBarrier: Promise<void> | undefined
   #startFailure: string | undefined
+  #stopFailure: string | undefined
   #getStateBarrier: Promise<void> | undefined
 
   constructor(active: PiSessionSummary = sessions[0]!) {
@@ -105,7 +106,16 @@ class SwitchingTransport implements AgentTransport {
   }
 
   failStart(message: string): void { this.#startFailure = message }
-  async stop(): Promise<void> { this.stopCalls += 1; this.emitStatus({ state: 'stopped' }) }
+
+  failStop(message: string): void { this.#stopFailure = message }
+
+  async stop(): Promise<void> {
+    this.stopCalls += 1
+    const failure = this.#stopFailure
+    this.#stopFailure = undefined
+    if (failure) throw new Error(failure)
+    this.emitStatus({ state: 'stopped' })
+  }
   send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
@@ -420,6 +430,41 @@ describe('clickable session switching', () => {
       expect(stopped.filter((count) => count > 0).length).toBeGreaterThan(0)
       expect(pool.spawned.get(extras[extras.length - 1]!.path)?.stopCalls).toBe(0)
     } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('never leaves a rejected idle-harness stop unhandled', async () => {
+    const extras: PiSessionSummary[] = Array.from({ length: SESSION_IDLE_POOL_LIMIT + 3 }, (_, index) => ({
+      id: 'reject-' + String(index),
+      path: '/tmp/reject-' + String(index) + '.jsonl',
+      cwd: '/tmp/project',
+      title: 'Reject ' + String(index),
+      firstMessage: 'p',
+      messageCount: 1,
+      createdAt: index,
+      modifiedAt: index,
+    }))
+    const transport = new SwitchingTransport()
+    transport.extras = extras
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      await controller.start()
+      for (const session of extras) {
+        // Teardown of a pooled harness can fail (a dead stdin, a throwing status listener);
+        // the trim path must not surface that as an unhandled rejection.
+        for (const spawned of pool.spawned.values()) spawned.failStop('idle harness teardown failed')
+        await controller.switchSession(session)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect([...pool.spawned.values()].filter((spawned) => spawned.stopCalls > 0).length).toBeGreaterThan(0)
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
       await controller.dispose()
     }
   })
