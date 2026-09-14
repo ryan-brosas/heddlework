@@ -13,6 +13,7 @@ import { queueSize } from '../workbench/queue.ts'
 import type { ThreadPriority, ToolRun, WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline } from '../workbench/timeline.ts'
 import type { ToolPresenter } from './tool-presenters.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { Button, NativeVirtualList } from './primitives.tsx'
 import { FlowScheduleIntake } from './flow-schedule-intake.tsx'
 import { FlowLabelPicker, FlowLabelPills, FlowPriorityPicker } from './flow-metadata.tsx'
@@ -108,7 +109,7 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, t
         {tab === 'work' && selectedTask && selectedRun ? (
           <TaskPage task={selectedTask} run={selectedRun} controller={controller} priorityCounts={priorityCounts} labelOptions={labelOptions} onBack={() => setSelectedTaskId(undefined)} onOpenSession={onOpenSession} />
         ) : tab === 'work' ? (
-          <WorkPage runs={runs} state={state} controller={controller} priorityCounts={priorityCounts} onQueueInChat={() => { void openQueueComposer() }} onOpenTask={(task) => setSelectedTaskId(task.id)} />
+          <WorkPage runs={runs} state={state} controller={controller} priorityCounts={priorityCounts} onQueueInChat={() => { void openQueueComposer().catch(notifyFailure(controller, 'Could not start a new thread')) }} onOpenTask={(task) => setSelectedTaskId(task.id)} />
         ) : tab === 'triage' ? (
           <TriagePage runs={runs} controller={controller} onOpenTask={(task) => { setSelectedTaskId(task.id); setTab('work') }} />
         ) : (
@@ -315,7 +316,7 @@ function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack,
             // A newer click or a rejected switch leaves another thread open; only leave the
             // flow page once the task's session is really the one Pi is showing.
             if (controller.getSnapshot().session.sessionFile === task.session!.path) onOpenSession(task.session!)
-          })
+          }).catch(notifyFailure(controller, 'Could not open the thread'))
         }} />}
       </div>
       <div testId="flow-task-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', overflowX: 'hidden', overflowY: 'scroll', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter }}>

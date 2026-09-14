@@ -3,6 +3,7 @@ import type { WorkbenchPlugin } from '../core/kernel.ts'
 import type { WorkbenchService } from '../workbench/controller.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { DiffPanel } from './diff-panel.tsx'
+import { notifyFailure } from './failure-notice.ts'
 import { useOptionalBrowserService } from './browser-context.tsx'
 import { BrowserPanel } from './browser-panel.tsx'
 import {
@@ -93,7 +94,7 @@ export function createCoreUiExtension(controller: WorkbenchService): WorkbenchUi
         icon: 'fileDiff',
         order: 40,
         component: DiffSurface,
-        onOpen: () => { void controller.refreshWorkspaceDiff() },
+        onOpen: () => { void controller.refreshWorkspaceDiff().catch(notifyFailure(controller, 'Could not refresh the diff')) },
       },
       placeholder('agents', 'Agents', 'Watch subagents and workflows run.', 'bot', 50),
     ],

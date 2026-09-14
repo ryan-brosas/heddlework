@@ -9,6 +9,7 @@ import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 
@@ -147,7 +148,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
         snoozeOpen={snoozeMenu === session.path}
-        onClick={() => { onSelectSession(); void controller.switchSession(session) }}
+        onClick={() => { onSelectSession(); void controller.switchSession(session).catch(notifyFailure(controller, 'Could not open the thread')) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
         onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
@@ -164,7 +165,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     sessionScrollDistance.current += downwardDistance
     if (sessionScrollDistance.current < 640) return
     sessionScrollDistance.current = 0
-    void controller.loadMoreSessions()
+    void controller.loadMoreSessions().catch(notifyFailure(controller, 'Could not load more sessions'))
   }
 
   return (
@@ -190,7 +191,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
               onChange={(event) => setSearch(String(event.value ?? ''))}
             />
           </div>
-          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
+          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread')) }} />
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -204,8 +205,8 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
               setPickingProject(true)
               void pickWorkspaceDirectory().then((pick) => {
                 if (pick.error) controller.notify('error', pick.error)
-                else if (pick.path) void controller.switchWorkspace(pick.path)
-              }).finally(() => setPickingProject(false))
+                else if (pick.path) void controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+              }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => setPickingProject(false))
             }}
           />
         </div>
@@ -234,7 +235,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
           <IconButton icon="bell" label="Notifications" testId="sidebar-notifications" active={notificationsActive} onClick={onNotifications} />
           {unreadCount > 0 && <div style={{ position: 'absolute', top: 2, right: 1, minWidth: 13, height: 13, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 3, paddingRight: 3, backgroundColor: colors.primary }}><text style={{ color: '#FFFFFF', fontSize: 7, fontWeight: 700 }}>{String(Math.min(99, unreadCount))}</text></div>}
         </div>
-        <IconButton icon="refresh" label="Refresh threads" disabled={state.sessionsLoading} onClick={() => void controller.refreshSessions()} />
+        <IconButton icon="refresh" label="Refresh threads" disabled={state.sessionsLoading} onClick={() => void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))} />
         <div style={{ flexGrow: 1 }} />
         <div testId="sidebar-connection-status" style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: connectionColor }} />

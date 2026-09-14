@@ -6,6 +6,7 @@ import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
+import { notifyFailure } from './failure-notice.ts'
 import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
@@ -46,7 +47,7 @@ export function SettingsView({
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
             <SettingsActions>
-              <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect()} />
+              <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect().catch(notifyFailure(controller, 'Could not reconnect'))} />
             </SettingsActions>
           </SettingsSection>
 

@@ -7,6 +7,7 @@ import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { matchSelectOptions, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
@@ -50,8 +51,8 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
     setPicking(true)
     void pickWorkspaceDirectory().then((pick) => {
       if (pick.error) controller.notify('error', pick.error)
-      else if (pick.path) void controller.switchWorkspace(pick.path)
-    }).finally(() => {
+      else if (pick.path) void controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+    }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => {
       setPicking(false)
       closeMenu()
     })
@@ -83,7 +84,7 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
               {filteredChoices.length > 0 ? (
                 <NativeVirtualList testId="workspace-project-list" alignment="top" estimatedItemHeight={42} overdraw={84} itemCount={Math.max(1, filteredChoices.length)} windowStart={projectWindow.windowStart} onVisibleRange={projectWindow.onVisibleRange} style={{ width: '100%', height: projectListHeight, minHeight: 0 }}>
                   {visibleChoices.map((choice) => (
-                    <div key={choice.path} testId={choice.current ? 'workspace-choice-current' : 'workspace-choice'} tabIndex={choice.current ? -1 : 0} style={{ height: 42, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: choice.current ? colors.raised : colors.transparent, cursor: choice.current ? 'default' : 'pointer', hover: choice.current ? {} : { backgroundColor: colors.hover } }} {...(choice.current ? {} : { onClick: () => { closeMenu(); void controller.switchWorkspace(choice.path) }, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') { closeMenu(); void controller.switchWorkspace(choice.path) } } })}>
+                    <div key={choice.path} testId={choice.current ? 'workspace-choice-current' : 'workspace-choice'} tabIndex={choice.current ? -1 : 0} style={{ height: 42, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: choice.current ? colors.raised : colors.transparent, cursor: choice.current ? 'default' : 'pointer', hover: choice.current ? {} : { backgroundColor: colors.hover } }} {...(choice.current ? {} : { onClick: () => { closeMenu(); void controller.switchWorkspace(choice.path).catch(notifyFailure(controller, 'Could not open the project')) }, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') { closeMenu(); void controller.switchWorkspace(choice.path).catch(notifyFailure(controller, 'Could not open the project')) } } })}>
                       <Icon name="folder" size={15} color={choice.current ? colors.textMuted : colors.textFaint} />
                       <text style={{ minWidth: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{choice.name}</text>
                       {choice.current && <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>CURRENT</text>}

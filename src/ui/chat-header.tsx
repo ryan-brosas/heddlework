@@ -7,6 +7,7 @@ import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -59,12 +60,12 @@ export function ChatHeader({
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
             <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
-            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
+            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
           </>
         ) : (
           <>
             <Button testId="header-open" label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
-            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
+            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
           </>
         ))}
         {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
@@ -90,12 +91,12 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       open={dropdown.mounted}
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
-        if (value === 'new') void controller.newSession()
+        if (value === 'new') void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread'))
         if (value === 'open') openPath(state.workspacePath)
-        if (value === 'clone') void controller.cloneSession()
-        if (value === 'compact') void controller.compact()
-        if (value === 'refresh') void controller.refreshSessions()
-        if (value === 'export') void exportTranscript(controller)
+        if (value === 'clone') void controller.cloneSession().catch(notifyFailure(controller, 'Could not clone the thread'))
+        if (value === 'compact') void controller.compact().catch(notifyFailure(controller, 'Could not compact the session'))
+        if (value === 'refresh') void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))
+        if (value === 'export') void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))
       }}
     >
       <SelectTrigger
