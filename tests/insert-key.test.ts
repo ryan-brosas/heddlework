@@ -25,6 +25,14 @@ describe('resolveInsertKeyCommand', () => {
     expect(resolveInsertKeyCommand({ key: 'insert', modifiers: { ctrl: true, alt: true } })).toBe('none')
   })
 
+  it('accepts chords whose modifiers travel inside the key string', () => {
+    expect(resolveInsertKeyCommand({ key: 'shift-insert' })).toBe('paste')
+    expect(resolveInsertKeyCommand({ key: 'ctrl-insert' })).toBe('copy')
+    expect(resolveInsertKeyCommand({ key: 'super-insert' })).toBe('copy')
+    expect(resolveInsertKeyCommand({ key: 'ctrl-shift-insert' })).toBe('none')
+    expect(resolveInsertKeyCommand({ key: 'Insert', modifiers: { shift: true } })).toBe('paste')
+  })
+
   it('leaves other keys alone', () => {
     expect(resolveInsertKeyCommand({ key: 'v', modifiers: { ctrl: true } })).toBe('none')
     expect(resolveInsertKeyCommand({ key: 'c', modifiers: { ctrl: true } })).toBe('none')

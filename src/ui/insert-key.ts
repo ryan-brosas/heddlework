@@ -8,6 +8,8 @@
  * binds neither alternative, so Heddlework resolves them once, here, for every surface that takes
  * keys.
  */
+import { parseKeyChord } from './key-chord.ts'
+
 export type InsertKeyCommand = 'copy' | 'paste' | 'none'
 
 export interface InsertKeyEvent {
@@ -23,12 +25,16 @@ export interface InsertKeyEvent {
 
 /** `Shift+Insert` pastes and `Ctrl+Insert` copies; every other combination stays untouched. */
 export function resolveInsertKeyCommand(event: InsertKeyEvent): InsertKeyCommand {
-  if ((event.key ?? '').toLowerCase() !== 'insert') return 'none'
+  // A keystroke arrives either with separately encoded modifiers or as one chord such as
+  // `shift-keystroke`; `parseKeyChord` is the single owner of that split, shared with the terminal.
+  const chord = parseKeyChord(event.key)
+  if (chord.key !== 'insert') return 'none'
   const modifiers = event.modifiers
-  const ctrl = Boolean(modifiers?.ctrl || modifiers?.control)
-  const cmd = Boolean(modifiers?.cmd)
-  if (modifiers?.alt) return 'none'
-  if (modifiers?.shift && !ctrl && !cmd) return 'paste'
-  if (!modifiers?.shift && (ctrl || cmd)) return 'copy'
+  const ctrl = Boolean(modifiers?.ctrl || modifiers?.control || chord.modifiers.ctrl)
+  const cmd = Boolean(modifiers?.cmd || chord.modifiers.cmd)
+  const shift = Boolean(modifiers?.shift || chord.modifiers.shift)
+  if (modifiers?.alt || chord.modifiers.alt) return 'none'
+  if (shift && !ctrl && !cmd) return 'paste'
+  if (!shift && (ctrl || cmd)) return 'copy'
   return 'none'
 }

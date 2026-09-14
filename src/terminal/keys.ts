@@ -1,4 +1,5 @@
 import { resolveInsertKeyCommand } from '../ui/insert-key.ts'
+import { parseKeyChord } from '../ui/key-chord.ts'
 
 export interface TerminalKeyEvent {
   readonly eventType?: string
@@ -29,22 +30,12 @@ export function normalizeTerminalKey(event: TerminalKeyEvent): {
   keyChar: string
 } {
   const mods = event.modifiers ?? {}
-  let ctrl = Boolean(mods.ctrl || mods.control)
-  let alt = Boolean(mods.alt)
-  let cmd = Boolean(mods.cmd)
-  let shift = Boolean(mods.shift)
-  let key = (event.key ?? '').toLowerCase()
-  const tokens = key.split(/[+-]/).filter(Boolean)
-  if (tokens.length > 1) {
-    const last = tokens.at(-1) ?? key
-    for (const token of tokens.slice(0, -1)) {
-      if (token === 'ctrl' || token === 'control') ctrl = true
-      else if (token === 'alt' || token === 'option') alt = true
-      else if (token === 'cmd' || token === 'meta' || token === 'super' || token === 'win') cmd = true
-      else if (token === 'shift') shift = true
-    }
-    key = last
-  }
+  const parsed = parseKeyChord(event.key)
+  let ctrl = Boolean(mods.ctrl || mods.control || parsed.modifiers.ctrl)
+  let alt = Boolean(mods.alt || parsed.modifiers.alt)
+  let cmd = Boolean(mods.cmd || parsed.modifiers.cmd)
+  let shift = Boolean(mods.shift || parsed.modifiers.shift)
+  let key = parsed.key
   if (key.startsWith('arrow')) key = key.slice(5)
   if (key === 'return') key = 'enter'
   if (key === 'esc') key = 'escape'
