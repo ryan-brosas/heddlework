@@ -123,15 +123,33 @@ stays empty while a code-block copy is refused, then succeeds), and
 `bun test tests/terminal-service.test.ts` (a refused spawn leaked an unhandled rejection before,
 and publishes `lastError` now).
 
-### Cross-implementation surface drift (`TerminalService`)
+### Cross-implementation surface drift (`TerminalService`, `WorkbenchService`)
 
-The web companion substitutes for the desktop terminal service, which is why an unchecked
-`as unknown as TerminalSessionService` cast once let a new `dispatch` member pass `bun run check`
-(it does not run Playwright) and fail CI's `test:browser` with `t.dispatch is not a function`.
-`src/terminal/service.ts` now exports `TerminalService = Pick<TerminalSessionService, keyof
-TerminalSessionService>`; `RemoteTerminalService implements TerminalService`, the UI consumes the
-contract, and the web workbench passes its own instance directly. No cast and no runtime sentinel:
-dropping a member now fails `typecheck:web` twice, with `TS2420 ... incorrectly implements
-interface 'TerminalService'. Property 'dispatch' is missing` and `TS2741` at the consumption site
-(negative-controlled). Keep both implementations on the contract, and run `bun run verify` - the
-aggregate CI and a prepared checkout share - rather than `check` alone, before pushing.
+The web companion substitutes for the desktop behind unchecked `as unknown as` casts, which is how a
+new `dispatch` member passed `bun run check` (it does not run Playwright) and failed CI's
+`test:browser` with `t.dispatch is not a function`. Both substitution points now use a structural
+contract instead: `TerminalService` (`src/terminal/service.ts`,
+`Pick<TerminalSessionService, keyof TerminalSessionService>`) and `WorkbenchService`
+(`src/workbench/controller.ts`), each implemented by the desktop class and the web companion, with
+the UI consuming the contract and the web workbench passing its own instance directly.
+
+- `RemoteTerminalService implements TerminalService` - the public surfaces matched exactly, so no
+  exclusion was needed.
+- `RemoteWorkbenchController implements WorkbenchService` - measured with a temporary typed
+  assignment, the public surfaces differ by exactly three host-owned transport-ingress members
+  (`attachTransport`, `acceptAgentEvent`, `acceptAgentStatus`, whose only callers are
+  `src/workbench/*` and the controller tests), so the contract names them in an `Omit` instead of
+  hiding them behind a cast. The `Omit` is enforced, not decorative: calling `attachTransport` on a
+  `WorkbenchService` fails with `TS2339`.
+
+Negative-controlled for both pairs: dropping a member fails `typecheck`/`typecheck:web` with
+`TS2420 ... incorrectly implements` plus a `TS2741` at the consumption site, which the removed
+`RemoteTerminalSurfaceParity` sentinel could not report. Keep both implementations on the contract,
+and run `bun run verify` - the aggregate CI and a prepared checkout share - rather than `check`
+alone, before pushing.
+
+Remaining `as unknown as` sites in `src` (7 occurrences, 6 files: `browser/persistence.ts`,
+`terminal/backend.ts`, `web/sw.ts`, `protocol/snapshot.ts`, `dom/events.ts`,
+`dom/react-shim.ts` x2) are parse/capability/global-typing boundaries, not service substitution;
+`ui/terminal-view.tsx` used one to pass a `readonly` argv tuple to `Bun.spawn` and now spreads it
+instead.
