@@ -30,14 +30,14 @@ or Wayland work.
 
 ```bash
 bun install --frozen-lockfile   # never mutate the lockfile by hand
-bun run check                   # typecheck + typecheck:web + test + test:performance + web-dom-e2e
-bun run build                   # unsigned executable; HEDDLEWORK_WITHOUT_CEF=1 for browser-free
-bun run build:web && bun run test:browser   # Playwright Chromium; CI runs this before `check`
+bun run verify                  # full gate, exactly what CI runs: build:web + test:browser + check + build
+bun run check                   # fast subset; omits Playwright, so it can pass while verify fails
 ```
 
-`check` does not include `test:browser`, so a change to a surface the web companion substitutes
-(`asTerminalSessionService` in `src/client/remote-terminal-service.ts`) can pass `check` and still
-fail CI in the browser probe.
+`check` does not include `test:browser`; `verify` is the single aggregate CI and a prepared
+checkout both run, so a web-companion-only break cannot pass locally and fail in CI. The web
+companion implements the `TerminalService` contract exported by `src/terminal/service.ts`
+(`implements` + shared type, checked by `typecheck:web`) instead of an unchecked cast.
 
 IDE-based source audits - the MCP Steroid sweep harness, its per-script `readAction` rule, the
 proven false-positive taxonomy, and the current coverage baseline - are documented in

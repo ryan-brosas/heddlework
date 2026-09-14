@@ -123,16 +123,15 @@ stays empty while a code-block copy is refused, then succeeds), and
 `bun test tests/terminal-service.test.ts` (a refused spawn leaked an unhandled rejection before,
 and publishes `lastError` now).
 
-### Cross-implementation surface drift (`asTerminalSessionService`)
+### Cross-implementation surface drift (`TerminalService`)
 
-`src/client/remote-terminal-service.ts` substitutes the desktop `TerminalSessionService` in the web
-companion through `as unknown as TerminalSessionService`, which the compiler cannot check because
-private fields make the two classes nominally incompatible. Adding `dispatch` to the desktop service
-and the terminal call sites therefore passed `bun run check` (it does not run Playwright) and failed
-CI's `test:browser` with `t.dispatch is not a function`. The web companion now implements
-`dispatch` (routing to `client.reportError`), and `RemoteTerminalSurfaceParity` asserts the whole
-public surface at compile time: deleting the member fails `typecheck:web` with
-`Type 'true' is not assignable to type 'never'` (negative-controlled). Keep that guard when changing
-either class, and treat `bun run build:web && bun run test:browser` as part of the pre-push gate.
-
-
+The web companion substitutes for the desktop terminal service, which is why an unchecked
+`as unknown as TerminalSessionService` cast once let a new `dispatch` member pass `bun run check`
+(it does not run Playwright) and fail CI's `test:browser` with `t.dispatch is not a function`.
+`src/terminal/service.ts` now exports `TerminalService = Pick<TerminalSessionService, keyof
+TerminalSessionService>`; `RemoteTerminalService implements TerminalService`, the UI consumes the
+contract, and the web workbench passes its own instance directly. No cast and no runtime sentinel:
+dropping a member now fails `typecheck:web` twice, with `TS2420 ... incorrectly implements
+interface 'TerminalService'. Property 'dispatch' is missing` and `TS2741` at the consumption site
+(negative-controlled). Keep both implementations on the contract, and run `bun run verify` - the
+aggregate CI and a prepared checkout share - rather than `check` alone, before pushing.
