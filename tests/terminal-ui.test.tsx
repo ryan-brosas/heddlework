@@ -149,6 +149,60 @@ describeNative('terminal panels', () => {
     }
   })
 
+  it('withdraws copy feedback and ignores a pending copy when the session changes', async () => {
+    const terminals = new TerminalSessionService({ cwd: '/tmp/heddlework-terminal-ui', backend: new MemoryTerminalBackend() })
+    services.push(terminals)
+    const first = await terminals.spawn({ cols: 80, rows: 24 })
+    const second = await terminals.spawn({ cols: 80, rows: 24 })
+    let pending: ((outcome: boolean) => void) | undefined
+    let failImmediately = false
+    // Stable writer identity: an inline closure would recreate the action on every render and
+    // hide the session boundary this test exists to pin down.
+    const copy = () => (failImmediately ? false : new Promise<boolean>((resolve) => { pending = resolve }))
+    const root = createTestRoot({ width: 800, height: 420 })
+    try {
+      const render = (sessionId: string) => root.render(
+        <TerminalView
+          service={terminals}
+          sessionId={sessionId}
+          placement="bottom"
+          width={800}
+          height={420}
+          appearance="dark"
+          copy={copy}
+        />,
+      )
+      const showsFailure = () => root.renderer.getPaintedText().some((text) => text.includes(TERMINAL_COPY_FAILED_MESSAGE))
+
+      render(first)
+      root.renderer.flush()
+      failImmediately = true
+      root.renderer.simulateKeystrokes('ctrl+shift+c')
+      await Bun.sleep(1)
+      root.renderer.flush()
+      expect(showsFailure()).toBe(true)
+
+      // The label belongs to the session that produced it; switching sessions withdraws it.
+      render(second)
+      await Bun.sleep(1)
+      root.renderer.flush()
+      expect(showsFailure()).toBe(false)
+
+      // A copy still in flight for the session that was left cannot report over its successor.
+      failImmediately = false
+      root.renderer.simulateKeystrokes('ctrl+shift+c')
+      await Bun.sleep(1)
+      render(first)
+      await Bun.sleep(1)
+      pending?.(false)
+      await Bun.sleep(1)
+      root.renderer.flush()
+      expect(showsFailure()).toBe(false)
+    } finally {
+      root.unmount()
+    }
+  })
+
   it('opens the layout-owned bottom dock and the right terminal surface', async () => {
     const { controller, terminals } = createHarness()
     const root = createTestRoot({ width: 1_280, height: 720 })
