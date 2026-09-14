@@ -7,7 +7,7 @@
  * outcome is known.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { createCopyAction, type ClipboardWriter } from './copy-feedback.ts'
 
@@ -26,13 +26,18 @@ export function useClipboardCopy(writer: ClipboardWriter = copyTextToClipboard):
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [copied, setCopied] = useState(false)
   const resetTimer = useMemo(() => ({ current: undefined as ReturnType<typeof setTimeout> | undefined }), [])
+  const attemptRef = useRef(0)
   const action = useMemo(() => createCopyAction({ writer, onFailure: setFailure }), [writer])
 
   useEffect(() => () => action.dispose(), [action])
   useEffect(() => () => { if (resetTimer.current) clearTimeout(resetTimer.current) }, [resetTimer])
 
   const copy = useCallback((text: string) => {
+    // Track the newest attempt here too: the shared action only guards its failure sink, so a
+    // stale completion must not clear the newer attempt's success state.
+    const attempt = ++attemptRef.current
     void action.copy(text).then((written) => {
+      if (attempt !== attemptRef.current) return
       if (!written) {
         setCopied(false)
         return

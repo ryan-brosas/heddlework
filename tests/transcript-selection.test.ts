@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { transcriptRowShellStyle } from '../src/ui/transcript.tsx'
-import { codeSurfaceStyle } from '../src/ui/transcript-tools.tsx'
+import { codeSurfaceStyle, toolRowHeaderStyle } from '../src/ui/transcript-tools.tsx'
 
 /**
  * Selection policy for read-only content.
@@ -20,6 +20,10 @@ describe('transcript selection policy', () => {
     const content = transcriptRowShellStyle({ user: false, compact: false, noSelect: false, contentGutter: 24 })
     expect(compact.userSelect).toBe('text')
     expect(content.userSelect).toBe('text')
+  })
+
+  it('keeps the clickable tool header row non-selectable', () => {
+    expect(toolRowHeaderStyle().userSelect).toBe('none')
   })
 
   it('keeps explicitly non-selectable chrome non-selectable', () => {

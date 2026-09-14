@@ -29,6 +29,27 @@ function toolCodeTheme() {
   }
 }
 
+/**
+ * The tool header row is a control (click to expand) that carries its own copy button, so it opts
+ * out of text selection even though the expanded args and output below it stay selectable:
+ * dragging on a control row is otherwise ambiguous between "expand" and "select".
+ */
+export function toolRowHeaderStyle(): StyleDesc {
+  return {
+    minHeight: 28,
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingLeft: 4,
+    paddingRight: 5,
+    borderRadius: 6,
+    cursor: 'pointer',
+    hover: { color: colors.text },
+    userSelect: 'none',
+  }
+}
+
 export function codeSurfaceStyle(): StyleDesc {
   return {
     width: '100%',
@@ -76,18 +97,7 @@ export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { it
       <div
         testId="tool-detail-row"
         tabIndex={0}
-        style={{
-          minHeight: 28,
-          display: 'flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 7,
-          paddingLeft: 4,
-          paddingRight: 5,
-          borderRadius: 6,
-          cursor: 'pointer',
-          hover: { color: colors.text },
-        }}
+        style={toolRowHeaderStyle()}
         onClick={toggleExpanded}
         onKeyDown={(event) => { if (event.key === 'enter') toggleExpanded() }}
       >
