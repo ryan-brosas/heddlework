@@ -52,6 +52,19 @@ uncopyable. Content stays selectable and only chrome opts out:
 | Tool and trace header toggles, status labels, sidebar,
   composer chrome | not selectable (chrome) |
 
+The lane is runnable from any session, and every case in `scripts/linux-compositor-smoke.sh` runs it
+after the window smoke:
+
+```bash
+bun run smoke:selection
+```
+
+It drives `scripts/smoke-linux-selection.tsx`, which renders the production `codeSurfaceStyle()` and
+`transcriptRowShellStyle()` helpers, and fails when content becomes unselectable or chrome becomes
+selectable. The web companion is deliberately different: its fenced-code Copy action leaves the label on
+"Copy" when the browser refuses a write instead of reporting a message, and `scripts/web-dom-probe.ts`
+asserts that it never claims a write that did not happen.
+
 `transcriptRowShellStyle` (row shell) and `codeSurfaceStyle` (tool code surface) own that policy and are
 pinned by `tests/transcript-selection.test.ts`; reintroducing `none` on read-only content is a regression,
 not a styling choice.

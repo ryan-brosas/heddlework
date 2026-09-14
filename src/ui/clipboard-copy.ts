@@ -1,24 +1,23 @@
 /**
  * Shared copy control for explicit UI copy buttons.
  *
- * Owns the transient success state and the failure feedback so every copy button in the
- * workbench behaves the same way: a failed clipboard write is visible, a newer attempt
- * wins over an older one still in flight, and nothing is published before the writer's
- * outcome is known.
+ * Owns the transient success state so every copy button behaves the same way. The ordering rule
+ * (a newer attempt wins; an older or disposed one publishes nothing) lives in `copy-feedback.ts`,
+ * and this hook only maps the reported outcome onto render state.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { createCopyAction, type ClipboardWriter } from './copy-feedback.ts'
 
 export const COPIED_STATE_MS = 900
 
 export interface ClipboardCopyControl {
-  /** True briefly after a confirmed clipboard write, for a check-mark affordance. */
+  /** True briefly after a confirmed clipboard write, for a copy-check affordance. */
   readonly copied: boolean
   /** Generic failure text while the latest attempt failed; undefined on success. */
   readonly failure: string | undefined
-  /** Start a copy; the outcome is reported through `copied`/`failure`. */
+  /** Start a copy; the outcome is reported through copied/failure. */
   readonly copy: (text: string) => void
 }
 
@@ -26,24 +25,21 @@ export function useClipboardCopy(writer: ClipboardWriter = copyTextToClipboard):
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [copied, setCopied] = useState(false)
   const resetTimer = useMemo(() => ({ current: undefined as ReturnType<typeof setTimeout> | undefined }), [])
-  const attemptRef = useRef(0)
   const action = useMemo(() => createCopyAction({ writer, onFailure: setFailure }), [writer])
 
   useEffect(() => () => action.dispose(), [action])
-  useEffect(() => () => { if (resetTimer.current) clearTimeout(resetTimer.current) }, [resetTimer])
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+  }, [resetTimer])
 
   const copy = useCallback((text: string) => {
-    // Track the newest attempt here too: the shared action only guards its failure sink, so a
-    // stale completion must not clear the newer attempt's success state.
-    const attempt = ++attemptRef.current
-    void action.copy(text).then((written) => {
-      if (attempt !== attemptRef.current) return
-      if (!written) {
-        setCopied(false)
-        return
-      }
-      setCopied(true)
+    void action.copy(text).then((outcome) => {
+      // A stale attempt must not touch render state: a newer attempt already owns it, so
+      // reacting here would clear the newer attempt's check mark.
+      if (outcome === 'stale') return
+      setCopied(outcome === 'copied')
       if (resetTimer.current) clearTimeout(resetTimer.current)
+      if (outcome !== 'copied') return
       resetTimer.current = setTimeout(() => {
         resetTimer.current = undefined
         setCopied(false)
