@@ -85,8 +85,9 @@ as if it had no clipboard at all - measured on this box against the installed bu
 `src/ui/insert-key.ts` resolves that convention once, and every surface that accepts keys uses it:
 `Shift+Insert` pastes (composer and terminal), and `Ctrl+Insert`/`Cmd+Insert` copies the document
 selection through the window-level listener in `src/main.tsx`. Paste from `Shift+Insert` in the
-composer appends to the draft, since only the native path knows the caret; the terminal inserts at
-the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
+composer appends to the draft, since only the native path knows the caret, and attaches the image
+instead when the clipboard holds one - a remapped desktop has no other way to paste a screenshot; the
+terminal inserts at the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
 terminal routing, both on Linux without a compositor.
 
 The wiring itself is proven end to end by a lane that runs the real application in demo mode on a
@@ -100,7 +101,13 @@ bun run smoke:workbench-keys
 It drags over a message, sends `Ctrl+Insert`, and asserts the clipboard helper received exactly that
 selection; it stages text for `Shift+Insert` and asserts the composer submitted it; and it re-asserts
 the native `Ctrl+C`/`Ctrl+V` round trip so the remapped shortcuts cannot quietly replace the normal
-ones. The lane is deliberately not part of `scripts/linux-compositor-smoke.sh`: those cases build a
+ones. Every paste assertion observes the **submitted message row**, not the draft: the Linux
+automation surface does not expose an input's value (`getAllText` and the composer element itself stay
+empty even after `fill` typed into it), and each paste key press waits for the app's own clipboard
+text read before Enter - pressing Enter first races that read and turns a slow paste into a phantom
+failure (measured: the paste lands in 75 ms on this box). The refusals are asserted the same way: a
+blurred composer and an image-only clipboard must leave the draft empty, which is only observable as
+the next Enter adding no message. The lane is deliberately not part of `scripts/linux-compositor-smoke.sh`: those cases build a
 purpose-made window from repository sources, while this one needs the installed application binary
 (override it with `HEDDLEWORK_APP_BINARY`).
 

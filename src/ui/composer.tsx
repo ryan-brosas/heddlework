@@ -110,16 +110,26 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     void controller.submit(value, { queue }).catch(notifyFailure(controller, 'Could not send the message'))
   }
 
+  /**
+   * Ingest a clipboard image, if the clipboard holds one, and report whether one was added. The image is
+   * attached to the composer the keystroke saw, and any text the runtime had already inserted is restored.
+   */
+  const insertPastedImage = async (editorTextBeforePaste: string): Promise<boolean> => {
+    const image = await readClipboardImage()
+    if (!image) return false
+    controller.addEditorImage(image)
+    const currentText = controller.getSnapshot().editorText
+    const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
+    if (restoredText !== currentText) controller.setEditorText(restoredText)
+    return true
+  }
+
+  /** Native `Ctrl+V`: the runtime inserts text at the caret itself, so only an image needs the app. */
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
     setPastingImage(true)
     try {
-      const image = await readClipboardImage()
-      if (!image) return
-      controller.addEditorImage(image)
-      const currentText = controller.getSnapshot().editorText
-      const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
-      if (restoredText !== currentText) controller.setEditorText(restoredText)
+      await insertPastedImage(editorTextBeforePaste)
     } finally {
       setPastingImage(false)
     }
@@ -127,15 +137,29 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
   /**
    * Paste for the compositor insert-key convention (`Shift+Insert`, which is what Omarchy's Hyprland
-   * bindings send for `Ctrl+V`). Text lands at the end of the draft, matching a paste with the caret
-   * at the end; the native `Ctrl+V` path still inserts at the caret.
+   * bindings send for `Ctrl+V`). The runtime never sees that keystroke as a paste, so this path owns
+   * the whole action: it takes an image when the clipboard holds one - otherwise a remapped desktop
+   * could not paste a screenshot at all - and otherwise appends the text, matching a paste with the
+   * caret at the end. The read is asynchronous, so the draft is only written while the same thread is
+   * still open.
    */
-  const pasteClipboardTextIntoComposer = async () => {
-    const text = await readClipboardText()
-    if (!text) return
-    const current = controller.getSnapshot().editorText
-    controller.setEditorText(current ? current + text : text)
-    keepComposerFocus()
+  const pasteClipboardIntoComposer = async () => {
+    if (pastingImage) return
+    setPastingImage(true)
+    try {
+      const draft = controller.getSnapshot().editorText
+      if (await insertPastedImage(draft)) {
+        keepComposerFocus()
+        return
+      }
+      const text = await readClipboardText()
+      if (!text) return
+      const current = controller.getSnapshot().editorText
+      controller.setEditorText(current ? current + text : text)
+      keepComposerFocus()
+    } finally {
+      setPastingImage(false)
+    }
   }
 
   const showQueueHint = () => {
@@ -195,7 +219,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       keepComposerFocus()
     }
     if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
-    if (resolveInsertKeyCommand(event) === 'paste') void pasteClipboardTextIntoComposer()
+    if (resolveInsertKeyCommand(event) === 'paste') void pasteClipboardIntoComposer()
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       send(state.editorText, true)
