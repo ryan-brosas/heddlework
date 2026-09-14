@@ -89,6 +89,21 @@ composer appends to the draft, since only the native path knows the caret; the t
 the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
 terminal routing, both on Linux without a compositor.
 
+The wiring itself is proven end to end by a lane that runs the real application in demo mode on a
+private Xvfb display, with `wl-copy`/`wl-paste` stubbed in a temporary `PATH` so a run can neither
+depend on nor disturb the operator's clipboard:
+
+```bash
+bun run smoke:workbench-keys
+```
+
+It drags over a message, sends `Ctrl+Insert`, and asserts the clipboard helper received exactly that
+selection; it stages text for `Shift+Insert` and asserts the composer submitted it; and it re-asserts
+the native `Ctrl+C`/`Ctrl+V` round trip so the remapped shortcuts cannot quietly replace the normal
+ones. The lane is deliberately not part of `scripts/linux-compositor-smoke.sh`: those cases build a
+purpose-made window from repository sources, while this one needs the installed application binary
+(override it with `HEDDLEWORK_APP_BINARY`).
+
 Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
 key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
 the selection is correct (measured: the selection is present, the clipboard is unchanged). Drive the real
