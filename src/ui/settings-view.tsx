@@ -1,6 +1,6 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -27,7 +27,7 @@ export function SettingsView({
   theme: ThemeSnapshot
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
-  terminals?: TerminalSessionService | undefined
+  terminals?: TerminalService | undefined
   browsers?: BrowserSessionService | undefined
   onClose(): void
 }) {
@@ -133,7 +133,7 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
   )
 }
 
-function TerminalSettings({ service }: { service: TerminalSessionService }) {
+function TerminalSettings({ service }: { service: TerminalService }) {
   const appearance = useSyncExternalStore(service.subscribe, service.getSnapshot).appearance
   return (
     <SettingsSection title="Terminal" description="Native GPUI text shaping and renderer controls. Font changes apply to every live terminal without restarting its PTY.">

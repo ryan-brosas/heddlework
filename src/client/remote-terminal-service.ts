@@ -2,13 +2,13 @@ import type { WorkspaceClient } from '../web/client.ts'
 import { MAX_TERMINAL_WRITE_CHARS, type RemoteTerminalFrame, type RemoteTerminalSnapshot } from '../protocol/terminal.ts'
 import { DEFAULT_REMOTE_TERMINAL_APPEARANCE } from '../terminal/appearance-defaults.ts'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalServiceSnapshot, TerminalSessionId, TerminalSpawnRequest } from '../terminal/types.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 
 const FG = { kind: 'default-fg' } as const
 const BG = { kind: 'default-bg' } as const
 const EMPTY_REMOTE: RemoteTerminalSnapshot = { sessions: [] }
 
-export class RemoteTerminalService {
+export class RemoteTerminalService implements TerminalService {
   readonly #client: WorkspaceClient
   readonly #listeners = new Set<() => void>()
   readonly #stateListeners = new Set<() => void>()
@@ -119,14 +119,4 @@ export class RemoteTerminalService {
     for (const listener of this.#listeners) listener()
   }
 }
-/**
- * Compile-time parity guard. The cast below is unchecked (private fields make the two classes
- * nominally incompatible), so a member the UI calls but the web companion lacks would only fail at
- * runtime in the browser. This resolves to `never` when the surface drifts, and the assignment
- * fails `typecheck`/`typecheck:web` instead.
- */
-export type RemoteTerminalSurfaceParity = RemoteTerminalService extends Pick<TerminalSessionService, keyof TerminalSessionService> ? true : never
-export const remoteTerminalSurfaceParity: RemoteTerminalSurfaceParity = true
-
-export function asTerminalSessionService(remote: RemoteTerminalService): TerminalSessionService { return remote as unknown as TerminalSessionService }
 function gridFromFrame(frame: RemoteTerminalFrame): TerminalGridSnapshot { const viewport = Array.from({ length: frame.rows }, (_, row) => { const text = frame.lines[row] ?? ''; const characters = Array.from(text).slice(0, frame.cols); const cells = Array.from({ length: frame.cols }, (_, column) => ({ ch: characters[column] ?? ' ', fg: FG, bg: BG, attrs: 0 })); return { text, cells } }); return { cols: frame.cols, rows: frame.rows, cursorX: frame.cursorX, cursorY: frame.cursorY, cursorVisible: frame.cursorVisible, applicationCursor: frame.applicationCursor, bracketedPaste: frame.bracketedPaste, title: frame.title, viewport, scrollback: 0, scrollOffset: 0 } }

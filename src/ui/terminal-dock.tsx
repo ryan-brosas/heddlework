@@ -1,6 +1,6 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import { useCallback, useEffect, useState } from 'react'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
 import { TERMINAL_DOCK_HEADER, TERMINAL_DOCK_RESIZE } from './terminal-metrics.ts'
@@ -22,7 +22,7 @@ export function TerminalDock({
   onToggleFullscreen,
   onClose,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   open: boolean
   fullscreen: boolean
   fullscreenProgress: number

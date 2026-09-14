@@ -9,7 +9,7 @@ import { colors } from '../ui/theme.ts'
 import { defaultThemeManager } from '../ui/theme-manager.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../ui/tool-presenters.ts'
 import { workspaceClient } from './store.ts'
-import { RemoteTerminalService, asTerminalSessionService } from '../client/remote-terminal-service.ts'
+import { RemoteTerminalService } from '../client/remote-terminal-service.ts'
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
@@ -21,7 +21,6 @@ export function WebWorkbench() {
   const remote = useMemo(() => new RemoteWorkbenchController(client), [client])
   const controller = useMemo(() => asWorkbenchController(remote), [remote])
   const remoteTerminals = useMemo(() => new RemoteTerminalService(client), [client])
-  const terminals = useMemo(() => asTerminalSessionService(remoteTerminals), [remoteTerminals])
   const registry = useMemo(() => { const value = new WorkbenchUiRegistry(); value.register(createCoreUiExtension(controller)); return value }, [controller])
   useEffect(() => { defaultThemeManager.start(); return () => { void remote.dispose(); void remoteTerminals.dispose(); registry.dispose() } }, [registry, remote, remoteTerminals])
   useEffect(() => {
@@ -29,7 +28,7 @@ export function WebWorkbench() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors.background)
   }, [view.state])
   if (view.status !== 'open' || !view.state) return <ConnectionStatus status={view.status} error={view.lastError} />
-  return <GpuixContext.Provider value={{ renderer: domRenderer }}><WorkbenchApp controller={controller} presenters={presenters} ui={registry} themeManager={defaultThemeManager} terminals={terminals} onQuit={() => client.disconnect()} /></GpuixContext.Provider>
+  return <GpuixContext.Provider value={{ renderer: domRenderer }}><WorkbenchApp controller={controller} presenters={presenters} ui={registry} themeManager={defaultThemeManager} terminals={remoteTerminals} onQuit={() => client.disconnect()} /></GpuixContext.Provider>
 }
 
 function ConnectionStatus({ status, error }: { status: string; error?: string | undefined }) {

@@ -2,7 +2,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef }
 import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
@@ -25,7 +25,7 @@ export const TerminalView = memo(function TerminalView({
   appearance,
   focusSerial = 1,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   sessionId: TerminalSessionId | undefined
   placement: TerminalPlacement
   width: number
@@ -178,7 +178,7 @@ const NativeTerminalGrid = memo(function NativeTerminalGrid({
   theme,
   rendering,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   sessionId: TerminalSessionId
   snapshot: TerminalGridSnapshot | undefined
   cols: number

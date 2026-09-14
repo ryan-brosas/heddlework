@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useWindowMetrics } from './window-metrics.tsx'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { WorkbenchSurfaceProps } from './extensions.ts'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { TerminalToolbar } from './terminal-chrome.tsx'
@@ -18,7 +18,7 @@ export function TerminalPanel({
   onToggleFullscreen,
   onNewSurface,
   onClose,
-}: WorkbenchSurfaceProps & { service: TerminalSessionService }) {
+}: WorkbenchSurfaceProps & { service: TerminalService }) {
   const projectionSuspended = useTerminalProjectionSuspended()
   const snapshot = useTerminalServiceSnapshot(service, projectionSuspended)
   const windowSize = useWindowMetrics().size

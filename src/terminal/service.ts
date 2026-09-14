@@ -363,4 +363,7 @@ function terminalAppearancesEqual(left: TerminalAppearance, right: TerminalAppea
     && left.muteEmojiColors === right.muteEmojiColors
 }
 
+/** Public terminal surface shared by the native service and the web companion. */
+export type TerminalService = Pick<TerminalSessionService, keyof TerminalSessionService>
+
 export { MemoryTerminalBackend, BunPtyBackend }

@@ -25,7 +25,7 @@ import { WindowMetricsProvider, windowInsetsPollInterval, windowSizePollInterval
 import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
@@ -57,7 +57,7 @@ export function WorkbenchApp({
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
-  terminals?: TerminalSessionService
+  terminals?: TerminalService
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void
