@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, systemTargetCommand } from '../src/ui/open-external.ts'
+import { captureProcessOutput, directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, systemTargetCommand } from '../src/ui/open-external.ts'
 
 describe('external targets', () => {
   it('passes Windows URLs as one argument without invoking a command shell', () => {
@@ -7,6 +7,19 @@ describe('external targets', () => {
     expect(systemTargetCommand(target, 'win32')).toEqual({ command: 'explorer.exe', args: [target] })
     expect(systemTargetCommand(target, 'darwin')).toEqual({ command: '/usr/bin/open', args: [target] })
   })
+})
+
+describe('bounded CLI picker fallback', () => {
+  it('bounds a picker that never settles instead of leaving Open project pending', async () => {
+    const started = performance.now()
+    const output = await captureProcessOutput('/bin/sh', ['-c', 'sleep 30'], 200)
+    expect(output).toBeUndefined()
+    expect(performance.now() - started).toBeLessThan(2_000)
+  }, 6_000)
+
+  it('still returns the output of a picker that finishes inside the bound', async () => {
+    expect(await captureProcessOutput('/bin/sh', ['-c', 'printf /tmp/from-picker'], 5_000)).toBe('/tmp/from-picker')
+  }, 8_000)
 })
 
 describe('workspace directory picker', () => {

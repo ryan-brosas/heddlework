@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-import { requestPortalDirectory, type PortalPickResult } from './portal-file-chooser.ts'
+import { requestPortalDirectory, SESSION_TIMEOUT_MS, type PortalPickResult } from './portal-file-chooser.ts'
 
 export interface DirectoryPickerCommand {
   command: string
@@ -105,23 +105,46 @@ function openSystemTarget(target: string): void {
   }
 }
 
-function captureProcessOutput(command: string, args: string[]): Promise<string | undefined> {
+/**
+ * Run one CLI picker and report its output. The bound is injectable so the timeout itself is
+ * regression-tested instead of waiting out the real session budget.
+ *
+ * kdialog and zenity are only reached when the portal is unavailable, and a stale or absent KDE/Qt
+ * D-Bus service can leave them blocked at startup. Unbounded, that leaves the "Open project" promise
+ * pending forever, with the sidebar waiting on it.
+ */
+export function captureProcessOutput(
+  command: string,
+  args: string[],
+  timeoutMs: number = SESSION_TIMEOUT_MS,
+): Promise<string | undefined> {
   return new Promise((resolveOutput) => {
     let settled = false
+    let child: ChildProcess | undefined
+    const timer = setTimeout(() => {
+      // Kill first: a picker blocked on its own startup must not hold the promise open.
+      try { child?.kill('SIGTERM') } catch { /* already gone */ }
+      finish()
+    }, timeoutMs)
     const finish = (value?: string) => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       resolveOutput(value)
     }
-    let child
     try {
       child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
     } catch {
       finish()
       return
     }
+    const stdout = child.stdout
+    if (!stdout) {
+      finish()
+      return
+    }
     const chunks: Buffer[] = []
-    child.stdout.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)))
+    stdout.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)))
     child.on('error', () => finish())
     child.on('close', (code) => finish(code === 0 ? Buffer.concat(chunks).toString('utf8') : undefined))
   })
