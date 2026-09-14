@@ -3,6 +3,15 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { connectStdio, type App } from '@gpuix/react/automation'
 import type { NativeWindowState } from '../src/ui/window-controls.ts'
+import {
+  countOccurrences,
+  parseTerminalSmokeEvidence,
+  TERMINAL_COPY_SOURCE,
+  TERMINAL_EVIDENCE_TEST_ID,
+  TERMINAL_INTERRUPT_MARKER,
+  TERMINAL_PASTE_ECHO,
+  type TerminalSmokeEvidence,
+} from './linux-terminal-smoke-contract.ts'
 
 type Backend = 'wayland' | 'x11'
 type Compositor = 'mutter-wayland' | 'sway-wayland' | 'weston-wayland' | 'mutter-x11'
@@ -71,6 +80,40 @@ try {
   assert(initial.canMinimize, 'compositor reported canMinimize=false')
   assert(initial.canMaximize, 'compositor reported canMaximize=false')
   pass('initial-window-state', JSON.stringify(initial))
+
+  // Terminal shortcut lane. The fixture hosts the production `TerminalView` over a real PTY, so
+  // these checks prove the shipped Linux shortcut contract end to end rather than re-deriving it:
+  // Ctrl+Shift+C reaches the real OS clipboard and writes zero PTY bytes, Ctrl+V reads that
+  // clipboard back into the PTY, and plain Ctrl+C stays an interrupt. A regression in the resolver,
+  // the clipboard tooling, or the copy-failure boundary fails the compositor lane here.
+  const terminalInput = app.getByTestId('terminal-input-bottom')
+  await terminalInput.waitFor()
+  const sessionReady = await waitForTerminalEvidence(app, (value) => value.text.includes(TERMINAL_COPY_SOURCE) ? value : undefined)
+  assert(sessionReady.status === 'running', `terminal PTY was ${sessionReady.status} before the shortcut checks`)
+  assert(sessionReady.copyCalls === 0, 'a terminal copy happened before any shortcut was pressed')
+  pass('terminal-session-ready', `real PTY on ${options.compositor} printed ${TERMINAL_COPY_SOURCE} into a ${options.backend} terminal hosted by the production TerminalView`)
+
+  await terminalInput.click()
+  await terminalInput.press('ctrl-shift-c')
+  const copied = await waitForTerminalEvidence(app, (value) => value.copyCalls > sessionReady.copyCalls ? value : undefined)
+  assert(copied.wroteClipboard, 'Ctrl+Shift+C did not reach the operating-system clipboard (wl-copy/xclip reported failure)')
+  assert(copied.copiedMarker, 'Ctrl+Shift+C copied text that does not contain the terminal marker')
+  assert(countOccurrences(copied.text, TERMINAL_PASTE_ECHO) === 0, 'Ctrl+Shift+C wrote bytes to the PTY; copy must send zero input')
+  assert(copied.status === 'running', `Ctrl+Shift+C changed the terminal status to ${copied.status}`)
+  assert((await app.getByTestId('terminal-copy-failure-bottom').count()) === 0, 'Ctrl+Shift+C reported copy-failure feedback')
+  pass('terminal-copy-shortcut', `Ctrl+Shift+C produced ${copied.copyCalls} clipboard payload(s) accepted by the OS clipboard, with zero PTY bytes and no failure feedback`)
+
+  await terminalInput.press('ctrl-v')
+  const pasted = await waitForTerminalEvidence(app, (value) => value.text.includes(TERMINAL_PASTE_ECHO + TERMINAL_COPY_SOURCE) ? value : undefined)
+  assert(pasted.copyCalls === copied.copyCalls, 'Ctrl+V was resolved as a copy instead of a paste')
+  pass('terminal-paste-shortcut', `Ctrl+V read the OS clipboard and the PTY echoed ${TERMINAL_PASTE_ECHO}${TERMINAL_COPY_SOURCE}`)
+
+  await terminalInput.press('ctrl-c')
+  const interrupted = await waitForTerminalEvidence(app, (value) => value.status === 'exited' ? value : undefined)
+  assert(interrupted.text.includes(TERMINAL_INTERRUPT_MARKER), 'plain Ctrl+C did not reach the PTY as SIGINT')
+  assert(interrupted.copyCalls === copied.copyCalls, 'plain Ctrl+C was resolved as a copy')
+  assert(interrupted.exitCode === 0, `the interrupt trap exited with code ${interrupted.exitCode}`)
+  pass('terminal-interrupt-shortcut', `plain Ctrl+C delivered one ETX byte, the PTY child trapped ${TERMINAL_INTERRUPT_MARKER}, and the session exited 0`)
 
   let x11Window = ''
   let xdgVersion: number | undefined
@@ -331,6 +374,13 @@ async function waitForAutomationReady(app: App, testId: string, timeoutMs: numbe
 
 function isNativeBoundsTimeout(error: unknown): boolean {
   return error instanceof Error && /Timed out after 2 seconds waiting for the automation bounds query/u.test(error.message)
+}
+
+async function waitForTerminalEvidence(
+  app: App,
+  accept: (evidence: TerminalSmokeEvidence) => TerminalSmokeEvidence | undefined,
+): Promise<TerminalSmokeEvidence> {
+  return poll(async () => accept(parseTerminalSmokeEvidence(await app.getByTestId(TERMINAL_EVIDENCE_TEST_ID).textContent())), 10_000, 'terminal evidence transition')
 }
 
 async function waitForState(app: App, predicate: (state: NativeWindowState) => boolean): Promise<NativeWindowState> {

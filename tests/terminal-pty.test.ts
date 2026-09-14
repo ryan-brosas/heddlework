@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { bunTerminalAvailable, BunPtyBackend, TerminalOutputBuffer } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
+import { dispatchTerminalKey, type TerminalKeyEffects } from '../src/terminal/keys.ts'
+import { TERMINAL_COPY_SOURCE, TERMINAL_INTERRUPT_MARKER, TERMINAL_PASTE_ECHO, TERMINAL_SMOKE_SHELL } from '../scripts/linux-terminal-smoke-contract.ts'
 
 const describePty = bunTerminalAvailable() ? describe : describe.skip
 const encode = (value: string) => new TextEncoder().encode(value)
@@ -120,4 +122,55 @@ describePty('Bun.Terminal PTY', () => {
       pty.kill()
     }
   }, 8_000)
+
+  itUnix('drives copy, paste, and interrupt through the production dispatch over a real PTY', async () => {
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend: new BunPtyBackend() })
+    const id = await service.spawn({
+      cols: 100,
+      rows: 32,
+      shell: '/bin/sh',
+      args: ['-c', TERMINAL_SMOKE_SHELL],
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, TERM: 'xterm-256color' },
+    })
+    const viewport = () => service.grid(id)?.viewport.map((row) => row.text).join('\n') ?? ''
+    const sessionStatus = () => service.getStateSnapshot().sessions.find((session) => session.id === id)?.status
+    const waitFor = async (description: string, predicate: () => boolean): Promise<void> => {
+      const started = Date.now()
+      while (Date.now() - started < 5_000) {
+        if (predicate()) return
+        await Bun.sleep(20)
+      }
+      throw new Error(`timed out waiting for ${description}; viewport:\n${viewport()}`)
+    }
+    try {
+      await waitFor('the PTY copy source', () => viewport().includes(TERMINAL_COPY_SOURCE))
+      let copied = ''
+      const effects = (overrides: Partial<TerminalKeyEffects> = {}): TerminalKeyEffects => ({
+        platform: 'linux',
+        grid: service.grid(id),
+        write: (data) => service.write(id, data),
+        copy: (text) => { copied = text },
+        readPaste: async () => undefined,
+        ...overrides,
+      })
+
+      // Ctrl+Shift+C copies the visible viewport and must send zero PTY bytes.
+      dispatchTerminalKey({ key: 'c', modifiers: { ctrl: true, shift: true } }, effects())
+      expect(copied).toContain(TERMINAL_COPY_SOURCE)
+      expect(viewport()).not.toContain(TERMINAL_PASTE_ECHO)
+
+      // Ctrl+V returns the clipboard text to the PTY, and the child echoes the matching line back,
+      // so this asserts the bytes that actually reached stdin rather than that a shortcut fired.
+      dispatchTerminalKey({ key: 'v', modifiers: { ctrl: true } }, effects({ readPaste: async () => copied }))
+      await waitFor('the paste echo', () => viewport().includes(TERMINAL_PASTE_ECHO + TERMINAL_COPY_SOURCE))
+
+      // Plain Ctrl+C stays an interrupt: the child traps SIGINT and exits cleanly.
+      dispatchTerminalKey({ key: 'c', modifiers: { ctrl: true } }, effects())
+      await waitFor('the interrupt marker', () => viewport().includes(TERMINAL_INTERRUPT_MARKER))
+      await waitFor('the session exit', () => sessionStatus()?.kind === 'exited')
+      expect(sessionStatus()).toEqual({ kind: 'exited', exitCode: 0 })
+    } finally {
+      await service.dispose()
+    }
+  }, 15_000)
 })

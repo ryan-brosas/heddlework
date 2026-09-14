@@ -187,6 +187,16 @@ harness is watched (`#attachBackgroundTracking`) and `state.sessionActivity[file
 sidebar's running badge for non-open threads (`src/ui/sidebar.tsx`), with crashed background
 harnesses dropped from the pool so the next open respawns them.
 
+## Clipboard write stall on Linux (2026-09-14, fixed)
+
+Terminal copy did nothing on Wayland: `wl-copy`/`xclip` fork a selection owner that outlives the command
+and inherits its stdio, so the promise in `src/ui/clipboard-media.ts` waited for a `close` event that
+never fires. Measured on this box: `wl-copy` exited 0 in 33 ms while `copyTextToClipboard` was still
+pending after 4 s. The helper now completes on the command's own exit after a bounded stdout drain
+(`runClipboardProcess`), and a real Wayland round trip through `wl-paste` returns the written text.
+Deterministic coverage: `tests/clipboard-media.test.ts` (daemonized descendant holding stdio) and the
+real-PTY shortcut contract in `tests/terminal-pty.test.ts`.
+
 ## Open items
 
 - `.github/workflows/check.yml` runs the Linux job `test` on `ubuntu-24.04` with
@@ -218,3 +228,9 @@ harnesses dropped from the pool so the next open respawns them.
 - Native-renderer suites are a structural Linux skip, not a failure: the pinned gpuix test renderer is built
   for macOS and Windows only, so ~97 `bun test` skips per run are expected. `tests/helpers/native-renderer.ts`
   owns the gate and prints the reason once per run; do not read those skips as coverage.
+- Terminal copy/paste/interrupt is verified twice, from one child command
+  (`scripts/linux-terminal-smoke-contract.ts`): headlessly over a real `Bun.Terminal` PTY in
+  `tests/terminal-pty.test.ts` (runs in `bun run check` on Linux, no compositor) and on real
+  compositors in `scripts/linux-window-smoke.ts` through the production `TerminalView`. Neither lane
+  covers Hyprland: the `hyprctl -j clients` probe still verifies window registration only, so Hyprland
+  acceptance of clipboard tooling, decorations, and fractional scaling stays a manual step.

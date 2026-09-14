@@ -23,6 +23,29 @@ A failed copy reports one generic, local message (`terminal-copy-failure-<placem
 
 Clipboard writers are injectable (`TerminalView`'s `copy` prop) so the production dispatch seam and failure behavior are regression-tested without a native GPUIX renderer.
 
+On Linux the clipboard helpers (`wl-copy`/`xclip`) fork a selection owner that outlives the command and
+inherits its stdio, so Node's `close` event never fires. `runClipboardProcess` therefore completes on
+the helper's own exit after a bounded stdout drain; waiting for `close` left every clipboard write
+pending forever, which made terminal copy silently do nothing on both Wayland and X11.
+
+### Compositor verification
+
+`.github/workflows/linux.yml` (manual `workflow_dispatch`) runs `scripts/linux-window-smoke.ts` against real
+compositors. That driver now also hosts the production `TerminalView` over a real PTY
+(`scripts/smoke-linux-window.tsx`; markers and evidence schema in `scripts/linux-terminal-smoke-contract.ts`)
+and asserts this section's contract end to end:
+
+- `Ctrl+Shift+C` reaches the operating-system clipboard (`wl-copy`/`xclip`) and writes **zero** PTY bytes, with
+  no `terminal-copy-failure-<placement>` feedback;
+- `Ctrl+V` reads that clipboard through the production `pasteClipboardText` path, and the PTY child echoes the
+  copied marker line back;
+- plain `Ctrl+C` arrives as exactly one ETX byte, the child's `SIGINT` trap runs, and the session exits `0`.
+
+The same child command and the same production `dispatchTerminalKey` seam are exercised headlessly in
+`tests/terminal-pty.test.ts`, so a shortcut or clipboard-payload regression fails `bun run check` on Linux
+without a compositor. The compositor lane adds only the windowing and OS-clipboard layers on top.
+
+
 ## Runtime
 
 - Default backend: `Bun.Terminal` through `BunPtyBackend`.
