@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import { useRef } from 'react'
 import type { StyleDesc } from '@gpuix/react'
 import type { TimelineItem } from '../workbench/timeline.ts'
 import type { ToolRun } from '../workbench/state.ts'

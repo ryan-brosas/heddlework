@@ -1,8 +1,7 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React from 'react'
 import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
@@ -12,7 +11,7 @@ import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
-async function exportTranscript(controller: WorkbenchController): Promise<void> {
+async function exportTranscript(controller: WorkbenchService): Promise<void> {
   const path = await controller.exportSession()
   if (path) openPath(path)
 }
@@ -27,7 +26,7 @@ export function ChatHeader({
   onToggleTerminal,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   diffOpen: boolean
   terminalOpen?: boolean
   leftSidebarProgress: number
@@ -75,7 +74,7 @@ export function ChatHeader({
   )
 }
 
-function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
+function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchService; compact: boolean }) {
   const dropdown = useDropdownState()
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },

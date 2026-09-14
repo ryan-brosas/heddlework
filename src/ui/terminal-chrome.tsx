@@ -1,6 +1,5 @@
-import React from 'react'
 import type { TerminalSessionId, TerminalSessionInfo } from '../terminal/types.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import { Icon } from './icons.tsx'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
@@ -69,7 +68,7 @@ export function TerminalToolbar({
   onSelect,
   onNew,
 }: {
-  service: TerminalSessionService
+  service: TerminalService
   sessions: readonly TerminalSessionInfo[]
   activeId: TerminalSessionId | undefined
   onSelect(id: TerminalSessionId): void
@@ -81,7 +80,7 @@ export function TerminalToolbar({
         sessions={sessions}
         activeId={activeId}
         onSelect={onSelect}
-        onClose={(id) => { void service.close(id) }}
+        onClose={(id) => { service.dispatch(service.close(id)) }}
       />
       <IconButton icon="plus" label="New terminal" testId="terminal-new" tabIndex={-1} onClick={onNew} />
     </div>

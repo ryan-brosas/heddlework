@@ -1,7 +1,7 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
@@ -25,7 +25,7 @@ import { WindowMetricsProvider, windowInsetsPollInterval, windowSizePollInterval
 import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
@@ -53,11 +53,11 @@ export function WorkbenchApp({
   themeManager = defaultThemeManager,
   onQuit,
 }: {
-  controller: WorkbenchController
+  controller: WorkbenchService
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
-  terminals?: TerminalSessionService
+  terminals?: TerminalService
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createRenderer, createRoot, flushSync, startFrameLoop } from '@gpuix/react'
 import { sameWindowState, type NativeWindowState } from '../src/ui/window-controls.ts'
 

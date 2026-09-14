@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FlowRuntime, type FlowRuntimeHost } from '../src/flows/runtime.ts'
 import { createInitialState, type WorkbenchState } from '../src/workbench/state.ts'
-import type { QueueInputDraft } from '../src/workbench/queue.ts'
+import { queueHasFlow, type QueueInputDraft } from '../src/workbench/queue.ts'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -21,7 +21,7 @@ class RuntimeHost implements FlowRuntimeHost {
 
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   getSnapshot(): WorkbenchState { return this.state }
-  hasQueuedFlow(runId: string): boolean { return this.state.queue.items.some((item) => item.flow?.runId === runId) }
+  hasQueuedFlow(runId: string): boolean { return queueHasFlow(this.state.queue.items, runId) }
   notify(_kind: 'info' | 'warning' | 'error', message: string): void { this.notifications.push(message) }
   enqueueQueueInputs(inputs: readonly QueueInputDraft[]): void {
     this.state = {
@@ -78,6 +78,24 @@ describe('FlowRuntime', () => {
 
     const restored = new FlowRuntime(new RuntimeHost(), { path, now: () => now, createId })
     expect(restored.getSnapshot().schedules[0]).toMatchObject({ id: schedule.id, title: 'Nightly audit', enabled: false })
+  })
+
+  it('captures background dispatch failures in the runtime snapshot', async () => {
+    const host = new RuntimeHost()
+    const runtime = new FlowRuntime(host, { path: false, now: () => 1_000, createId: (prefix) => `${prefix}-FAILURE` })
+    const schedule = runtime.createSchedule({
+      title: 'Failure boundary',
+      prompts: ['Keep the timer alive'],
+      mode: 'sequential',
+      workspacePath: host.state.workspacePath,
+      timing: { kind: 'once', at: 2_000 },
+    })
+    host.getSnapshot = () => { throw new Error('host snapshot unavailable') }
+
+    expect(runtime.runScheduleNow(schedule.id)).toBeDefined()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().lastError).toBe('host snapshot unavailable')
   })
 
   it('holds a due job durably until its workspace runtime is active', async () => {

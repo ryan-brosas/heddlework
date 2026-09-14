@@ -24,8 +24,6 @@ interface Props {
   onVisibleRange?(event: EventPayload): void
 }
 
-const TAIL_SLACK_PX = 24
-
 export function DomVirtualList({ elementId, setNode, children, style, alignment = 'top', followTail = false, estimatedItemHeight = 72, testId, itemCount, windowStart = 0, onScroll, onVisibleRange }: Props) {
   const scroller = useRef<HTMLDivElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
@@ -35,7 +33,6 @@ export function DomVirtualList({ elementId, setNode, children, style, alignment 
   const after = Math.max(0, total - rendered - before)
   const [beforePx, setBeforePx] = useState(before * estimatedItemHeight)
   const lastRange = useRef<[number, number] | undefined>(undefined)
-  const lastWindowStart = useRef(windowStart)
   const lastScrollTop = useRef(0)
   const pendingAnchor = useRef<{ key: string; top: number } | undefined>(undefined)
   const firstKeyRef = useRef<string | undefined>(undefined)
@@ -105,10 +102,7 @@ export function DomVirtualList({ elementId, setNode, children, style, alignment 
         const now = target.getBoundingClientRect().top - node.getBoundingClientRect().top
         node.scrollTop += now - anchor.top
       }
-    } else if (lastWindowStart.current !== windowStart && !followRef.current) {
-      node.scrollTop += (before - Math.max(0, Math.min(lastWindowStart.current, total - rendered))) * 0
     }
-    lastWindowStart.current = windowStart
     if (followRef.current) node.scrollTop = node.scrollHeight
     lastScrollTop.current = node.scrollTop
     report()

@@ -9,7 +9,7 @@ export class ThemeManager {
   constructor() { const mode = readMode(); this.#snapshot = { mode, resolved: mode === 'system' ? systemTheme() : mode }; applyResolvedTheme(this.#snapshot.resolved) }
   readonly subscribe = (listener: () => void): (() => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   readonly getSnapshot = (): ThemeSnapshot => this.#snapshot
-  setMode(mode: ThemeMode): void { const resolved = mode === 'system' ? systemTheme() : mode; if (mode === this.#snapshot.mode && resolved === this.#snapshot.resolved) return; this.#snapshot = { mode, resolved }; applyResolvedTheme(resolved); try { localStorage.setItem('heddlework.theme', mode) } catch {}; this.#emit() }
+  setMode(mode: ThemeMode): void { const resolved = mode === 'system' ? systemTheme() : mode; if (mode === this.#snapshot.mode && resolved === this.#snapshot.resolved) return; this.#snapshot = { mode, resolved }; applyResolvedTheme(resolved); try { localStorage.setItem('heddlework.theme', mode) } catch {} this.#emit() }
   start(): void { if (this.#media || typeof matchMedia !== 'function') return; this.#media = matchMedia('(prefers-color-scheme: light)'); this.#media.addEventListener('change', this.refreshSystemTheme) }
   refreshSystemTheme = (): void => { if (this.#snapshot.mode !== 'system') return; const resolved = systemTheme(); if (resolved === this.#snapshot.resolved) return; this.#snapshot = { mode: 'system', resolved }; applyResolvedTheme(resolved); this.#emit() }
   dispose(): void { this.#media?.removeEventListener('change', this.refreshSystemTheme); this.#media = undefined; this.#listeners.clear() }

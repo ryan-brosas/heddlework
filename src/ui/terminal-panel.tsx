@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useWindowMetrics } from './window-metrics.tsx'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { WorkbenchSurfaceProps } from './extensions.ts'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { TerminalToolbar } from './terminal-chrome.tsx'
@@ -18,7 +18,7 @@ export function TerminalPanel({
   onToggleFullscreen,
   onNewSurface,
   onClose,
-}: WorkbenchSurfaceProps & { service: TerminalSessionService }) {
+}: WorkbenchSurfaceProps & { service: TerminalService }) {
   const projectionSuspended = useTerminalProjectionSuspended()
   const snapshot = useTerminalServiceSnapshot(service, projectionSuspended)
   const windowSize = useWindowMetrics().size
@@ -30,14 +30,14 @@ export function TerminalPanel({
   }, [activeId, service])
 
   useEffect(() => {
-    void service.ensureSession('right')
+    service.dispatch(service.ensureSession('right'))
   }, [service])
 
   const onNew = useCallback(() => {
-    void service.spawn().then((id) => {
+    service.dispatch(service.spawn().then((id) => {
       service.select('right', id)
       grabFocus(id)
-    })
+    }))
   }, [grabFocus, service])
 
   const bodyHeight = Math.max(1, windowSize.height - 52 - 36)

@@ -24,7 +24,7 @@ describe('sidebar project scope', () => {
     expect(sidebar).toContain('onChange={setProjectScope}')
     // Choosing a session changes state.workspacePath. The only thing allowed to write the
     // filter is a missing option, so an active session can never move it.
-    const scopeWrites = sidebar.slice(sidebar.indexOf('setProjectScope'), sidebar.indexOf('const matchingSessions'))
+    const scopeWrites = sidebar.slice(sidebar.indexOf('setProjectScope'), sidebar.indexOf('const visibleSessions'))
     expect(scopeWrites).toContain('resolveProjectScope')
     expect(scopeWrites).not.toContain('workspacePath')
     expect(sidebar).not.toContain('useState(() => resolve(state.workspacePath))')

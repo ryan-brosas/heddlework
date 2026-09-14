@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import { useEffect, useMemo, useState } from 'react'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { queueItemsInDeliveryOrder, queueSize, queuedInputControl, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
@@ -30,7 +30,7 @@ export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
   return queueSize(queue) > 0 ? COLLAPSED_HEIGHT + 8 : 0
 }
 
-export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
   const { compact } = useResponsiveLayout()
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)

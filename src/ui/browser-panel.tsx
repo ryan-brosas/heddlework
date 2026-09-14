@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import type { BrowserSessionService } from '../browser/service.ts'
 import type { BrowserProfile, BrowserTab } from '../browser/types.ts'

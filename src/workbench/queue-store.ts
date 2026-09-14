@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { createQueueState, restoreQueueState, serializeQueueState, type WorkbenchQueueState } from './queue.ts'
+import { restoreQueueState, serializeQueueState, type WorkbenchQueueState } from './queue.ts'
 
 export interface QueueStoreService {
   load(workspacePath: string): WorkbenchQueueState
@@ -15,7 +15,7 @@ interface QueueStoreDocument {
 
 export class FileQueueStore implements QueueStoreService {
   readonly #path: string | false
-  #document: QueueStoreDocument
+  readonly #document: QueueStoreDocument
 
   constructor(path: string | false = queueStorePath()) {
     this.#path = path
@@ -56,9 +56,4 @@ function readDocument(path: string | false): QueueStoreDocument {
   } catch {
     return { version: 1, workspaces: {} }
   }
-}
-
-export const memoryQueueStore: QueueStoreService = {
-  load: () => createQueueState(),
-  save: () => undefined,
 }

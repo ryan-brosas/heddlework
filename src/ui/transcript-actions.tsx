@@ -1,4 +1,3 @@
-import React from 'react'
 import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
 

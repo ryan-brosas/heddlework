@@ -28,6 +28,35 @@ class PushTerminalBackend implements TerminalBackend {
   }
 }
 
+class FailingTerminalBackend implements TerminalBackend {
+  async spawn(_request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
+    throw new Error('Bun.Terminal is not available in this runtime')
+  }
+}
+
+describe('Terminal failure ownership', () => {
+  it('publishes a refused spawn instead of leaking an unhandled rejection', async () => {
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend: new FailingTerminalBackend(), appearancePath: false })
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      service.dispatch(service.spawn({ name: 'Unavailable' }))
+      await Bun.sleep(20)
+      expect(service.getStateSnapshot().lastError).toBe('Bun.Terminal is not available in this runtime')
+      expect(rejections).toEqual([])
+
+      service.dispatch(service.ensureSession('right'))
+      await Bun.sleep(20)
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+      await service.dispose()
+    }
+  })
+})
+
+
 describe('TerminalSessionService', () => {
   it('spawns, writes, resizes, and keeps sessions after a viewer closes', async () => {
     const service = new TerminalSessionService({

@@ -1,11 +1,10 @@
-import React from 'react'
-import { describe, expect, it } from 'bun:test'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { expect, it } from 'bun:test'
+import { createTestRoot } from '@gpuix/react/testing'
 import { connectTest } from '@gpuix/react/automation'
 import { LinuxResizeHandles, LinuxWindowChrome } from '../src/ui/linux-window-chrome.tsx'
 import type { NativeWindowState } from '../src/ui/window-controls.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const state: NativeWindowState = { decorations: 'client', maximized: false, fullscreen: false, resizable: true, canMinimize: true, canMaximize: true }
 
 describeNative('Linux titlebar presentation', () => {

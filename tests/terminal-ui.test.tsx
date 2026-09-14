@@ -1,7 +1,6 @@
-import React from 'react'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
@@ -10,8 +9,8 @@ import { TerminalView } from '../src/ui/terminal-view.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const services: TerminalSessionService[] = []
 const controllers: WorkbenchController[] = []
 

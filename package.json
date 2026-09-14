@@ -36,6 +36,7 @@
     "test:web": "bun test tests/protocol-frames.test.ts tests/protocol-commands.test.ts tests/host-command-replay.test.ts tests/web-sw-policy.test.ts tests/web-host-platform.test.ts tests/web-client-replay.test.ts tests/remote-terminal-service.test.ts tests/host-static-root.test.ts && bun scripts/web-dom-e2e.ts",
     "test:browser": "bun scripts/web-browser-probe.ts",
     "check": "bun run typecheck && bun run typecheck:web && bun run test && bun run test:performance && bun scripts/web-dom-e2e.ts",
+    "verify": "bun run build:web && bun run test:browser && bun run check && bun run build",
     "build:web": "bun scripts/build-web.ts",
     "dev:web": "bun scripts/dev-web.ts",
     "build": "bun scripts/build.ts",

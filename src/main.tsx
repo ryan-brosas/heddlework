@@ -1,4 +1,3 @@
-import React from 'react'
 import { GpuixRenderer, render, resetRender } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
@@ -128,7 +127,7 @@ function shutdown(initialError?: unknown): void {
       failures.push(error)
     }
 
-    let nativeStopped = false
+    let nativeStopped: boolean
     try {
       resetRender()
       nativeStopped = true

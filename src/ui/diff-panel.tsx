@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
@@ -14,13 +14,12 @@ export const DiffPanel = React.memo(function DiffPanel({
   fullscreenProgress,
   fullscreenLocked = false,
   panelWidth,
-  appearance,
   onClose,
   onNewSurface,
   onToggleFullscreen,
 }: {
   diff: WorkspaceDiff
-  controller: WorkbenchController
+  controller: WorkbenchService
   fullscreen: boolean
   fullscreenProgress: number
   fullscreenLocked?: boolean
@@ -110,6 +109,8 @@ export const DiffPanel = React.memo(function DiffPanel({
   && previous.fullscreenProgress === next.fullscreenProgress
   && previous.fullscreenLocked === next.fullscreenLocked
   && previous.panelWidth === next.panelWidth
+  // The body paints from the module-level palette that applyResolvedTheme mutates in place,
+  // so a light/dark switch must break memo here even though the prop is never read directly.
   && previous.appearance === next.appearance)
 
 const DIFF_HUNK_HEIGHT = 28

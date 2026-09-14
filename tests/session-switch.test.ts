@@ -71,9 +71,6 @@ class SwitchingTransport implements AgentTransport {
   stopCalls = 0
   streaming = false
   #notifyDuringBootstrap = false
-  #switchBarrier: Promise<void> | undefined
-  #newSessionBarrier: Promise<void> | undefined
-  #switchFailure: string | undefined
   #startBarrier: Promise<void> | undefined
   #startFailure: string | undefined
   #getStateBarrier: Promise<void> | undefined
@@ -114,39 +111,11 @@ class SwitchingTransport implements AgentTransport {
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
   onStatus(listener: (status: TransportStatus) => void): () => void { this.statuses.add(listener); return () => this.statuses.delete(listener) }
 
-  holdNextSwitch(): () => void {
-    let release = () => {}
-    this.#switchBarrier = new Promise<void>((resolve) => { release = resolve })
-    return release
-  }
-
-  holdNextNewSession(): () => void {
-    let release = () => {}
-    this.#newSessionBarrier = new Promise<void>((resolve) => { release = resolve })
-    return release
-  }
-
-  failNextSwitch(message: string): void { this.#switchFailure = message }
-
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     this.requests.push(command)
     if (command.type === 'abort') return undefined as T
-    if (command.type === 'new_session') {
-      const barrier = this.#newSessionBarrier
-      this.#newSessionBarrier = undefined
-      if (barrier) await barrier
-      return {} as T
-    }
+    if (command.type === 'new_session') return {} as T
     if (command.type === 'switch_session') {
-      const barrier = this.#switchBarrier
-      this.#switchBarrier = undefined
-      if (barrier) await barrier
-      // Pi keeps the previous session when a switch fails, so active must stay put here.
-      if (this.#switchFailure) {
-        const message = this.#switchFailure
-        this.#switchFailure = undefined
-        throw new Error(message)
-      }
       this.active = [...sessions, workspaceSession, ...this.extras].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
