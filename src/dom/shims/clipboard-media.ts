@@ -29,7 +29,16 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
+export async function readClipboardText(): Promise<string | undefined> {
+  try {
+    return (await navigator.clipboard.readText()) || undefined
+  } catch {
+    return undefined
+  }
+}
+
 export { editorTextAfterImagePaste } from '../../ui/clipboard-paste-text.ts'
+
 
 export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileName?: string): ComposerImage {
   if (bytes.byteLength === 0) throw new Error('Clipboard image is empty')

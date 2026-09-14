@@ -74,6 +74,21 @@ Explicit copy controls (message footer, tool row, diff header) share one impleme
 write is reported instead of silently ignored, and an older attempt still in flight cannot overwrite a
 newer one. `createTerminalCopyAction` binds the same core to the terminal's own message.
 
+### Insert-key clipboard shortcuts (Omarchy/Hyprland)
+
+Omarchy's Hyprland bindings rewrite clipboard shortcuts before any window sees them: `Ctrl+V`
+becomes `Shift+Insert` (`Direct paste`) and `Super+C` becomes `Ctrl+Insert` (`Universal copy`). The
+pinned GPUiX input element binds `ctrl-v`/`cmd-v` only, so with those bindings active the app looked
+as if it had no clipboard at all - measured on this box against the installed build: `Ctrl+C` then
+`Ctrl+V` round-tripped, while `Shift+Insert` and `Ctrl+Insert` did nothing.
+
+`src/ui/insert-key.ts` resolves that convention once, and every surface that accepts keys uses it:
+`Shift+Insert` pastes (composer and terminal), and `Ctrl+Insert`/`Cmd+Insert` copies the document
+selection through the window-level listener in `src/main.tsx`. Paste from `Shift+Insert` in the
+composer appends to the draft, since only the native path knows the caret; the terminal inserts at
+the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
+terminal routing, both on Linux without a compositor.
+
 Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
 key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
 the selection is correct (measured: the selection is present, the clipboard is unchanged). Drive the real

@@ -48,7 +48,39 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   return false
 }
 
+/**
+ * Read plain text from the clipboard, using the same helpers as the write direction so both agree on
+ * which tool owns the clipboard per platform. Readers answer from stdout, so a helper that hands its
+ * stdio to a surviving selection owner still terminates.
+ */
+export async function readClipboardText(): Promise<string | undefined> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) return (await navigator.clipboard.readText()) || undefined
+    if (process.platform === 'darwin') {
+      const proc = Bun.spawn(['/usr/bin/pbpaste'], { stdout: 'pipe' })
+      return (await new Response(proc.stdout).text()) || undefined
+    }
+    if (process.platform === 'win32') {
+      const proc = Bun.spawn(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], { stdout: 'pipe' })
+      return (await new Response(proc.stdout).text()) || undefined
+    }
+    for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
+      try {
+        const proc = Bun.spawn([...command], { stdout: 'pipe' })
+        const text = await new Response(proc.stdout).text()
+        if (text) return text
+      } catch {
+        // try the next clipboard command
+      }
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
 export { editorTextAfterImagePaste } from './clipboard-paste-text.ts'
+
 
 export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileName?: string): ComposerImage {
   if (bytes.byteLength === 0) throw new Error('Clipboard image is empty')

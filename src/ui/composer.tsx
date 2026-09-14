@@ -7,7 +7,8 @@ import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
+import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
+import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -124,6 +125,19 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     }
   }
 
+  /**
+   * Paste for the compositor insert-key convention (`Shift+Insert`, which is what Omarchy's Hyprland
+   * bindings send for `Ctrl+V`). Text lands at the end of the draft, matching a paste with the caret
+   * at the end; the native `Ctrl+V` path still inserts at the caret.
+   */
+  const pasteClipboardTextIntoComposer = async () => {
+    const text = await readClipboardText()
+    if (!text) return
+    const current = controller.getSnapshot().editorText
+    controller.setEditorText(current ? current + text : text)
+    keepComposerFocus()
+  }
+
   const showQueueHint = () => {
     if (!connected || state.session.isStreaming) return
     hintShownOnce.current = true
@@ -152,7 +166,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     queueMicrotask(() => { commandPickedByKeyDown.current = false })
     return true
   }
-  const handleComposerKeyDown = (event: { key?: string; keyChar?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
+  const handleComposerKeyDown = (event: { key?: string; keyChar?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean; shift?: boolean } }) => {
     const key = event.key?.toLowerCase()
     const tab = key === 'tab' || event.keyChar === '\t'
     if (key === 'escape' && commandQuery !== undefined) {
@@ -181,6 +195,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       keepComposerFocus()
     }
     if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
+    if (resolveInsertKeyCommand(event) === 'paste') void pasteClipboardTextIntoComposer()
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       send(state.editorText, true)
