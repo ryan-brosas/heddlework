@@ -8,7 +8,8 @@ import { MathMarkdown } from './math-markdown.tsx'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
-import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
+import { hydrateMessageImages } from './clipboard-media.ts'
+import { useClipboardCopy } from './clipboard-copy.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
@@ -458,7 +459,7 @@ function ProjectedTranscriptRow({
     const running = live
     const inline = row.trace.items.length <= TRACE_INITIAL_PROJECTED_ROWS
     return (
-      <TranscriptRowShell compact={running} noSelect>
+      <TranscriptRowShell compact={running}>
         <ExecutionTraceHeader
           trace={row.trace}
           presenters={presenters}
@@ -555,10 +556,32 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
   )
 }
 
+/**
+ * Row padding plus the selection policy for one transcript row.
+ *
+ * Only explicitly non-selectable chrome opts out. Read-only content (expanded traces,
+ * nested tool calls, reasoning, changed-file paths) stays selectable: a `userSelect: 'none'`
+ * here also disabled the native drag-selection copy path in the pinned GPUiX runtime.
+ */
+export function transcriptRowShellStyle(options: { user: boolean; compact: boolean; noSelect: boolean; contentGutter: number }) {
+  const { user, compact, noSelect, contentGutter } = options
+  return {
+    display: 'flex' as const,
+    flexDirection: 'row' as const,
+    justifyContent: 'center' as const,
+    width: '100%' as const,
+    paddingTop: user ? 9 : compact ? 0 : 4,
+    paddingBottom: user ? 11 : compact ? 0 : 7,
+    paddingLeft: contentGutter,
+    paddingRight: contentGutter,
+    userSelect: noSelect ? ('none' as const) : ('text' as const),
+   }
+}
+
 function TranscriptRowShell({ children, user = false, compact = false, noSelect = false }: { children: React.ReactNode; user?: boolean; compact?: boolean; noSelect?: boolean }) {
   const { contentGutter } = useResponsiveLayout()
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: contentGutter, paddingRight: contentGutter, ...((compact || noSelect) ? { userSelect: 'none' as const } : {}) }}>
+    <div style={transcriptRowShellStyle({ user, compact, noSelect, contentGutter })}>
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>{children}</div>
     </div>
   )
@@ -637,7 +660,7 @@ function ExecutionTraceHeader({
   const leasedHeight = leasePreviewHeight(trace.boundaryId ?? trace.items[0]?.id ?? trace.id, naturalHeight, running)
   const extraHeight = Math.max(0, leasedHeight - naturalHeight)
   return (
-    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2, userSelect: 'none' }}>
+    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2 }}>
       <div
         testId="tool-row"
         tabIndex={0}
@@ -807,7 +830,7 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
           testId={`${testId}-markdown`}
           source={text}
           theme={traceMarkdownTheme()}
-          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'none', pointerEvents: 'none' }}
+          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'text', pointerEvents: 'none' }}
           onLinkClick={(event) => openExternal(String(event.value ?? ''))}
         />
       )}
@@ -948,24 +971,11 @@ function MessageFooter({
   align: 'start' | 'end'
   onRevert(entryId: string): void
 }) {
-  const [copied, setCopied] = useState(false)
-  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => {
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-  }, [])
-  const copy = async () => {
-    if (!await copyTextToClipboard(copyText)) return
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-    setCopied(true)
-    copyResetTimer.current = setTimeout(() => {
-      copyResetTimer.current = undefined
-      setCopied(false)
-    }, 900)
-  }
+  const copy = useClipboardCopy()
   const actions = (
     <>
       {revertEntryId && <TranscriptInlineAction icon="gitBranch" testId="tree-message" onClick={() => onRevert(revertEntryId)} />}
-      {copyText && <TranscriptInlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
+      {copyText && <TranscriptInlineAction icon={copy.copied ? 'check' : 'copy'} testId="copy-message" onClick={() => copy.copy(copyText)} />}
     </>
   )
   return (
@@ -973,6 +983,7 @@ function MessageFooter({
       {align === 'start' && actions}
       {timestamp && <Timestamp value={timestamp} />}
       {align === 'end' && actions}
+      {copy.failure && <text testId="copy-message-failure" style={{ color: colors.error, fontSize: 9 }}>{copy.failure}</text>}
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { Icon } from './icons.tsx'
 import { notifyFailure } from './failure-notice.ts'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
+import { useClipboardCopy } from './clipboard-copy.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 
@@ -33,6 +34,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   const [filesOpen, setFilesOpen] = useState(false)
   const [fileListMounted, setFileListMounted] = useState(false)
   const [wordWrap, setWordWrap] = useState(false)
+  const copy = useClipboardCopy()
   const [selectedPath, setSelectedPath] = useState<string | undefined>()
   useEffect(() => {
     if (filesOpen) return
@@ -47,6 +49,10 @@ export const DiffPanel = React.memo(function DiffPanel({
   const additions = selectedFile?.additions ?? diff.additions
   const deletions = selectedFile?.deletions ?? diff.deletions
   const canvasWidth = useMemo(() => diffCanvasWidth(patch), [patch])
+  // A failed diff copy reports through the existing notice surface instead of failing silently.
+  useEffect(() => {
+    if (copy.failure) controller.notify('warning', copy.failure)
+  }, [controller, copy.failure])
 
   return (
     <div testId="diff-panel" style={rightPanelStyle(fullscreen, panelWidth)}>
@@ -75,6 +81,7 @@ export const DiffPanel = React.memo(function DiffPanel({
           </>
         )}
         <IconButton icon="wrap" label={wordWrap ? 'Disable line wrapping' : 'Enable line wrapping'} testId="diff-wrap-toggle" active={wordWrap} onClick={() => setWordWrap((value) => !value)} />
+        <IconButton icon={copy.copied ? 'check' : 'copy'} label="Copy diff" testId="diff-copy" disabled={patch.length === 0} onClick={() => copy.copy(patch)} />
         <IconButton icon="list" label="Toggle changed files" testId="diff-file-list" active={filesOpen} onClick={() => {
           if (!filesOpen) setFileListMounted(true)
           setFilesOpen(!filesOpen)

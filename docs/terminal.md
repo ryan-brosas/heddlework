@@ -32,6 +32,40 @@ Wayland and X11. A **read** passes `completion: 'stdout-end'` and completes when
 large clipboard image, while the bound keeps a helper that hands its stdio to a survivor from wedging
 the read.
 
+## UI text selection and copy
+
+Text selection and Ctrl+C belong to the native runtime, not to a Heddlework key handler: the pinned
+GPUiX paints selectable text runs and a window-level copy listener writes the selection to the platform
+clipboard. Heddlework deliberately installs no app-level Ctrl+C, so a focused input (composer, search,
+settings) and the terminal keep their own copy/interrupt semantics.
+
+What Heddlework owns is the selection policy, which decides whether the runtime may start a drag at all:
+a `userSelect: 'none'` on an element *or any ancestor* makes that text unselectable and therefore
+uncopyable. Content stays selectable and only chrome opts out:
+
+| Surface | Selection |
+| --- | --- |
+| Messages, markdown, tool output, reasoning text | selectable |
+| Tool args, tool output, tool diffs (`codeSurfaceStyle`) | selectable |
+| Expanded trace rows and their nested tool calls | selectable |
+| Changed-file paths and diff rows | selectable |
+| Tool and trace header toggles, status labels, sidebar,
+  composer chrome | not selectable (chrome) |
+
+`transcriptRowShellStyle` (row shell) and `codeSurfaceStyle` (tool code surface) own that policy and are
+pinned by `tests/transcript-selection.test.ts`; reintroducing `none` on read-only content is a regression,
+not a styling choice.
+
+Explicit copy controls (message footer, tool row, diff header) share one implementation
+(`src/ui/copy-feedback.ts` plus the `useClipboardCopy` hook in `src/ui/clipboard-copy.ts`): a failed
+write is reported instead of silently ignored, and an older attempt still in flight cannot overwrite a
+newer one. `createTerminalCopyAction` binds the same core to the terminal's own message.
+
+Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
+key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
+the selection is correct (measured: the selection is present, the clipboard is unchanged). Drive the real
+window or press the key by hand, then read the clipboard back with `wl-paste`.
+
 ### Compositor verification
 
 `.github/workflows/linux.yml` (manual `workflow_dispatch`) runs `scripts/linux-window-smoke.ts` against real
