@@ -39,7 +39,14 @@ and asserts this section's contract end to end:
   no `terminal-copy-failure-<placement>` feedback;
 - `Ctrl+V` reads that clipboard through the production `pasteClipboardText` path, and the PTY child echoes the
   copied marker line back;
-- plain `Ctrl+C` arrives as exactly one ETX byte, the child's `SIGINT` trap runs, and the session exits `0`.
+- plain `Ctrl+C` arrives as exactly one ETX byte, which the child observes on stdin, and never as a copy.
+
+The smoke child reads raw bytes (`stty -isig`) and asserts the ETX byte itself, because a real shell only
+turns that byte into `SIGINT` when the PTY slave has a foreground process group. That holds for a desktop
+launch (measured here with and without a controlling terminal: `tpgid` equals the child's process group) but
+not in a container or CI lane (measured `tpgid=-1` on Docker, with and without `--privileged`), where the
+kernel echoes `^C` and delivers no signal at all. Asserting the byte our dispatch owns keeps this lane
+meaningful in every environment; tty signal delivery stays part of manual compositor/desktop acceptance.
 
 Those assertions live in one shared implementation, `scripts/linux-terminal-smoke-lane.ts`, which three
 hosts run: the compositor driver, `tests/linux-terminal-smoke-lane-harness.test.ts` (the lane's own

@@ -4,17 +4,35 @@ export const TERMINAL_INTERRUPT_MARKER = 'HEDDLEWORK_TERMINAL_INTERRUPT_OK'
 export const TERMINAL_EVIDENCE_TEST_ID = 'terminal-evidence'
 
 /**
- * Deterministic PTY child shared by the Linux compositor smoke and the headless PTY test.
+ * Deterministic PTY child shared by the Linux compositor smoke and the headless PTY tests.
  *
- * It prints one copyable marker, echoes a pasted line back only when that line carries the marker,
- * and turns SIGINT into a third marker. Emitting a marker only for matching lines keeps the
- * transcript short enough that every assertion reads the live viewport no matter how far the paste
- * scrolled, and it makes the paste assertion exact: the child saw the bytes the clipboard returned.
+ * It prints one copyable marker, then reads raw bytes from the PTY and reports two things: the
+ * marker coming back on stdin (the paste payload the clipboard returned), and the ETX byte that
+ * plain Ctrl+C writes. The marker is echoed only when it appears, which keeps the transcript short
+ * enough that every assertion reads the live viewport no matter how far the paste scrolled.
+ *
+ * Everything is byte-level on purpose. Ctrl+C reaches a real shell as SIGINT only when the PTY
+ * slave has a foreground process group (`tpgid`), which requires the child to own the controlling
+ * terminal; that holds for a desktop launch but not in a container or CI-lane environment, where
+ * the kernel echoes the ETX byte and delivers no signal (measured: `tpgid=-1`, child survives, on
+ * Docker with and without `--privileged`). Asserting the byte our dispatch owns keeps this lane
+ * meaningful everywhere and leaves tty signal delivery to manual compositor acceptance.
  */
 export const TERMINAL_SMOKE_SHELL = [
-  `trap 'printf "\\n%s\\n" ${TERMINAL_INTERRUPT_MARKER}; exit 0' INT`,
-  `printf '%s\\n' ${TERMINAL_COPY_SOURCE}`,
-  `while IFS= read -r line; do case "$line" in *${TERMINAL_COPY_SOURCE}*) printf '%s%s\\n' ${TERMINAL_PASTE_ECHO} "$line";; esac; done`,
+  `ETX=$(printf '\\003')`,
+  `MARKER=${TERMINAL_COPY_SOURCE}`,
+  `stty -isig -icanon min 1 time 0 -echo 2>/dev/null`,
+  `printf 'HEDDLEWORK_TERMINAL_TTY pgrp_session_tpgid='; cut -d' ' -f5,6,8 /proc/$$/stat`,
+  `printf '%s\\n' "$MARKER"`,
+  `window=''`,
+  `while :; do`,
+  `  chunk=$(dd bs=4096 count=1 2>/dev/null)`,
+  `  window="$window$chunk"`,
+  `  case "$window" in *"$ETX"*) printf '\\n%s\\n' ${TERMINAL_INTERRUPT_MARKER}; exit 0;; esac`,
+  `  case "$window" in *"$MARKER"*) printf '%s%s\\n' ${TERMINAL_PASTE_ECHO} "$MARKER"; window='';; esac`,
+  `  [ -n "$chunk" ] || break`,
+  `  [ "\${#window}" -le 4096 ] || window=$(printf '%s' "$window" | tail -c 4096)`,
+  `done`,
 ].join('\n')
 
 export interface TerminalSmokeEvidence {

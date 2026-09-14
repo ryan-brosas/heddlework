@@ -197,6 +197,19 @@ pending after 4 s. The helper now completes on the command's own exit after a bo
 Deterministic coverage: `tests/clipboard-media.test.ts` (daemonized descendant holding stdio) and the
 real-PTY shortcut contract in `tests/terminal-pty.test.ts`.
 
+## Ctrl+C signal delivery depends on the controlling terminal (2026-09-14, documented)
+
+The interrupt shortcut writes one ETX byte. Whether that byte becomes `SIGINT` is the kernel's business: it
+needs the PTY slave to have a foreground process group (`tpgid`), which requires the child to own the
+controlling terminal. Measured with the production `BunPtyBackend`:
+
+- this desktop: `tpgid` equals the child's process group for both a normal launch and `setsid`, and the
+  child dies from the byte as expected;
+- Docker (also with `--privileged` and with `seccomp=unconfined`) and the CI lane environment: `tpgid = -1`,
+  the byte is echoed as `^C` and discarded, and the child survives. The smoke child therefore reads raw
+  bytes (`stty -isig`), so the lane asserts what the app owns: exactly one ETX byte, and no copy. Real
+  signal delivery stays part of manual Omarchy acceptance and of the real app with the pinned native addon.
+
 ## Open items
 
 - `.github/workflows/check.yml` runs the Linux job `test` on `ubuntu-24.04` with

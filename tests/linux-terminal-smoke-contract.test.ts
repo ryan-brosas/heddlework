@@ -22,18 +22,20 @@ function evidence(patch: Record<string, unknown> = {}): string {
 }
 
 describe('linux terminal smoke contract', () => {
-  it('exposes the ids and markers the compositor fixture and driver share', () => {
+  it('exposes the ids and byte-level detection the compositor fixture and driver share', () => {
     expect(TERMINAL_EVIDENCE_TEST_ID).toBe('terminal-evidence')
     for (const marker of [TERMINAL_COPY_SOURCE, TERMINAL_PASTE_ECHO, TERMINAL_INTERRUPT_MARKER]) {
       expect(TERMINAL_SMOKE_SHELL).toContain(marker)
     }
-    // Paste is observable only because the child echoes a matching pasted line back, and the
-    // interrupt marker is observable only because the child traps SIGINT instead of dying silently.
-    expect(TERMINAL_SMOKE_SHELL).toContain('while IFS= read -r line')
-    expect(TERMINAL_SMOKE_SHELL).toContain('trap')
-    // Only matching lines are echoed: a per-line firehose would scroll the paste marker out of the
-    // visible viewport that the driver asserts on.
-    expect(TERMINAL_SMOKE_SHELL).toContain('case "$line" in *' + TERMINAL_COPY_SOURCE + '*)')
+    // The child reads raw bytes, so it observes the ETX byte the dispatch writes instead of relying on
+    // the tty raising SIGINT, which needs a foreground process group that a CI lane does not have.
+    expect(TERMINAL_SMOKE_SHELL).toContain('stty -isig -icanon')
+    expect(TERMINAL_SMOKE_SHELL).toContain('dd bs=4096')
+    expect(TERMINAL_SMOKE_SHELL).toContain("ETX=$(printf '\\003')")
+    expect(TERMINAL_SMOKE_SHELL).toContain('*"$ETX"*')
+    // The marker is echoed only when it arrives on stdin, which keeps the transcript short enough to
+    // read the live viewport that the driver asserts on.
+    expect(TERMINAL_SMOKE_SHELL).toContain('*"$MARKER"*')
   })
 
   it('parses the evidence the compositor driver asserts on', () => {
