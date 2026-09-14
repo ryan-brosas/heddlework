@@ -1,4 +1,4 @@
-import type { WorkbenchController, NavigateTreeOptions } from '../workbench/controller.ts'
+import type { WorkbenchService, NavigateTreeOptions } from '../workbench/controller.ts'
 import type { WorkbenchState, NoticeKind, ThreadPriority } from '../workbench/state.ts'
 import type { WorkbenchCommand } from '../protocol/index.ts'
 import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
@@ -7,7 +7,7 @@ import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
 import { queueHasFlow, type QueueInputDraft, type QueueLane } from '../workbench/queue.ts'
 import type { WorkspaceClient } from '../web/client.ts'
 
-export class RemoteWorkbenchController {
+export class RemoteWorkbenchController implements WorkbenchService {
   readonly #client: WorkspaceClient
   readonly #listeners = new Set<() => void>()
   #snapshot: WorkbenchState | undefined
@@ -73,5 +73,4 @@ export class RemoteWorkbenchController {
   setAskUserQuestionnaireCollapsed(toolCallId: string, collapsed: boolean): void { void this.#send({ type: 'setAskUserQuestionnaireCollapsed', toolCallId, collapsed }) }
   async dispose(): Promise<void> { this.#unsubscribe(); if (this.#editorTimer) clearTimeout(this.#editorTimer); this.#listeners.clear() }
 }
-export function asWorkbenchController(remote: RemoteWorkbenchController): WorkbenchController { return remote as unknown as WorkbenchController }
 function materialize(snapshot: import('../protocol/index.ts').WorkbenchSnapshot | undefined): WorkbenchState | undefined { if (!snapshot) return undefined; return { ...snapshot, editorImages: snapshot.editorImages.map((image) => ({ ...image, data: typeof image.data === 'string' ? image.data : '' })) } as WorkbenchState }

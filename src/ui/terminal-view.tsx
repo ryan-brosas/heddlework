@@ -297,7 +297,7 @@ async function pasteClipboardText(): Promise<string | undefined> {
     }
     for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
       try {
-        const proc = Bun.spawn(command as unknown as string[], { stdout: 'pipe' })
+        const proc = Bun.spawn([...command], { stdout: 'pipe' })
         const text = await new Response(proc.stdout).text()
         if (text) return text
       } catch {

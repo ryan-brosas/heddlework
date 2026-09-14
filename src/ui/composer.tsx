@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuix } from '@gpuix/react'
 import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
@@ -19,7 +19,7 @@ export { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeigh
 export const QUEUE_HINT_DURATION_MS = 1_700
 const PRIMARY_ACTION_SIZE = 34
 
-export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
+export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchService; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)

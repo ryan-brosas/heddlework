@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { WorkbenchPlugin } from '../core/kernel.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { DiffPanel } from './diff-panel.tsx'
 import { useOptionalBrowserService } from './browser-context.tsx'
@@ -89,7 +89,7 @@ function TerminalSurface(props: WorkbenchSurfaceProps) {
   )
 }
 
-export function createCoreUiExtension(controller: WorkbenchController): WorkbenchUiExtension {
+export function createCoreUiExtension(controller: WorkbenchService): WorkbenchUiExtension {
   function DiffSurface(props: WorkbenchSurfaceProps) {
     const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
     return (

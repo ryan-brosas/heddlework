@@ -8,7 +8,7 @@ import { projectFlowFabricGraph, type FabricBranchStatus, type FlowFabricProject
 import { projectFlowRuns, terminalFlowTasks, type FlowRunProjection, type FlowTaskProjection, type FlowTaskStatus } from '../flows/projection.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { flowProjectName, formatFlowDate, scheduleTimingLabel, type FlowSchedule } from '../flows/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { queueSize } from '../workbench/queue.ts'
 import type { ThreadPriority, ToolRun, WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline } from '../workbench/timeline.ts'
@@ -57,7 +57,7 @@ const EMPTY_FLOW_TOOLS: ToolRun[] = []
 
 interface FlowsViewProps {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   runtime: FlowRuntime
   presenters: ReadonlyMap<string, ToolPresenter>
   titlebarInset?: number | undefined
@@ -122,7 +122,7 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, t
 function WorkPage({ runs, state, controller, priorityCounts, onQueueInChat, onOpenTask }: {
   runs: FlowRunProjection[]
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onQueueInChat(): void
   onOpenTask(task: FlowTaskProjection): void
@@ -195,7 +195,7 @@ const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, activeFabr
   mobile: boolean
   compact: boolean
   activeFabric: boolean
-  controller: WorkbenchController
+  controller: WorkbenchService
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onOpenTask(task: FlowTaskProjection): void
 }) {
@@ -234,7 +234,7 @@ function WorkTaskRail({ task, dependency, mobile, onOpenTask, fabricAfter = fals
 function ActiveFabricRail({ task, dependency, controller, mobile, onOpenTask }: {
   task: FlowTaskProjection
   dependency: ReturnType<typeof taskDependency>
-  controller: WorkbenchController
+  controller: WorkbenchService
   mobile: boolean
   onOpenTask(task: FlowTaskProjection): void
 }) {
@@ -242,13 +242,13 @@ function ActiveFabricRail({ task, dependency, controller, mobile, onOpenTask }: 
   return <WorkTaskRail task={task} dependency={dependency} mobile={mobile} onOpenTask={onOpenTask} fabricAfter={graph.branches.length > 0} />
 }
 
-function ActiveFabricWorkGraph({ task, controller, compact }: { task: FlowTaskProjection; controller: WorkbenchController; compact: boolean }) {
+function ActiveFabricWorkGraph({ task, controller, compact }: { task: FlowTaskProjection; controller: WorkbenchService; compact: boolean }) {
   const graph = useActiveFabricGraph(task, controller)
   if (graph.branches.length === 0) return null
   return <FabricBranchRows graph={graph} compact={compact} embedded />
 }
 
-function useActiveFabricGraph(task: FlowTaskProjection, controller: WorkbenchController): FlowFabricProjection {
+function useActiveFabricGraph(task: FlowTaskProjection, controller: WorkbenchService): FlowFabricProjection {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   return useMemo(() => projectFlowFabricGraph(task, state.messages, state.liveTools), [state.liveTools, state.messages, task])
 }
@@ -284,7 +284,7 @@ function WorkGroupHeader({ group }: { group: FlowWorkGroup }) {
 function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack, onOpenSession }: {
   task: FlowTaskProjection
   run: FlowRunProjection
-  controller: WorkbenchController
+  controller: WorkbenchService
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   labelOptions: readonly string[]
   onBack(): void
@@ -463,7 +463,7 @@ function fabricFlowStatus(status: FabricBranchStatus): FlowTaskStatus {
   return status === 'stopped' ? 'failed' : status
 }
 
-function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[]; controller: WorkbenchController; onOpenTask(task: FlowTaskProjection): void }) {
+function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[]; controller: WorkbenchService; onOpenTask(task: FlowTaskProjection): void }) {
   const layout = useResponsiveLayout()
   const [filter, setFilter] = useState<TriageFilter>('all')
   const [query, setQuery] = useState('')
@@ -568,7 +568,7 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
   runtime: FlowRuntime
   creating: boolean
   onCreating(value: boolean): void
-  controller: WorkbenchController
+  controller: WorkbenchService
 }) {
   const layout = useResponsiveLayout()
   const rows = useMemo<ScheduleRenderRow[]>(() => schedules.map((schedule, index) => ({ id: `schedule:${schedule.id}`, schedule, index, count: schedules.length })), [schedules])
@@ -595,7 +595,7 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
   )
 }
 
-const ScheduleRow = memo(function ScheduleRow({ schedule, mobile, runtime, controller }: { schedule: FlowSchedule; mobile: boolean; runtime: FlowRuntime; controller: WorkbenchController }) {
+const ScheduleRow = memo(function ScheduleRow({ schedule, mobile, runtime, controller }: { schedule: FlowSchedule; mobile: boolean; runtime: FlowRuntime; controller: WorkbenchService }) {
   return (
     <div style={{ ...contentRowStyle(0), minHeight: mobile ? 98 : 64, paddingBottom: 7 }}>
       <div testId={`schedule-${schedule.id}`} style={{ minHeight: mobile ? 91 : 57, width: '100%', minWidth: 0, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: mobile ? 8 : 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>

@@ -1,7 +1,7 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
@@ -53,7 +53,7 @@ export function WorkbenchApp({
   themeManager = defaultThemeManager,
   onQuit,
 }: {
-  controller: WorkbenchController
+  controller: WorkbenchService
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined

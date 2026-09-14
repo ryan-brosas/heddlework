@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { isCurrentPiSession, sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
@@ -41,7 +41,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }: {
   width?: number
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   flowsAvailable?: boolean
   flowsActive?: boolean
   settingsActive: boolean

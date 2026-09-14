@@ -110,6 +110,16 @@ interface SessionLiveSnapshot {
   widgets: WorkbenchState['widgets']
 }
 
+/**
+ * UI-facing workbench surface, the companion of `TerminalService` in `src/terminal/service.ts`.
+ * The web companion substitutes for the desktop controller, so both sides implement this structural
+ * contract instead of an unchecked cast. The three omitted members are host-owned transport ingress:
+ * `attachTransport` attaches a live agent transport, and `acceptAgentEvent`/`acceptAgentStatus`
+ * feed RPC records and transport status. Callers today are `src/workbench/*` and the controller
+ * tests; the web companion receives both over its socket, and no UI component calls them.
+ */
+export type WorkbenchService = Omit<WorkbenchController, 'attachTransport' | 'acceptAgentEvent' | 'acceptAgentStatus'>
+
 export class WorkbenchController {
   #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService

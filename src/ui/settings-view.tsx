@@ -3,7 +3,7 @@ import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
@@ -23,7 +23,7 @@ export function SettingsView({
   onClose,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   theme: ThemeSnapshot
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
