@@ -187,6 +187,34 @@ harness is watched (`#attachBackgroundTracking`) and `state.sessionActivity[file
 sidebar's running badge for non-open threads (`src/ui/sidebar.tsx`), with crashed background
 harnesses dropped from the pool so the next open respawns them.
 
+## Clipboard write stall on Linux (2026-09-14, fixed)
+
+Terminal copy did nothing on Wayland: `wl-copy`/`xclip` fork a selection owner that outlives the command
+and inherits its stdio, so the promise in `src/ui/clipboard-media.ts` waited for a `close` event that
+never fires. Measured on this box: `wl-copy` exited 0 in 33 ms while `copyTextToClipboard` was still
+pending after 4 s. The helper now completes on the command's own exit after a bounded stdout drain
+(`runClipboardProcess`), and a real Wayland round trip through `wl-paste` returns the written text.
+The two directions need different completion rules, so the runner carries both: a **writer**
+completes on the helper's own exit (the daemonized selection owner keeps the inherited stdout open,
+so waiting for it would hang forever), while a **reader** completes when stdout ends, bounded at
+3 s, because a reader's output *is* its payload and answering from a fixed grace window could
+truncate a large clipboard image. Readers pass `completion: 'stdout-end'`.
+Deterministic coverage: `tests/clipboard-media.test.ts` (daemonized descendant holding stdio) and the
+real-PTY shortcut contract in `tests/terminal-pty.test.ts`.
+
+## Ctrl+C signal delivery depends on the controlling terminal (2026-09-14, documented)
+
+The interrupt shortcut writes one ETX byte. Whether that byte becomes `SIGINT` is the kernel's business: it
+needs the PTY slave to have a foreground process group (`tpgid`), which requires the child to own the
+controlling terminal. Measured with the production `BunPtyBackend`:
+
+- this desktop: `tpgid` equals the child's process group for both a normal launch and `setsid`, and the
+  child dies from the byte as expected;
+- Docker (also with `--privileged` and with `seccomp=unconfined`) and the CI lane environment: `tpgid = -1`,
+  the byte is echoed as `^C` and discarded, and the child survives. The smoke child therefore reads raw
+  bytes (`stty -isig`), so the lane asserts what the app owns: exactly one ETX byte, and no copy. Real
+  signal delivery stays part of manual Omarchy acceptance and of the real app with the pinned native addon.
+
 ## Open items
 
 - `.github/workflows/check.yml` runs the Linux job `test` on `ubuntu-24.04` with
@@ -218,3 +246,13 @@ harnesses dropped from the pool so the next open respawns them.
 - Native-renderer suites are a structural Linux skip, not a failure: the pinned gpuix test renderer is built
   for macOS and Windows only, so ~97 `bun test` skips per run are expected. `tests/helpers/native-renderer.ts`
   owns the gate and prints the reason once per run; do not read those skips as coverage.
+- Terminal copy/paste/interrupt is verified twice, from one child command
+  (`scripts/linux-terminal-smoke-contract.ts`): headlessly over a real `Bun.Terminal` PTY in
+  `tests/terminal-pty.test.ts` (runs in `bun run check` on Linux, no compositor) and on real
+  compositors in `scripts/linux-window-smoke.ts` through the production `TerminalView`. The compositor
+  driver, `tests/linux-terminal-smoke-lane-harness.test.ts` (the same assertions over a real PTY, no
+  compositor) and `tests/linux-terminal-smoke-lane.test.tsx` (the in-process renderer) all call
+  `scripts/linux-terminal-smoke-lane.ts`, so the assertions a compositor exercises are the same ones
+  `bun run check` executes on Linux. Neither lane
+  covers Hyprland: the `hyprctl -j clients` probe still verifies window registration only, so Hyprland
+  acceptance of clipboard tooling, decorations, and fractional scaling stays a manual step.

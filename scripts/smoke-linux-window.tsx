@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRenderer, createRoot, flushSync, startFrameLoop } from '@gpuix/react'
 import { sameWindowState, type NativeWindowState } from '../src/ui/window-controls.ts'
+import { TerminalSmokeView } from './linux-terminal-smoke-view.tsx'
 
 const decorations = process.env.HEDDLEWORK_SMOKE_DECORATIONS
 if (process.platform !== 'linux') throw new Error(`Linux smoke app cannot run on ${process.platform}`)
@@ -120,6 +121,7 @@ function SmokeWindow() {
           </div>
         </div>
       </div>
+      <TerminalSmokeView />
       {resizeEdges.map((edge) => (
         <div key={edge} testId={`window-resize-${edge}`} windowResizeEdge={edge} style={resizeStyle(edge) as never} />
       ))}

@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { connectStdio, type App } from '@gpuix/react/automation'
 import type { NativeWindowState } from '../src/ui/window-controls.ts'
+import { runTerminalShortcutLane } from './linux-terminal-smoke-lane.ts'
 
 type Backend = 'wayland' | 'x11'
 type Compositor = 'mutter-wayland' | 'sway-wayland' | 'weston-wayland' | 'mutter-x11'
@@ -71,6 +72,15 @@ try {
   assert(initial.canMinimize, 'compositor reported canMinimize=false')
   assert(initial.canMaximize, 'compositor reported canMaximize=false')
   pass('initial-window-state', JSON.stringify(initial))
+
+  // Terminal shortcut lane: one shared implementation runs here on a real compositor and in
+  // `tests/linux-terminal-smoke-lane.test.tsx` against the local renderer, so a regression in the
+  // resolver, the clipboard tooling, or the copy-failure boundary fails a lane CI can execute.
+  for (const check of await runTerminalShortcutLane(app, {
+    compositor: options.compositor,
+    backend: options.backend,
+    waitFor: poll,
+  })) pass(check.name, check.evidence)
 
   let x11Window = ''
   let xdgVersion: number | undefined
@@ -332,6 +342,7 @@ async function waitForAutomationReady(app: App, testId: string, timeoutMs: numbe
 function isNativeBoundsTimeout(error: unknown): boolean {
   return error instanceof Error && /Timed out after 2 seconds waiting for the automation bounds query/u.test(error.message)
 }
+
 
 async function waitForState(app: App, predicate: (state: NativeWindowState) => boolean): Promise<NativeWindowState> {
   return poll(async () => {

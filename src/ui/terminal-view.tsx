@@ -26,6 +26,7 @@ export const TerminalView = memo(function TerminalView({
   appearance,
   focusSerial = 1,
   copy = copyTextToClipboard,
+  readPaste = pasteClipboardText,
 }: {
   service: TerminalService
   sessionId: TerminalSessionId | undefined
@@ -35,6 +36,11 @@ export const TerminalView = memo(function TerminalView({
   appearance: ResolvedTheme
   focusSerial?: number
   copy?: TerminalCopy
+  /**
+   * Clipboard reader used by the paste shortcut. Injectable like `copy` so the paste half of the
+   * dispatch seam is regression-tested without a compositor or an OS clipboard.
+   */
+  readPaste?: (() => Promise<string | undefined>) | undefined
 }) {
   const projectionSuspensionRequested = useTerminalProjectionSuspended()
   const projectionSuspended = placement === 'right' && projectionSuspensionRequested
@@ -98,9 +104,9 @@ export const TerminalView = memo(function TerminalView({
       grid: service.grid(sessionId),
       write: (data) => service.write(sessionId, data),
       copy: copyAction.copy,
-      readPaste: pasteClipboardText,
+      readPaste,
     })
-  }, [copyAction, service, sessionId])
+  }, [copyAction, readPaste, service, sessionId])
 
   const onScroll = useCallback((event: { deltaY?: number }) => {
     if (!sessionId) return

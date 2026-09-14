@@ -21,7 +21,43 @@ Copy currently exports the **visible terminal viewport**, not a modeled selectio
 
 A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount or writer replacement. Published feedback never contains the clipboard payload or an exception detail.
 
-Clipboard writers are injectable (`TerminalView`'s `copy` prop) so the production dispatch seam and failure behavior are regression-tested without a native GPUIX renderer.
+Clipboard I/O is injectable in both directions (`TerminalView`'s `copy` and `readPaste` props) so the production dispatch seam, its failure feedback, and paste delivery are regression-tested without a native GPUIX renderer or an operating-system clipboard.
+
+On Linux the clipboard helpers (`wl-copy`/`xclip`) fork a selection owner that outlives the command and
+inherits its stdio, so Node's `close` event never fires. `runClipboardProcess` therefore completes on
+the helper's own exit after a bounded stdout drain; waiting for `close` left every clipboard write
+pending forever, which made terminal copy silently do nothing on both Wayland and X11.
+
+### Compositor verification
+
+`.github/workflows/linux.yml` (manual `workflow_dispatch`) runs `scripts/linux-window-smoke.ts` against real
+compositors. That driver now also hosts the production `TerminalView` over a real PTY
+(`scripts/smoke-linux-window.tsx`; markers and evidence schema in `scripts/linux-terminal-smoke-contract.ts`)
+and asserts this section's contract end to end:
+
+- `Ctrl+Shift+C` reaches the operating-system clipboard (`wl-copy`/`xclip`) and writes **zero** PTY bytes, with
+  no `terminal-copy-failure-<placement>` feedback;
+- `Ctrl+V` reads that clipboard through the production `pasteClipboardText` path, and the PTY child echoes the
+  copied marker line back;
+- plain `Ctrl+C` arrives as exactly one ETX byte, which the child observes on stdin, and never as a copy.
+
+The smoke child reads raw bytes (`stty -isig`) and asserts the ETX byte itself, because a real shell only
+turns that byte into `SIGINT` when the PTY slave has a foreground process group. That holds for a desktop
+launch (measured here with and without a controlling terminal: `tpgid` equals the child's process group) but
+not in a container or CI lane (measured `tpgid=-1` on Docker, with and without `--privileged`), where the
+kernel echoes `^C` and delivers no signal at all. Asserting the byte our dispatch owns keeps this lane
+meaningful in every environment; tty signal delivery stays part of manual compositor/desktop acceptance.
+
+Those assertions live in one shared implementation, `scripts/linux-terminal-smoke-lane.ts`, which three
+hosts run: the compositor driver, `tests/linux-terminal-smoke-lane-harness.test.ts` (the lane's own
+assertions over a real PTY, with the PTY, smoke shell, dispatch, clipboard recorder and evidence document
+all shared with the fixture), and `tests/linux-terminal-smoke-lane.test.tsx` in-process against the local
+renderer (a structural skip on Linux, where no native test renderer exists). The shell command and the
+production `dispatchTerminalKey` seam are additionally exercised over a real PTY in
+`tests/terminal-pty.test.ts`, so a shortcut or clipboard-payload regression fails `bun run check` on Linux
+without a compositor. The compositor lane adds only the windowing, GPUIX input routing and OS-clipboard
+layers on top.
+
 
 ## Runtime
 

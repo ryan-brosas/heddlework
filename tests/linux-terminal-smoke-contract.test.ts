@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'bun:test'
+import {
+  countOccurrences,
+  parseTerminalSmokeEvidence,
+  TERMINAL_COPY_SOURCE,
+  TERMINAL_EVIDENCE_TEST_ID,
+  TERMINAL_INTERRUPT_MARKER,
+  TERMINAL_PASTE_ECHO,
+  TERMINAL_SMOKE_SHELL,
+} from '../scripts/linux-terminal-smoke-contract.ts'
+import { createTerminalSmokeCopyRecorder } from '../scripts/linux-terminal-smoke-evidence.ts'
+
+/** Loosely typed on purpose: several cases deliberately build evidence the parser must reject. */
+function evidence(patch: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    text: '',
+    status: 'running',
+    copyCalls: 0,
+    wroteClipboard: false,
+    copiedMarker: false,
+    ...patch,
+  })
+}
+
+describe('linux terminal smoke contract', () => {
+  it('exposes the ids and byte-level detection the compositor fixture and driver share', () => {
+    expect(TERMINAL_EVIDENCE_TEST_ID).toBe('terminal-evidence')
+    for (const marker of [TERMINAL_COPY_SOURCE, TERMINAL_PASTE_ECHO, TERMINAL_INTERRUPT_MARKER]) {
+      expect(TERMINAL_SMOKE_SHELL).toContain(marker)
+    }
+    // The child reads raw bytes, so it observes the ETX byte the dispatch writes instead of relying on
+    // the tty raising SIGINT, which needs a foreground process group that a CI lane does not have.
+    expect(TERMINAL_SMOKE_SHELL).toContain('stty -isig -icanon')
+    expect(TERMINAL_SMOKE_SHELL).toContain('dd bs=4096')
+    expect(TERMINAL_SMOKE_SHELL).toContain("ETX=$(printf '\\003')")
+    expect(TERMINAL_SMOKE_SHELL).toContain('*"$ETX"*')
+    // The interrupt branch matches one bare ETX: an interrupt delivered with extra bytes is a
+    // different failure than the shortcut contract allows, so the child reports the byte count and
+    // exits nonzero instead of passing as a clean interrupt.
+    expect(TERMINAL_SMOKE_SHELL).toContain('"$ETX")')
+    expect(TERMINAL_SMOKE_SHELL).toContain('unexpected-bytes')
+    expect(TERMINAL_SMOKE_SHELL).toContain('exit 3')
+    // The marker is echoed only when it arrives on stdin, which keeps the transcript short enough to
+    // read the live viewport that the driver asserts on.
+    expect(TERMINAL_SMOKE_SHELL).toContain('*"$MARKER"*')
+  })
+
+  it('records a clipboard call only once its outcome is known', async () => {
+    let release: ((outcome: boolean) => void) | undefined
+    const recorder = createTerminalSmokeCopyRecorder(
+      () => new Promise<boolean>((resolve) => { release = resolve }),
+    )
+    const pending = recorder.write(TERMINAL_COPY_SOURCE)
+    // Evidence is polled while a write is in flight: counting the call first let a poll observe
+    // `calls: 1` with `wroteClipboard` still false, which reads as a failed clipboard write.
+    expect(recorder.state.calls).toBe(0)
+    release?.(true)
+    await pending
+    expect(recorder.state.calls).toBe(1)
+    expect(recorder.state.wroteClipboard).toBe(true)
+    expect(recorder.state.text).toBe(TERMINAL_COPY_SOURCE)
+  })
+
+  it('parses the evidence the compositor driver asserts on', () => {
+    expect(parseTerminalSmokeEvidence(
+      evidence({ status: 'exited', exitCode: 0, copyCalls: 1, wroteClipboard: true, copiedMarker: true }),
+    )).toEqual({
+      text: '',
+      status: 'exited',
+      exitCode: 0,
+      copyCalls: 1,
+      wroteClipboard: true,
+      copiedMarker: true,
+    })
+  })
+
+  it('rejects malformed evidence instead of weakening a native failure', () => {
+    expect(() => parseTerminalSmokeEvidence('{')).toThrow('Invalid terminal smoke evidence JSON')
+    expect(() => parseTerminalSmokeEvidence('null')).toThrow('Invalid terminal smoke evidence: ')
+    expect(() => parseTerminalSmokeEvidence(evidence({ status: 'unknown' }))).toThrow('invalid status')
+    expect(() => parseTerminalSmokeEvidence(evidence({ copyCalls: '1' }))).toThrow('invalid copyCalls')
+    expect(() => parseTerminalSmokeEvidence(evidence({ copyCalls: -1 }))).toThrow('invalid copyCalls')
+    expect(() => parseTerminalSmokeEvidence(evidence({ wroteClipboard: undefined }))).toThrow('invalid wroteClipboard')
+    expect(() => parseTerminalSmokeEvidence(evidence({ copiedMarker: 'yes' }))).toThrow('invalid copiedMarker')
+    expect(() => parseTerminalSmokeEvidence(evidence({ exitCode: 1.5 }))).toThrow('invalid exitCode')
+    expect(() => parseTerminalSmokeEvidence(JSON.stringify({ status: 'running', copyCalls: 0, wroteClipboard: false, copiedMarker: false }))).toThrow('has no text')
+  })
+
+  it('counts an exact PTY echo once', () => {
+    expect(countOccurrences(`${TERMINAL_PASTE_ECHO}payload\\n`, TERMINAL_PASTE_ECHO)).toBe(1)
+    expect(countOccurrences(`${TERMINAL_PASTE_ECHO}a\\n${TERMINAL_PASTE_ECHO}b`, TERMINAL_PASTE_ECHO)).toBe(2)
+    expect(countOccurrences(TERMINAL_PASTE_ECHO, '')).toBe(0)
+  })
+})
