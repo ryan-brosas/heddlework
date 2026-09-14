@@ -1,3 +1,5 @@
+import { resolveInsertKeyCommand } from '../ui/insert-key.ts'
+
 export interface TerminalKeyEvent {
   readonly eventType?: string
   readonly key?: string
@@ -130,6 +132,10 @@ export function wrapBracketedPaste(text: string, enabled: boolean): string {
 export type TerminalCommand = 'copy' | 'paste' | 'interrupt' | 'none'
 
 export function resolveTerminalCommand(event: TerminalKeyEvent, platform: NodeJS.Platform): TerminalCommand {
+  // A compositor may deliver a clipboard command as an insert keystroke
+  // (see src/ui/insert-key.ts), so the terminal accepts the same convention as the composer.
+  const insert = resolveInsertKeyCommand(event)
+  if (insert !== 'none') return insert
   const { key, ctrl, alt, cmd, shift } = normalizeTerminalKey(event)
   if (key === 'c') {
     // Copy is resolved BEFORE the interrupt branch: an unqualified ctrl 'c'

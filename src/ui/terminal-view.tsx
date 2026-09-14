@@ -3,7 +3,7 @@ import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { dispatchTerminalKey, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalService } from '../terminal/service.ts'
-import { copyTextToClipboard } from './clipboard-media.ts'
+import { copyTextToClipboard, readClipboardText } from './clipboard-media.ts'
 import { createTerminalCopyAction, type TerminalCopy } from './terminal-copy-feedback.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
@@ -26,7 +26,7 @@ export const TerminalView = memo(function TerminalView({
   appearance,
   focusSerial = 1,
   copy = copyTextToClipboard,
-  readPaste = pasteClipboardText,
+  readPaste = readClipboardText,
 }: {
   service: TerminalService
   sessionId: TerminalSessionId | undefined
@@ -307,28 +307,3 @@ const TerminalCursor = memo(function TerminalCursor({ x, y, color }: { x: number
   )
 })
 
-async function pasteClipboardText(): Promise<string | undefined> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) return (await navigator.clipboard.readText()) || undefined
-    if (process.platform === 'darwin') {
-      const proc = Bun.spawn(['/usr/bin/pbpaste'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    if (process.platform === 'win32') {
-      const proc = Bun.spawn(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
-      try {
-        const proc = Bun.spawn([...command], { stdout: 'pipe' })
-        const text = await new Response(proc.stdout).text()
-        if (text) return text
-      } catch {
-        // try the next clipboard command
-      }
-    }
-  } catch {
-    return undefined
-  }
-  return undefined
-}

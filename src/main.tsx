@@ -1,4 +1,4 @@
-import { GpuixRenderer, render, resetRender } from '@gpuix/react'
+import { GpuixRenderer, render, resetRender, type WindowKeyEventHandler } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
@@ -24,6 +24,8 @@ import {
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
 import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
 import { assertNativeRuntime } from './native-runtime.ts'
+import { resolveInsertKeyCommand } from './ui/insert-key.ts'
+import { copyTextToClipboard } from './ui/clipboard-media.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment } from './host/plugin.ts'
 import { resolveStaticRoot } from './host/static-root.ts'
 import { hostTokenPath } from './host/token.ts'
@@ -155,6 +157,22 @@ process.prependListener('unhandledRejection', handleUnhandledRejection)
 process.once('SIGINT', handleSignal)
 process.once('SIGTERM', handleSignal)
 
+/**
+ * Copy the document selection for compositors that deliver clipboard commands as insert keys.
+ *
+ * Omarchy's Hyprland bindings rewrite `Ctrl+V` to `Shift+Insert` ("Direct paste") and `Super+C` to
+ * `Ctrl+Insert` ("Universal copy"). The pinned GPUiX input element binds neither, so with those
+ * bindings installed the window looks as if it had no clipboard at all. Paste is handled by the
+ * focused surface (`Composer`, `TerminalView`); this listener supplies the half a DOM-level handler
+ * cannot reach, because the transcript selection lives in the native runtime rather than in an
+ * element.
+ */
+const handleWindowKeyDown: WindowKeyEventHandler = (event, renderer) => {
+  if (resolveInsertKeyCommand(event) !== 'copy') return
+  const selected = renderer.getSelectedText?.()
+  if (selected) void copyTextToClipboard(selected)
+}
+
 render(
   <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   {
@@ -165,6 +183,7 @@ render(
       browsers.canInitializeNativeBrowser(),
     ),
     ...(browserSmokeUrl ? { focus: false, show: false } : {}),
+    onKeyDown: handleWindowKeyDown,
     onTerminated: shutdown,
   },
 )

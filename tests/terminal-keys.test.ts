@@ -53,6 +53,10 @@ describe('resolveTerminalCommand', () => {
   it('preserves paste for Cmd+V and Ctrl+V', () => {
     expect(resolveTerminalCommand({ key: 'v', modifiers: { cmd: true } }, 'darwin')).toBe('paste')
     expect(resolveTerminalCommand({ key: 'v', modifiers: { ctrl: true } }, 'linux')).toBe('paste')
+    // Omarchy/Hyprland send the insert-key convention instead of Ctrl shortcuts.
+    expect(resolveTerminalCommand({ key: 'insert', modifiers: { shift: true } }, 'linux')).toBe('paste')
+    expect(resolveTerminalCommand({ key: 'insert', modifiers: { ctrl: true } }, 'linux')).toBe('copy')
+    expect(resolveTerminalCommand({ key: 'insert', modifiers: {} }, 'linux')).toBe('none')
   })
 
   it('leaves ordinary keys alone', () => {
