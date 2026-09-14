@@ -26,6 +26,32 @@ export interface TerminalSmokeEvidence {
   readonly copiedMarker: boolean
 }
 
+export interface TerminalSmokeCopyState {
+  readonly calls: number
+  readonly wroteClipboard: boolean
+  readonly text: string
+}
+
+/**
+ * Single source for the evidence document's field names and derived flags. The native fixture, the
+ * lane harness and the parser all agree through this function instead of duplicating the shape.
+ */
+export function formatTerminalSmokeEvidence(input: {
+  readonly text: string
+  readonly status: 'running' | 'exited'
+  readonly exitCode?: number | null
+  readonly copy: TerminalSmokeCopyState
+}): string {
+  return JSON.stringify({
+    text: input.text,
+    status: input.status,
+    ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
+    copyCalls: input.copy.calls,
+    wroteClipboard: input.copy.wroteClipboard,
+    copiedMarker: input.copy.text.includes(TERMINAL_COPY_SOURCE),
+  })
+}
+
 export function parseTerminalSmokeEvidence(value: string): TerminalSmokeEvidence {
   let parsed: unknown
   try {

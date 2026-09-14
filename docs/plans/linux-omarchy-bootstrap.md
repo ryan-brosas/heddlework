@@ -231,6 +231,10 @@ real-PTY shortcut contract in `tests/terminal-pty.test.ts`.
 - Terminal copy/paste/interrupt is verified twice, from one child command
   (`scripts/linux-terminal-smoke-contract.ts`): headlessly over a real `Bun.Terminal` PTY in
   `tests/terminal-pty.test.ts` (runs in `bun run check` on Linux, no compositor) and on real
-  compositors in `scripts/linux-window-smoke.ts` through the production `TerminalView`. Neither lane
+  compositors in `scripts/linux-window-smoke.ts` through the production `TerminalView`. The compositor
+  driver, `tests/linux-terminal-smoke-lane-harness.test.ts` (the same assertions over a real PTY, no
+  compositor) and `tests/linux-terminal-smoke-lane.test.tsx` (the in-process renderer) all call
+  `scripts/linux-terminal-smoke-lane.ts`, so the assertions a compositor exercises are the same ones
+  `bun run check` executes on Linux. Neither lane
   covers Hyprland: the `hyprctl -j clients` probe still verifies window registration only, so Hyprland
   acceptance of clipboard tooling, decorations, and fractional scaling stays a manual step.

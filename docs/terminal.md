@@ -21,7 +21,7 @@ Copy currently exports the **visible terminal viewport**, not a modeled selectio
 
 A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount or writer replacement. Published feedback never contains the clipboard payload or an exception detail.
 
-Clipboard writers are injectable (`TerminalView`'s `copy` prop) so the production dispatch seam and failure behavior are regression-tested without a native GPUIX renderer.
+Clipboard I/O is injectable in both directions (`TerminalView`'s `copy` and `readPaste` props) so the production dispatch seam, its failure feedback, and paste delivery are regression-tested without a native GPUIX renderer or an operating-system clipboard.
 
 On Linux the clipboard helpers (`wl-copy`/`xclip`) fork a selection owner that outlives the command and
 inherits its stdio, so Node's `close` event never fires. `runClipboardProcess` therefore completes on
@@ -41,9 +41,15 @@ and asserts this section's contract end to end:
   copied marker line back;
 - plain `Ctrl+C` arrives as exactly one ETX byte, the child's `SIGINT` trap runs, and the session exits `0`.
 
-The same child command and the same production `dispatchTerminalKey` seam are exercised headlessly in
+Those assertions live in one shared implementation, `scripts/linux-terminal-smoke-lane.ts`, which three
+hosts run: the compositor driver, `tests/linux-terminal-smoke-lane-harness.test.ts` (the lane's own
+assertions over a real PTY, with the PTY, smoke shell, dispatch, clipboard recorder and evidence document
+all shared with the fixture), and `tests/linux-terminal-smoke-lane.test.tsx` in-process against the local
+renderer (a structural skip on Linux, where no native test renderer exists). The shell command and the
+production `dispatchTerminalKey` seam are additionally exercised over a real PTY in
 `tests/terminal-pty.test.ts`, so a shortcut or clipboard-payload regression fails `bun run check` on Linux
-without a compositor. The compositor lane adds only the windowing and OS-clipboard layers on top.
+without a compositor. The compositor lane adds only the windowing, GPUIX input routing and OS-clipboard
+layers on top.
 
 
 ## Runtime

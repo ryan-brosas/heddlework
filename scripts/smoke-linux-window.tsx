@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createRenderer, createRoot, flushSync, startFrameLoop } from '@gpuix/react'
-import { TerminalSessionService } from '../src/terminal/service.ts'
-import { copyTextToClipboard } from '../src/ui/clipboard-media.ts'
-import { TerminalView } from '../src/ui/terminal-view.tsx'
 import { sameWindowState, type NativeWindowState } from '../src/ui/window-controls.ts'
-import { TERMINAL_COPY_SOURCE, TERMINAL_EVIDENCE_TEST_ID, TERMINAL_SMOKE_SHELL } from './linux-terminal-smoke-contract.ts'
+import { TerminalSmokeView } from './linux-terminal-smoke-view.tsx'
 
 const decorations = process.env.HEDDLEWORK_SMOKE_DECORATIONS
 if (process.platform !== 'linux') throw new Error(`Linux smoke app cannot run on ${process.platform}`)
@@ -75,80 +72,6 @@ function requestClose(): void {
   setTimeout(() => renderer.closeWindow(), 100)
 }
 
-// Terminal shortcut lane. The fixture hosts the production `TerminalView` over a real PTY and the
-// production clipboard writer, and republishes a small evidence document that `linux-window-smoke.ts`
-// asserts on. Copy is recorded from the view's injectable `copy` prop so the smoke can prove the
-// clipboard write happened while the PTY received zero bytes; paste and interrupt are read from the
-// PTY itself.
-const terminalCopy = { calls: 0, wroteClipboard: false, text: '' }
-const TERMINAL_SMOKE_WIDTH = 860
-const TERMINAL_SMOKE_HEIGHT = 560
-
-async function recordCopyToSystemClipboard(text: string): Promise<boolean> {
-  terminalCopy.calls += 1
-  terminalCopy.text = text
-  const wrote = await copyTextToClipboard(text)
-  terminalCopy.wroteClipboard = wrote
-  return wrote
-}
-
-function TerminalSmoke() {
-  const service = useMemo(() => new TerminalSessionService({ cwd: process.cwd() }), [])
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined)
-  const [evidence, setEvidence] = useState('pending')
-
-  useEffect(() => {
-    let cancelled = false
-    void service
-      .spawn({ name: 'smoke', shell: '/bin/sh', args: ['-c', TERMINAL_SMOKE_SHELL] })
-      .then((id) => { if (!cancelled) setSessionId(id) })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-      void service.dispose()
-    }
-  }, [service])
-
-  useEffect(() => {
-    if (!sessionId) return
-    const publish = () => {
-      const session = service.getStateSnapshot().sessions.find((entry) => entry.id === sessionId)
-      const next = JSON.stringify({
-        text: service.grid(sessionId)?.viewport.map((row) => row.text).join('\n') ?? '',
-        status: session?.status.kind ?? 'running',
-        ...(session?.status.kind === 'exited' ? { exitCode: session.status.exitCode } : {}),
-        copyCalls: terminalCopy.calls,
-        wroteClipboard: terminalCopy.wroteClipboard,
-        copiedMarker: terminalCopy.text.includes(TERMINAL_COPY_SOURCE),
-      })
-      setEvidence((current) => (current === next ? current : next))
-    }
-    publish()
-    const timer = setInterval(publish, 100)
-    return () => clearInterval(timer)
-  }, [service, sessionId])
-
-  if (!sessionId) return null
-  return (
-    <div style={{ paddingLeft: 24, width: '100%' }}>
-      <div style={{ width: TERMINAL_SMOKE_WIDTH, height: TERMINAL_SMOKE_HEIGHT }}>
-        <TerminalView
-          service={service}
-          sessionId={sessionId}
-          placement="bottom"
-          width={TERMINAL_SMOKE_WIDTH}
-          height={TERMINAL_SMOKE_HEIGHT}
-          appearance="dark"
-          copy={recordCopyToSystemClipboard}
-        />
-      </div>
-      <div testId={TERMINAL_EVIDENCE_TEST_ID} style={{ width: TERMINAL_SMOKE_WIDTH, height: 14, overflow: 'hidden' }}>
-        <text style={{ color: '#94a3b8', fontSize: 9 }}>{evidence}</text>
-      </div>
-    </div>
-  )
-}
-
 function SmokeWindow() {
   const [state, setState] = useState<NativeWindowState | undefined>(readState)
 
@@ -198,7 +121,7 @@ function SmokeWindow() {
           </div>
         </div>
       </div>
-      <TerminalSmoke />
+      <TerminalSmokeView />
       {resizeEdges.map((edge) => (
         <div key={edge} testId={`window-resize-${edge}`} windowResizeEdge={edge} style={resizeStyle(edge) as never} />
       ))}
