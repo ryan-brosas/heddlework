@@ -111,8 +111,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }
 
   /**
-   * Ingest a clipboard image, if the clipboard holds one, and report whether one was added. The image is
-   * attached to the composer the keystroke saw, and any text the runtime had already inserted is restored.
+   * Attach a clipboard image when available, preserving text according to the native image-paste policy.
    */
   const insertPastedImage = async (editorTextBeforePaste: string): Promise<boolean> => {
     const image = await readClipboardImage()
@@ -140,8 +139,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
    * bindings send for `Ctrl+V`). The runtime never sees that keystroke as a paste, so this path owns
    * the whole action: it takes an image when the clipboard holds one - otherwise a remapped desktop
    * could not paste a screenshot at all - and otherwise appends the text, matching a paste with the
-   * caret at the end. The read is asynchronous, so the draft is only written while the same thread is
-   * still open.
+   * caret at the end. Text is appended to the current controller draft after the asynchronous read.
    */
   const pasteClipboardIntoComposer = async () => {
     if (pastingImage) return

@@ -101,15 +101,20 @@ bun run smoke:workbench-keys
 It drags over a message, sends `Ctrl+Insert`, and asserts the clipboard helper received exactly that
 selection; it stages text for `Shift+Insert` and asserts the composer submitted it; and it re-asserts
 the native `Ctrl+C`/`Ctrl+V` round trip so the remapped shortcuts cannot quietly replace the normal
-ones. Every paste assertion observes the **submitted message row**, not the draft: the Linux
-automation surface does not expose an input's value (`getAllText` and the composer element itself stay
-empty even after `fill` typed into it), and each paste key press waits for the app's own clipboard
-text read before Enter - pressing Enter first races that read and turns a slow paste into a phantom
-failure (measured: the paste lands in 75 ms on this box). The refusals are asserted the same way: a
-blurred composer and an image-only clipboard must leave the draft empty, which is only observable as
-the next Enter adding no message. The lane is deliberately not part of `scripts/linux-compositor-smoke.sh`: those cases build a
-purpose-made window from repository sources, while this one needs the installed application binary
-(override it with `HEDDLEWORK_APP_BINARY`).
+ones. The pinned Linux automation text tree does not expose the composer's draft, so the lane checks
+submitted user-message rows instead. Before Enter, positive paste checks wait for the stub to log a
+text-read attempt, then allow two polling intervals for the asynchronous paste to settle. The logged
+75 ms in a local run included that deliberate wait; it is **not** a measured paste-latency guarantee.
+
+The image-only stub rejects both image and text reads: its negative check covers refusal to paste stale
+text, not successful screenshot attachment. Empty-Enter checks and the exact-message checks provide
+indirect evidence about drafts, not a native input-value readback. Stubbed Xvfb results do not prove
+Hyprland input-serial handling or real Wayland clipboard ownership; those need a separate live test.
+
+The lane defaults to the checkout's `dist/heddlework`; rebuild it with `bun run build` before testing
+source changes. Use `--installed` for the installed app or `HEDDLEWORK_APP_BINARY` for an explicit
+artifact. It is separate from `scripts/linux-compositor-smoke.sh`, whose cases build a purpose-made
+window rather than launching the full application.
 
 Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
 key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
