@@ -53,10 +53,16 @@ export const TerminalView = memo(function TerminalView({
   const inputId = useRef<number | undefined>(undefined)
   // Terminal-local copy failure feedback. The action consumes the clipboard
   // writer's outcome, publishes one generic local error on definite failure
-  // (never falling through to the PTY), and is withdrawn when the view or the
-  // injected writer changes so stale completions cannot publish state.
+  // (never falling through to the PTY), and is withdrawn when the view, its session,
+  // or the injected writer changes so stale completions cannot publish state. One
+  // component instance serves every session, so the action is scoped to the session:
+  // a copy still in flight for the previous session cannot report over the new one,
+  // and the previous failure is not carried into the session that replaces it.
   const [copyFailure, setCopyFailure] = useState<string | undefined>(undefined)
-  const copyAction = useMemo(() => createTerminalCopyAction({ writer: copy, onFailure: setCopyFailure }), [copy])
+  const copyAction = useMemo(
+    () => createTerminalCopyAction({ writer: copy, onFailure: setCopyFailure }),
+    [copy, sessionId],
+  )
   useEffect(() => {
     setCopyFailure(undefined)
     return () => copyAction.dispose()
