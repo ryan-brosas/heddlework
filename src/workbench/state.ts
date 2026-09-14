@@ -420,8 +420,12 @@ export function contentText(value: unknown): string {
     .join('\n')
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 export function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  return isRecord(value) ? value : {}
 }
 
 function stringArray(value: unknown): string[] {
