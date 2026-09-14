@@ -7,6 +7,7 @@ import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { copyTextToClipboard } from './clipboard-media.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { FlowsView } from './flows-view.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
@@ -368,7 +369,7 @@ export function WorkbenchApp({
                     <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
                     <>
-                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId)} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
+                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId).catch(notifyFailure(controller, 'Could not navigate the thread'))} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
                       <TranscriptFade />
                       <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} />
                     </>

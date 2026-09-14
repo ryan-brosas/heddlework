@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
+import { notifyFailure } from './failure-notice.ts'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors, nativeTheme } from './theme.ts'
@@ -57,7 +58,7 @@ export const DiffPanel = React.memo(function DiffPanel({
         fullscreenLocked={fullscreenLocked}
         refreshDisabled={diff.status === 'loading'}
         onNew={onNewSurface}
-        onRefresh={() => void controller.refreshWorkspaceDiff()}
+        onRefresh={() => void controller.refreshWorkspaceDiff().catch(notifyFailure(controller, 'Could not refresh the diff'))}
         onToggleFullscreen={onToggleFullscreen}
         onClose={onClose}
       />

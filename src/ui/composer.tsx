@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
@@ -105,7 +106,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
       return
     }
-    void controller.submit(value, { queue })
+    void controller.submit(value, { queue }).catch(notifyFailure(controller, 'Could not send the message'))
   }
 
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
@@ -302,7 +303,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => {
               const model = state.models.find((candidate) => modelKey(candidate) === value)
-              if (model) void controller.setModel(model)
+              if (model) void controller.setModel(model).catch(notifyFailure(controller, 'Could not switch model'))
             }}
           />
           {!layout.mobile && <ToolbarSeparator />}
@@ -316,7 +317,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             triggerMaxWidth={layout.mobile ? 68 : 130}
             {...(state.uiRequest?.kind === 'thinking' ? { openRequest: state.uiRequest.id } : {})}
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
-            onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel)}
+            onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel).catch(notifyFailure(controller, 'Could not change the thinking level'))}
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 4 : 9 }}>
@@ -328,7 +329,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               queueHintVisible={queueHintOpen}
               width={primaryActionWidth}
               onSend={() => send(state.editorText)}
-              onStop={() => void controller.abort()}
+              onStop={() => void controller.abort().catch(notifyFailure(controller, 'Could not stop the run'))}
             />
           </div>
         </div>
