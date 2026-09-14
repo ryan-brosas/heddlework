@@ -57,4 +57,3 @@ function readDocument(path: string | false): QueueStoreDocument {
     return { version: 1, workspaces: {} }
   }
 }
-
