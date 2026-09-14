@@ -781,7 +781,10 @@ export class WorkbenchController {
       for (const [path, pooled] of [...this.#sessionTransports]) {
         if (pooled === transport) this.#sessionTransports.delete(path)
       }
-      void transport.stop()
+      // Fire-and-forget teardown of a pooled harness: no caller awaits it and the failure has no
+      // owner (the harness is already dropped), so a rejected stop must not surface as an
+      // unhandled rejection. Mirrors the `await transport.stop().catch(() => {})` recovery above.
+      void transport.stop().catch(() => {})
     }
   }
 
