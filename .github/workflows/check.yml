@@ -32,8 +32,10 @@ jobs:
         with:
           path: node_modules/.cache/heddlework-gpuix
           # The installer produces these artifacts, so its content belongs in the key: a cache
-          # saved before the addon install would otherwise be restored forever.
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock', 'scripts/install-gpuix.ts') }}
+          # saved before the addon install would otherwise be restored forever. The declared patch
+          # set is part of those inputs too - a key without it restored a checkout patched from an
+          # older patch revision, which is exactly what `native-...-<old hash>` did in PR #25.
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock', 'scripts/install-gpuix.ts', 'scripts/gpuix-patches.ts', 'patches/**') }}
       # The pinned GPUix runtime links against all of these; the compositor workflow proved the
       # list when its "Build pinned Heddlework GPUix runtime" step started passing. Without
       # libxkbcommon-x11-dev the build fails at link time: unable to find library -lxkbcommon-x11.

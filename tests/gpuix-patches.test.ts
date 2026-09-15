@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, spyOn } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -95,13 +95,24 @@ describe('runtime source patches', () => {
     expect(() => applyRuntimePatches(directory, [patch], ['src'])).toThrow(/Undeclared runtime source changes/u)
   })
 
-  it('refuses when an undeclared edit broke the declared patch itself', () => {
+  it('restores a declared target that was edited by hand, and says so', () => {
     const directory = scratchRepository()
     const patch = declaredPatch(directory, 'patched')
     applyRuntimePatches(directory, [patch], ['src'])
+    // A hand edit inside patch-owned territory is repaired to the pinned revision, loudly: it cannot be told
+    // apart from an older revision of the same patch, and the strict check below still governs everything the
+    // patch does not declare.
     writeFileSync(resolve(directory, 'src/input.rs'), 'patched\nand something else\n')
-    // The refusal names the conflict instead of building whatever the working tree happens to hold.
-    expect(() => applyRuntimePatches(directory, [patch], ['src'])).toThrow(/does not apply|Undeclared/u)
+    const warnings = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      applyRuntimePatches(directory, [patch], ['src'])
+    } finally {
+      // Read the recorded calls before restoring: `mockRestore` also discards them.
+      const recorded = warnings.mock.calls.flat().join(' ')
+      warnings.mockRestore()
+      expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('patched\n')
+      expect(recorded).toContain('0001-declared.patch')
+    }
   })
 
   it('fingerprints working-tree bytes, not the index state', () => {
@@ -186,6 +197,40 @@ describe('runtime source patches', () => {
         git(clone, ['apply', patch.path])
       }
     }
+  })
+
+  it('repairs a cached checkout that carries an older revision of a declared patch', () => {
+    // CI and a developer machine both reuse the native cache across patch edits, so the checkout can hold the
+    // previous revision of the same patch. Applying the current one restores only the files it declares.
+    const directory = scratchRepository()
+    const older = patchFor(directory, 'src/input.rs', 'initial\n', 'older revision')
+    applyRuntimePatches(directory, [older], ['src'])
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('older revision\n')
+
+    const current = patchFor(directory, 'src/input.rs', 'initial\n', 'current revision')
+    applyRuntimePatches(directory, [current], ['src'])
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('current revision\n')
+  })
+
+  it('repairs a declared file that a patch adds, when the cache already patched it', () => {
+    const directory = scratchRepository()
+    const added = [
+      'diff --git a/src/extra.rs b/src/extra.rs',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/src/extra.rs',
+      '@@ -0,0 +1 @@',
+      '+telemetry',
+      '',
+    ].join('\n')
+    const path = join(scratchDirectory(), '0001-extra.patch')
+    writeFileSync(path, added)
+    const patch = { name: '0001-extra.patch', path, sha256: fileFingerprint(path) }
+    applyRuntimePatches(directory, [patch], ['src'])
+    expect(readFileSync(resolve(directory, 'src/extra.rs'), 'utf8')).toBe('telemetry\n')
+    // The second run finds the file present and the patch already applied: no repair, no error.
+    applyRuntimePatches(directory, [patch], ['src'])
+    expect(readFileSync(resolve(directory, 'src/extra.rs'), 'utf8')).toBe('telemetry\n')
   })
 
   it('re-runs on a cached checkout whose nested repository already carries its own patch', () => {

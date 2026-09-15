@@ -29,6 +29,13 @@ export function listRuntimePatches(directory: string): RuntimeSourcePatch[] {
   })
 }
 
+export function patchTargets(patch: string): string[] {
+  return [...new Set(patch.split('\n').flatMap((line) => {
+    const path = /^\+\+\+ b\/(.+)$/u.exec(line)?.[1]
+    return path === undefined ? [] : [path]
+  }))]
+}
+
 export function runtimePatchFingerprint(patches: readonly RuntimeSourcePatch[]): string {
   return digest(patches.map((patch) => `${patch.name}:${patch.sha256}`).join('\n'))
 }
@@ -128,12 +135,37 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
 export function applyRuntimePatches(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
   for (const patch of patches) {
     const applied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
-    if (applied.exitCode !== 0) git(directory, ['apply', patch.path])
+    if (applied.exitCode === 0) continue
+    // A cached checkout carries the patch revision it was built from, and both CI and a developer machine
+    // reuse that cache after the patch changes. Repairing the files this patch owns is what turns that into a
+    // rebuild; anything the patch does not declare still fails the check below, so this cannot bury real work.
+    resetDeclaredTargets(directory, patch)
+    git(directory, ['apply', patch.path])
   }
   // Only this repository's own index is checked here. A nested checkout has its own patch set
   // (`runtimePatchSets`), and checking it against an empty declaration from the outer set failed every
   // re-run: the nested tree already carries its applied patch, so the reverse-apply diff is never empty.
   assertDeclaredSource(directory, patches, paths)
+}
+
+/**
+ * Restore the files a patch declares to the pinned revision, naming them: a stale checkout is repaired
+ * loudly, never silently. Untracked declared targets are removed, tracked ones are checked out from HEAD.
+ */
+function resetDeclaredTargets(directory: string, patch: RuntimeSourcePatch): void {
+  const targets = patchTargets(readFileSync(patch.path, 'utf8'))
+  const status = git(directory, ['status', '--porcelain', '--untracked-files=all', '--', ...targets]).toString()
+  const dirty = [...new Set(status.split('\n').flatMap((line) => {
+    const entry = line.trimEnd()
+    if (entry === '') return []
+    return [entry.slice(3).split(' -> ').pop()?.trim() ?? '']
+  }))].filter((path) => path !== '')
+  if (dirty.length === 0) return
+  console.warn(`[heddlework] ${patch.name} does not match ${directory}; restoring its declared files to the pinned revision:\n  ${dirty.join('\n  ')}`)
+  const untracked = dirty.filter((path) => status.includes(`?? ${path}`))
+  for (const path of untracked) rmSync(resolve(directory, path), { force: true })
+  const tracked = dirty.filter((path) => !untracked.includes(path))
+  if (tracked.length > 0) git(directory, ['checkout', 'HEAD', '--', ...tracked])
 }
 
 function digest(value: string | Uint8Array): string {
