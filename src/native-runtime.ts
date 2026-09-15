@@ -9,7 +9,7 @@ export function assertNativeRuntime(prototype: object): void {
 }
 
 /**
- * Capability added by `patches/gpuix/0001-native-clipboard-editing.patch`: the runtime binds the desktop
+ * Capability added by `patches/gpuix/0001-linux-native-runtime.patch`: the runtime binds the desktop
  * clipboard keys itself - `Ctrl+Insert` (what Omarchy delivers for `Super+C`) copies the document selection,
  * and `Ctrl+V`/`Cmd+V`/`Shift+Insert` run its caret-aware paste action, which reports the inserted text
  * through a `paste` event. A host that answers this must not handle those keys again, or one keystroke has

@@ -34,22 +34,27 @@ function scratchRepository(contents = 'initial\n'): string {
   return directory
 }
 
-/** A patch that turns `src/input.rs` into `patched`, written with the same a/ b/ prefixes the installer expects. */
-function declaredPatch(directory: string, patched: string): { name: string; path: string; sha256: string } {
-  const source = readFileSync(resolve(directory, 'src/input.rs'), 'utf8')
+/** A one-line patch for `file`, written with the same a/ b/ prefixes the installer expects. */
+function patchFor(_directory: string, file: string, before: string, after: string): { name: string; path: string; sha256: string } {
   const patch = [
-    'diff --git a/src/input.rs b/src/input.rs',
-    '--- a/src/input.rs',
-    '+++ b/src/input.rs',
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
     '@@ -1 +1 @@',
-    `-${source.trimEnd()}`,
-    `+${patched}`,
+    `-${before.trimEnd()}`,
+    `+${after}`,
     '',
   ].join('\n')
-  const path = join(scratchDirectory(), '0001-declared.patch')
+  const path = join(scratchDirectory(), `0001-${file.replaceAll('/', '-')}.patch`)
   writeFileSync(path, patch)
   return { name: '0001-declared.patch', path, sha256: fileFingerprint(path) }
 }
+
+/** A patch that turns `src/input.rs` into `patched`. */
+function declaredPatch(directory: string, patched: string): { name: string; path: string; sha256: string } {
+  return patchFor(directory, 'src/input.rs', readFileSync(resolve(directory, 'src/input.rs'), 'utf8'), patched)
+}
+
 
 describe('runtime source patches', () => {
   it('lists patches in name order and hashes their content', () => {
@@ -133,6 +138,7 @@ describe('runtime source patches', () => {
         file: '0001-linux-native-runtime.patch',
         targets: [
           'packages/native/src/custom_elements/input.rs',
+          'packages/native/src/element_tree.rs',
           'packages/native/src/lib.rs',
           'packages/native/src/portal_file_chooser.rs',
           'packages/native/src/renderer.rs',
@@ -180,6 +186,25 @@ describe('runtime source patches', () => {
         git(clone, ['apply', patch.path])
       }
     }
+  })
+
+  it('re-runs on a cached checkout whose nested repository already carries its own patch', () => {
+    // The nested GPUI checkout is a second repository with its own patch set. Verifying it from the outer
+    // set with an empty declaration failed every re-run, because the nested tree already held its patch.
+    const source = scratchRepository()
+    const nested = resolve(source, 'zed')
+    mkdirSync(resolve(nested, 'crates'), { recursive: true })
+    writeFileSync(resolve(nested, 'crates/lib.rs'), 'gpui\n')
+    git(nested, ['init', '--quiet'])
+    git(nested, ['add', '-A'])
+    git(nested, ['commit', '--quiet', '-m', 'initial'])
+    applyRuntimePatches(nested, [patchFor(nested, 'crates/lib.rs', 'gpui\n', 'gpui patched')], ['.'])
+
+    const outer = declaredPatch(source, 'patched')
+    applyRuntimePatches(source, [outer], ['src'])
+    // The second call is what a cached checkout does; it must not throw.
+    applyRuntimePatches(source, [outer], ['src'])
+    expect(readFileSync(resolve(nested, 'crates/lib.rs'), 'utf8')).toBe('gpui patched\n')
   })
 
   it('scopes each patch set to its own repository build inputs', () => {

@@ -178,13 +178,13 @@ window or press the key by hand, then read the clipboard back with `wl-paste`.
 needs the explicit opt-in `HEDDLEWORK_CLIPBOARD_LIVE=1` and starts a disposable nested Hyprland on a private
 `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. The host `DISPLAY` is stripped from every child, so the run can
 neither read nor replace the operator's clipboard. `wl-paste`/`wl-copy` are logging shims that delegate to the real tools, so the bytes are
-real and the call log is evidence. On this box it passes three checks twice in a row: the session clipboard
-round-trips through the real `wl-copy`/`wl-paste`; the application submits the exact real clipboard text
-through `Shift+Insert`; and `Ctrl+Insert` over a dragged transcript selection puts that exact text on the
-session clipboard.
+real and the call log is evidence. It asserts four things: the session clipboard round-trips through the real
+`wl-copy`/`wl-paste` helpers; the application submits the exact real clipboard text through `Shift+Insert`; `Ctrl+Insert`
+over a dragged transcript selection puts that exact text on the session clipboard; and a `Shift+Insert`
+against a clipboard holding only a PNG adds exactly one composer attachment and submits nothing.
 
 What it does not judge: a compositor's own remap to `Shift+Insert` is not exercised, because the lane delivers
-the paste key through the application's automation surface, and screenshots are unavailable on Linux. Submits
+the paste key through the application's automation surface. Submits
 are queued while a turn streams, so the lane waits for the paste key and Enter *separately*, waits for the turn
 to settle before Enter, and calibrates: a typed probe must land before any paste verdict counts - without
 that gate a queued submit looks exactly like a dropped paste.

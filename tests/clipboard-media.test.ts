@@ -31,14 +31,18 @@ describe('clipboard media', () => {
 })
 
 describe('native paste bookkeeping', () => {
-  it('inverts exactly the text the runtime inserted', () => {
-    // A runtime that owns the keys inserts at the caret and reports what it inserted, so the pre-paste draft
-    // is the current draft minus exactly that text.
-    expect(draftBeforeNativePaste('draftpasted', 'pasted')).toBe('draft')
-    expect(draftBeforeNativePaste('pasted', 'pasted')).toBe('')
-    // A report the draft cannot explain leaves the draft alone instead of cutting unrelated characters.
-    expect(draftBeforeNativePaste('draft', 'elsewhere')).toBe('draft')
-    expect(draftBeforeNativePaste('draft', '')).toBe('draft')
+  it('uses the draft the runtime reported before the insertion', () => {
+    // The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion
+    // cannot be inverted from the inserted text, and a replacing paste cannot be inverted at all.
+    expect(draftBeforeNativePaste({ contentBefore: 'explain ' }, 'explain /tmp/a.png')).toBe('explain ')
+    expect(draftBeforeNativePaste({ contentBefore: '' }, 'path')).toBe('')
+  })
+
+  it('falls back to the current draft when no pre-paste report arrived', () => {
+    // A DOM paste performs the insertion in the browser and reports nothing, and an older runtime has no such
+    // field: neither inserted anything the composer needs to undo.
+    expect(draftBeforeNativePaste({}, 'current')).toBe('current')
+    expect(draftBeforeNativePaste({ contentBefore: 7 }, 'current')).toBe('current')
   })
 })
 

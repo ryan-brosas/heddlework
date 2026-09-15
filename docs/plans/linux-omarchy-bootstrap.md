@@ -242,7 +242,7 @@ the checkout is two repositories. Every local native change is now declared in o
 
 | Set | Contents |
 | --- | --- |
-| `patches/gpuix/0001-linux-native-runtime.patch` | Clipboard: `Ctrl+Insert` copies in every text context and in the document-selection listener; `Ctrl+V`/`Cmd+V`/`Shift+Insert` run the element's caret-aware paste action, which reports each paste through a `paste` event. Portal: window-parented `org.freedesktop.portal.FileChooser` primitives and system-appearance reads. |
+| `patches/gpuix/0001-linux-native-runtime.patch` | Clipboard: `Ctrl+Insert` copies in every text context and in the document-selection listener; `Ctrl+V`/`Cmd+V`/`Shift+Insert` run the element's caret-aware paste action, which reports each paste through a `paste` event carrying both the inserted text and the draft it replaced (`contentBefore`), so a host can put back exactly what the insertion changed. Portal: window-parented `org.freedesktop.portal.FileChooser` primitives and system-appearance reads. |
 | `patches/zed/0001-portal-parent-and-appearance.patch` | The GPUI side of those primitives (`parent_window_identifier`, the portal file chooser, system appearance). |
 
 Those rules are properties, not intent:

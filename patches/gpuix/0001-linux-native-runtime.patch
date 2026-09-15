@@ -1,5 +1,5 @@
 diff --git a/packages/native/src/custom_elements/input.rs b/packages/native/src/custom_elements/input.rs
-index aa70dda..009e0de 100644
+index aa70dda..6538cb8 100644
 --- a/packages/native/src/custom_elements/input.rs
 +++ b/packages/native/src/custom_elements/input.rs
 @@ -241,6 +241,11 @@ fn text_editor_bindings(
@@ -27,7 +27,7 @@ index aa70dda..009e0de 100644
      bindings
  }
  
-@@ -1081,9 +1092,21 @@ impl TextEditorState {
+@@ -1081,9 +1092,26 @@ impl TextEditorState {
          if self.read_only {
              return;
          }
@@ -40,17 +40,22 @@ index aa70dda..009e0de 100644
 +            return;
 +        };
 +        let text = item.text();
++        // The pre-paste draft is reported alongside the inserted text: a host that has to put something back
++        // (an attached image instead of a pasted path) cannot reconstruct a caret insertion or a replaced
++        // selection from the inserted string alone.
++        let content_before = self.content.clone();
 +        if let Some(text) = text.as_deref() {
              self.replace_text_in_range(None, &text, window, cx);
          }
 +        emit_event_full(&self.callback, self.element_id, "paste", |payload| {
 +            payload.value = text;
++            payload.content_before = Some(content_before);
 +            payload.key = Some("insert".to_string());
 +        });
      }
  
      fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-@@ -1950,6 +1973,9 @@ mod tests {
+@@ -1950,6 +1978,9 @@ mod tests {
  
          assert!(!has_binding(&bindings, "cmd-v", &Paste));
          assert!(!has_binding(&bindings, "ctrl-v", &Paste));
@@ -60,7 +65,7 @@ index aa70dda..009e0de 100644
      }
  
      #[test]
-@@ -1960,6 +1986,25 @@ mod tests {
+@@ -1960,6 +1991,25 @@ mod tests {
          assert!(has_binding(&bindings, "ctrl-v", &Paste));
      }
  
@@ -86,6 +91,31 @@ index aa70dda..009e0de 100644
      #[test]
      fn textarea_enter_inserts_a_newline_unless_on_submit_is_set() {
          let textarea = text_editor_bindings(TEXTAREA_KEY_CONTEXT, true, false, true, true);
+diff --git a/packages/native/src/element_tree.rs b/packages/native/src/element_tree.rs
+index 3237cf0..84d9148 100644
+--- a/packages/native/src/element_tree.rs
++++ b/packages/native/src/element_tree.rs
+@@ -112,6 +112,12 @@ pub struct EventPayload {
+     /// Populated for: highlight.
+     pub match_count: Option<f64>,
+ 
++    /// Element content before the reported event applied its own edit.
++    /// Populated for: paste (the draft as it was before the paste action inserted
++    /// `value`), so a host can undo exactly that insertion - reconstructing it from
++    /// the inserted text alone cannot tell a mid-draft paste from a replacing one.
++    pub content_before: Option<String>,
++
+     // ── Modifiers ────────────────────────────────────────────────────
+     pub modifiers: Option<EventModifiers>,
+ }
+@@ -141,6 +147,7 @@ impl Default for EventPayload {
+             start_index: None,
+             end_index: None,
+             match_count: None,
++            content_before: None,
+             modifiers: None,
+         }
+     }
 diff --git a/packages/native/src/lib.rs b/packages/native/src/lib.rs
 index 3f2ab59..fa4b2c0 100644
 --- a/packages/native/src/lib.rs

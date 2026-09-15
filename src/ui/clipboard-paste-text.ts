@@ -53,16 +53,15 @@ export function pasteTargetsSameSession(startedSessionFile: string, currentSessi
 }
 
 /**
- * The draft as it was before the native paste action inserted `inserted`.
+ * The draft a native paste started from, as the runtime reported it.
  *
- * A runtime that owns the clipboard keys inserts at the caret and then reports the inserted text, so the
- * draft it produced is the only record of that insertion. Inverting exactly that text - rather than
- * guessing from a path-shaped string - is what lets the image half compare against the pre-paste draft and
- * drop a pasted image path once the image itself is attached.
+ * The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion
+ * cannot be inverted from the inserted text, and a paste that replaced a selection cannot be inverted at all.
+ * A paste that reported nothing (a DOM paste, or a runtime that predates the field) left the draft as the
+ * current one, which is why that is the fallback rather than a guess.
  */
-export function draftBeforeNativePaste(current: string, inserted: string): string {
-  if (inserted === '' || !current.endsWith(inserted)) return current
-  return current.slice(0, current.length - inserted.length)
+export function draftBeforeNativePaste(report: { contentBefore?: unknown }, currentDraft: string): string {
+  return typeof report.contentBefore === 'string' ? report.contentBefore : currentDraft
 }
 
 /** Pure paste-path classifier shared by src/ui/clipboard-media.ts and its web alias src/dom/shims/clipboard-media.ts. */

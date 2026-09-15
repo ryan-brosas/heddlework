@@ -190,12 +190,13 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
    * The runtime's own paste already inserted its text at the caret, and this event is how the composer learns
    * that happened - not the key, which never reaches a React handler once the native action owns it. The text
    * is therefore already in the draft, and the half a text input cannot hold is the clipboard image, so that
-   * is all this adds, exactly once per paste.
+   * is all this adds, exactly once per paste. `contentBefore` is the runtime's own report of the draft that
+   * insertion replaced, which is what a pasted image path has to be compared against.
    */
-  const handleComposerPaste = (event: { value?: unknown }) => {
+  const handleComposerPaste = (event: { contentBefore?: unknown }) => {
     if (!nativeClipboardEditing()) return
-    const inserted = typeof event.value === 'string' ? event.value : ''
-    startPaste(() => pasteClipboardImage(draftBeforeNativePaste(controller.getSnapshot().editorText, inserted)))
+    const before = draftBeforeNativePaste(event, controller.getSnapshot().editorText)
+    startPaste(() => pasteClipboardImage(before))
   }
 
   /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */

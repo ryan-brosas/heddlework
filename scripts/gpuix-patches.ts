@@ -130,9 +130,10 @@ export function applyRuntimePatches(directory: string, patches: readonly Runtime
     const applied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
     if (applied.exitCode !== 0) git(directory, ['apply', patch.path])
   }
+  // Only this repository's own index is checked here. A nested checkout has its own patch set
+  // (`runtimePatchSets`), and checking it against an empty declaration from the outer set failed every
+  // re-run: the nested tree already carries its applied patch, so the reverse-apply diff is never empty.
   assertDeclaredSource(directory, patches, paths)
-  const nested = resolve(directory, 'zed')
-  if (existsSync(resolve(nested, '.git'))) assertDeclaredSource(nested, [], ['.'])
 }
 
 function digest(value: string | Uint8Array): string {
