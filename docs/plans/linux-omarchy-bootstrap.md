@@ -1,5 +1,27 @@
 # Linux / Omarchy bootstrap
 
+## Browser-free daily-driver acceptance (2026-09-15)
+
+- [x] Reproducible pin + one declared patch set per repository; unexplained build inputs fail the install,
+  and the preserved portal/appearance work is now declared rather than sitting in the cache.
+- [x] Shared native copy/paste through the element's caret-aware action, plus one `paste` event per gesture
+  carrying the inserted text, so the composer attaches the image half exactly once.
+- [x] Composer/session/submit and web-companion behaviour covered; the JavaScript-owner lane still passes.
+- [x] Lane evidence exercises the gesture it claims: `insert-keys-single-owner` presses `Ctrl+Insert` over a
+  real selection and asserts no app-side clipboard write, and the native paste checks are named skips that
+  point at the live compositor lane. Native *copy* is not automatable - see the serial note below - so it is
+  a manual acceptance step.
+- [x] `bun run check` green (517 passed, 0 failed; 101 structural native-renderer skips); `bun run build`
+  matches the installed executable; the stubbed lane passes on the installed build with named skips; the
+  live nested-Hyprland lane passes paste byte-for-byte and reports native copy as manual.
+- [ ] Device-level acceptance on this machine's own Hyprland session: physical `Ctrl+V`/`Super+C` (including
+  the `Ctrl+Insert` copy half, which no automated lane can stimulate) through the
+  desktop launcher, the 150%/100% monitor pair, IME/accessibility, real Pi work, and PTY
+  interruption/cleanup. Automated results do not check this box.
+
+Scope: browser-free Omarchy daily use. Linux CEF, OS notifications and appearance/picker polish are
+separate follow-ups.
+
 Working plan for the Linux (Omarchy: Arch + Hyprland + Wayland, x86_64) support lane of the
 ryan-brosas/heddlework fork. Ground truth over this file: verify pins, branches and gates before
 acting on them.
@@ -215,7 +237,59 @@ controlling terminal. Measured with the production `BunPtyBackend`:
   bytes (`stty -isig`), so the lane asserts what the app owns: exactly one ETX byte, and no copy. Real
   signal delivery stays part of manual Omarchy acceptance and of the real app with the pinned native addon.
 
-## Open items
+## Runtime provenance and native clipboard editing (2026-09-15)
+
+The pins in `gpuix-runtime.json` are immutable upstream revisions, so native work cannot ride in a pin, and
+the checkout is two repositories. Every local native change is now declared in one patch set per repository
+(`patches/README.md`) and applied by `bun run setup:native`:
+
+| Set | Contents |
+| --- | --- |
+| `patches/gpuix/0001-linux-native-runtime.patch` | Clipboard: `Ctrl+Insert` copies in every text context and in the document-selection listener; `Ctrl+V`/`Cmd+V`/`Shift+Insert` run the element's caret-aware paste action, which reports each paste through a `paste` event carrying both the inserted text and the draft it replaced (`contentBefore`), so a host can put back exactly what the insertion changed. Portal: window-parented `org.freedesktop.portal.FileChooser` primitives and system-appearance reads. |
+| `patches/zed/0001-portal-parent-and-appearance.patch` | The GPUI side of those primitives (`parent_window_identifier`, the portal file chooser, system appearance). |
+
+Those rules are properties, not intent:
+
+- the patch is applied idempotently - a patch that is already applied reverse-applies cleanly, so a cached
+  checkout is not patched twice;
+- the build stamp carries the patch-set hash and a fingerprint of the checkout's own native source, so a
+  cached runtime is never reused when either changes;
+- `sourceFingerprint` hashes the checkouts' build inputs by working-tree bytes - including a file that was
+  never staged or tracked - and `assertDeclaredSource` reverse-applies the declared patches in a temporary Git
+  index of those inputs, so anything left over fails the install instead of being built. The earlier revision
+  only warned about such changes by filename, which is how unrecorded native work survived on this machine;
+- the runtime answers `supportsNativeClipboardEditing()`, and the app probes it, so a runtime built before the
+  patch keeps its JavaScript fallback instead of losing the gesture, while a runtime that answers it never sees
+  the app handle that key twice.
+
+The earlier revision bound copy only and left paste to the app, which appended text at the end of the draft:
+on a remapped Omarchy desktop that is the most-used gesture, and it could not place text at the caret. Binding
+paste natively without losing the image half needed a paste *event* that fires once per action with the text
+the runtime inserted. The composer now uses that event - never the key - to attach the clipboard image, so one
+gesture produces one insertion and one image, and the caret is the runtime's.
+
+Verify with `bun run setup:native`, then `bun run smoke:workbench-keys -- --installed` and
+`HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live`. The stubbed Xvfb lane reports every
+gesture the runtime performs itself as a named skip - a stubbed display can observe neither a native
+clipboard write nor a native paste, and a green run must not imply it did. Measured on 2026-09-15 against the installed build
+`sha256=e7a103ea…`: the stubbed lane passed four checks and reported ten named skips (a stubbed display can
+stage neither gesture, and each skip names the lane that can), `insert-keys-single-owner` pressed
+`Ctrl+Insert` over a real selection and saw no app-side write, and `native-round-trip-exact` proved the
+runtime's own paste action with `Ctrl+A`, `Ctrl+C`, `Ctrl+V`. The live lane on a disposable nested Hyprland
+passed with real helpers: `Shift+Insert` submitted exactly the text staged by `wl-copy`, a typed control
+message submitted exactly, and the recorded helper calls show the app reading only the image half.
+
+Its copy check is manual by necessity, and it now proves that instead of hiding it: the check stages a
+sentinel and proves the clipboard is not already the selection before pressing `Ctrl+Insert`, and the
+sentinel survived the gesture. The reason is in the pinned runtime, not in the application:
+`SerialTracker::update` records a Wayland selection serial only from a real key or pointer press event
+(`crates/gpui_linux/src/linux/wayland/client.rs`), and `write_to_clipboard` returns early with "Skipping
+Wayland clipboard ownership request ..." when there is none, so a press delivered through the automation
+surface can never own the clipboard. Physical `Ctrl+V`/`Super+C` behaviour on the operator's own Hyprland
+session stays a manual acceptance step for the same class of reason: those bindings are delivered as insert
+keys before any window sees them.
+
+
 
 - `.github/workflows/check.yml` runs the Linux job `test` on `ubuntu-24.04` with
   `NAPI_RS_NATIVE_LIBRARY_PATH` testing. Its check name is unchanged. The macOS job was removed

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { clipboardTextCommands, createComposerImage, editorTextAfterImagePaste, hydrateMessageImages, runClipboardProcess } from '../src/ui/clipboard-media.ts'
-import { planPasteSubmit, resolveSubmittedText } from '../src/ui/clipboard-paste-text.ts'
+import { draftBeforeNativePaste, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from '../src/ui/clipboard-paste-text.ts'
 
 const PNG = readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png'))
 
@@ -27,6 +27,22 @@ describe('clipboard media', () => {
     const content = messages[0]!.content
     expect(Array.isArray(content)).toBe(true)
     if (Array.isArray(content)) expect(content[1]?.previewPath).toBeTruthy()
+  })
+})
+
+describe('native paste bookkeeping', () => {
+  it('uses the draft the runtime reported before the insertion', () => {
+    // The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion
+    // cannot be inverted from the inserted text, and a replacing paste cannot be inverted at all.
+    expect(draftBeforeNativePaste({ contentBefore: 'explain ' }, 'explain /tmp/a.png')).toBe('explain ')
+    expect(draftBeforeNativePaste({ contentBefore: '' }, 'path')).toBe('')
+  })
+
+  it('falls back to the current draft when no pre-paste report arrived', () => {
+    // A DOM paste performs the insertion in the browser and reports nothing, and an older runtime has no such
+    // field: neither inserted anything the composer needs to undo.
+    expect(draftBeforeNativePaste({}, 'current')).toBe('current')
+    expect(draftBeforeNativePaste({ contentBefore: 7 }, 'current')).toBe('current')
   })
 })
 
@@ -189,5 +205,15 @@ describe('clipboard text readers', () => {
     const windows = clipboardTextCommands('win32')[0] ?? []
     expect(windows[0]).toBe('powershell')
     expect(windows[3]).toBe('Get-Clipboard -Raw')
+  })
+})
+
+describe('paste lifecycle across threads', () => {
+  it('keeps a paste with the thread it started in', () => {
+    // The composer is not remounted on a switch, so a read that finishes later must be dropped instead of
+    // being written into the thread the user is looking at now.
+    expect(pasteTargetsSameSession('/tmp/a.jsonl', '/tmp/a.jsonl')).toBe(true)
+    expect(pasteTargetsSameSession('/tmp/a.jsonl', '/tmp/b.jsonl')).toBe(false)
+    expect(pasteTargetsSameSession('', '/tmp/b.jsonl')).toBe(false)
   })
 })

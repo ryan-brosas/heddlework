@@ -2,9 +2,10 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, un
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
-import { REQUIRED_NATIVE_METHODS } from '../src/native-runtime.ts'
+import { NATIVE_CLIPBOARD_EDITING_METHOD, REQUIRED_NATIVE_METHODS } from '../src/native-runtime.ts'
 import { nativeBuildCommand, parseGpuixSourcePin } from './gpuix-source.ts'
 import { installNativeAddon, nativeAddonFilename } from './gpuix-artifacts.ts'
+import { applyRuntimePatchSets, runtimePatchSetFingerprint, runtimePatchSets, runtimeSourceFingerprint } from './gpuix-patches.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const targetAddon = nativeAddonFilename(process.platform, process.arch)
@@ -24,11 +25,31 @@ const environment = {
 
 await checkout(source, pin.gpuixRepository, pin.gpuixRevision, 'heddlework-runtime')
 await checkout(resolve(source, 'zed'), pin.zedRepository, pin.zedRevision, 'gpuix')
+// The pins are upstream revisions, so local native fixes live in patches/gpuix and are applied here. The
+// runtime a checkout builds is then reproducible from this repository plus that patch set, and a patch
+// that no longer matches the pin fails before Cargo spends minutes on a build.
+// Both repositories of the checkout carry local patches, and each is verified against its own index.
+const patches = runtimePatchSets(source, resolve(root, 'patches'))
+for (const set of patches) {
+  for (const patch of set.patches) console.log(`[heddlework] patch ${set.name}/${patch.name}`)
+}
+// Throws on source no declared patch explains, so a cached checkout cannot smuggle an unrecorded
+// native change into the runtime this repository claims to build.
+applyRuntimePatchSets(patches)
 await run(['bun', 'install', '--frozen-lockfile'], source)
 const stampPath = resolve(source, '.heddlework-build.json')
-// The app asserts the same list at startup, so the installer cannot drift from it.
-const NATIVE_API_CHECK = `const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ${JSON.stringify([...REQUIRED_NATIVE_METHODS])}) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name)`
-const stamp = JSON.stringify({ ...pin, platform: process.platform, arch: process.arch, cef: process.platform === 'darwin' && process.env.HEDDLEWORK_WITHOUT_CEF !== '1' })
+// The app asserts the same list at startup, so the installer cannot drift from it. The clipboard
+// capability is part of the check: a runtime without native copy/paste editing is not the runtime the
+// installed app is written against, and a cache that answers the older API must not be reused.
+const NATIVE_API_CHECK = `const { GpuixRenderer } = await import("@gpuix/react"); for (const name of ${JSON.stringify([...REQUIRED_NATIVE_METHODS])}) if (typeof GpuixRenderer.prototype[name] !== "function") throw new Error("Missing native API: " + name); if (typeof GpuixRenderer.prototype[${JSON.stringify(NATIVE_CLIPBOARD_EDITING_METHOD)}] !== "function") throw new Error("Missing native API: " + ${JSON.stringify(NATIVE_CLIPBOARD_EDITING_METHOD)})`
+const stamp = JSON.stringify({
+  ...pin,
+  platform: process.platform,
+  arch: process.arch,
+  cef: process.platform === 'darwin' && process.env.HEDDLEWORK_WITHOUT_CEF !== '1',
+  patches: runtimePatchSetFingerprint(patches),
+  source: runtimeSourceFingerprint(source),
+})
 // @gpuix/native loads the binary sitting in its own directory before falling back to the
 // published platform package, so the pinned build has to be installed under its napi name to
 // be the one the app - and the API check below - actually runs.

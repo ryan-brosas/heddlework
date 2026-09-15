@@ -23,6 +23,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { Readable } from 'node:stream'
 import { connectStdio, type App } from '@gpuix/react/automation'
+import { GpuixRenderer } from '@gpuix/react'
+import { runtimeOwnsNativeClipboardEditing } from '../src/native-runtime.ts'
 import { runWorkbenchKeyLane } from './linux-workbench-key-lane.ts'
 import {
   allocateDisplayNumber,
@@ -328,7 +330,13 @@ async function main(): Promise<void> {
   const helper = clipboardLaneHelper(stubs.paths)
   let checks: Awaited<ReturnType<typeof runWorkbenchKeyLane>>
   try {
-    checks = await runWorkbenchKeyLane(app, { compositor, nonce: randomBytes(4).toString('hex'), clipboard: helper })
+    checks = await runWorkbenchKeyLane(app, {
+      compositor,
+      nonce: randomBytes(4).toString('hex'),
+      clipboard: helper,
+      // Which owner handles the insert keys decides what this lane can observe; see WorkbenchKeyLaneOptions.
+      insertKeyOwner: runtimeOwnsNativeClipboardEditing(GpuixRenderer.prototype) ? 'native' : 'javascript',
+    })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     const violations = helper.violations()
@@ -340,9 +348,11 @@ async function main(): Promise<void> {
   if (violations.length > 0) {
     return await teardown(1, `the clipboard helpers rejected ${violations.length} invocation(s):\n${violations.join('\n')}`)
   }
-  for (const check of checks) console.log(`pass ${check.name}: ${check.evidence}`)
+  for (const check of checks) console.log(`${check.skipped === true ? 'skip' : 'pass'} ${check.name}: ${check.evidence}`)
   console.log(`clipboard helpers: ${helper.helperInvocations().length} read(s), ${helper.copyWrites()} write(s), 0 invalid invocations`)
-  console.log(`workbench key lane complete: ${checks.length} checks passed on ${compositor} (${display === '' ? process.env.WAYLAND_DISPLAY ?? 'current session' : display})`)
+  const passed = checks.filter((check) => check.skipped !== true).length
+  const skipped = checks.length - passed
+  console.log(`workbench key lane complete: ${passed} checks passed${skipped === 0 ? '' : `, ${skipped} skipped because the runtime owns the insert keys`} on ${compositor} (${display === '' ? process.env.WAYLAND_DISPLAY ?? 'current session' : display})`)
   return await teardown(0)
 }
 

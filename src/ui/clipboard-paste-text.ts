@@ -1,3 +1,5 @@
+import type { ComposerImage } from '../pi/types.ts'
+
 /**
  * What a submit should do while a paste may be pending.
  *
@@ -38,6 +40,65 @@ export async function resolveSubmittedText(options: {
   if (options.pending === null) return options.eventValue
   await options.pending.catch(() => undefined)
   return options.currentDraft() || options.eventValue
+}
+
+/**
+ * Whether a paste or submit still belongs to the thread it started in.
+ *
+ * The clipboard read is asynchronous and the composer is not remounted when the user clicks a thread, so a
+ * read, an attached image, or a waiting submit can outlive the session it began in. Comparing the session
+ * file - not the session object identity - is what keeps a late result from being written into the thread
+ * the user is looking at now, where it would look like the paste went to the wrong place.
+ */
+export function pasteTargetsSameSession(startedSessionFile: string, currentSessionFile: string): boolean {
+  return startedSessionFile === currentSessionFile
+}
+
+/**
+ * The draft a native paste started from, as the runtime reported it.
+ *
+ * The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion
+ * cannot be inverted from the inserted text, and a paste that replaced a selection cannot be inverted at all.
+ * A paste that reported nothing (a DOM paste, or a runtime that predates the field) left the draft as the
+ * current one, which is why that is the fallback rather than a guess.
+ */
+/**
+ * Attach the clipboard image half of a paste, unless the thread changed while the clipboard was read.
+ *
+ * Both paste paths need this: the read is asynchronous and the composer is not remounted when the user
+ * clicks a thread. The thread the paste started in is compared against the *current* one at the moment of
+ * the write, and the current one is read through a callback rather than captured earlier: the composer's
+ * React effect that tracks the session runs after the render that switched threads, so a read resolving
+ * inside that window would pass a check against a value React had not updated yet and attach the previous
+ * thread's image to the thread now on screen. The callback reads the controller snapshot, which the switch
+ * updates synchronously.
+ */
+export async function attachClipboardImage(options: {
+  readonly startedSessionFile: string
+  readonly currentSessionFile: () => string
+  readonly readImage: () => Promise<ComposerImage | undefined>
+  readonly attachImage: (image: ComposerImage) => void
+}): Promise<'attached' | 'unavailable' | 'stale'> {
+  const image = await options.readImage()
+  if (!image) return 'unavailable'
+  if (!pasteTargetsSameSession(options.startedSessionFile, options.currentSessionFile())) return 'stale'
+  options.attachImage(image)
+  return 'attached'
+}
+
+/**
+ * Whether the composer holds anything a submit could send.
+ *
+ * Callers that decide about a submit read the live draft and the live attachments, never the render-time
+ * props: a submit that waited for a pending paste continues in the closure of the render that started it, so
+ * an image that paste attached during the wait would be missing and an image-only paste would submit nothing.
+ */
+export function hasSubmittableDraft(text: string, images: readonly ComposerImage[]): boolean {
+  return text.trim().length > 0 || images.length > 0
+}
+
+export function draftBeforeNativePaste(report: { contentBefore?: unknown }, currentDraft: string): string {
+  return typeof report.contentBefore === 'string' ? report.contentBefore : currentDraft
 }
 
 /** Pure paste-path classifier shared by src/ui/clipboard-media.ts and its web alias src/dom/shims/clipboard-media.ts. */

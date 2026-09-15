@@ -345,6 +345,7 @@ const Field = forwardRef<unknown, AnyProps & { multiline: boolean }>(function Fi
   const maxRows = Number(props.maxRows ?? (multiline ? 10 : 1))
   const onChange = props.onChange as ((event: EventPayload) => void) | undefined
   const onSubmit = props.onSubmit as ((event: EventPayload) => void) | undefined
+  const onPaste = props.onPaste as ((event: EventPayload) => void) | undefined
   const onKeyDown = props.onKeyDown as ((event: EventPayload) => void) | undefined
   const onKeyUp = props.onKeyUp as ((event: EventPayload) => void) | undefined
   const onFocus = props.onFocus as ((event: EventPayload) => void) | undefined
@@ -380,6 +381,9 @@ const Field = forwardRef<unknown, AnyProps & { multiline: boolean }>(function Fi
       if (event.key === 'Tab' && onKeyDown) event.preventDefault()
     },
     onKeyUp: (event: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => onKeyUp?.(keyPayload(id, 'keyUp', event)),
+    // The browser performs the paste itself, so the element reports it rather than replacing it: the app
+    // treats a native and a DOM paste event the same way.
+    onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => onPaste?.(plainPayload(id, 'paste', { value: event.clipboardData?.getData('text/plain') ?? '' })),
     onFocus: () => onFocus?.(plainPayload(id, 'focus')),
     onBlur: () => onBlur?.(plainPayload(id, 'blur')),
     onClick: (event: React.MouseEvent) => onClick?.(mousePayload(id, 'click', event)),
