@@ -102,7 +102,11 @@ as if it had no clipboard at all - measured on this box against the installed bu
 selection through the window-level listener in `src/main.tsx`. Paste from `Shift+Insert` in the
 composer appends to the draft, since only the native path knows the caret, and attaches the image
 instead when the clipboard holds one - a remapped desktop has no other way to paste a screenshot; the
-terminal inserts at the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
+terminal inserts at the cursor as usual. A clipboard read is asynchronous, so every way of submitting
+the composer - Enter, Alt+Enter and the Send button - waits for a paste already in flight and then
+submits the draft that paste produced (`resolveSubmittedText`). Without that wait an Enter pressed
+right after the paste key submits the pre-paste draft and the pasted text reappears in the composer,
+which reads as "paste did nothing". `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
 terminal routing, both on Linux without a compositor.
 
 The wiring itself is proven end to end by a lane that runs the real application in demo mode on a

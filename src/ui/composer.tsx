@@ -384,7 +384,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               tabIndex={matchingCommands.length > 0 ? -1 : 0}
               queueHintVisible={queueHintOpen}
               width={primaryActionWidth}
-              onSend={() => send(state.editorText)}
+              onSend={() => submitDraft(state.editorText)}
               onStop={() => void controller.abort().catch(notifyFailure(controller, 'Could not stop the run'))}
             />
           </div>
