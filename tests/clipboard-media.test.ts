@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { clipboardTextCommands, createComposerImage, editorTextAfterImagePaste, hydrateMessageImages, runClipboardProcess } from '../src/ui/clipboard-media.ts'
-import { resolveSubmittedText } from '../src/ui/clipboard-paste-text.ts'
+import { planPasteSubmit, resolveSubmittedText } from '../src/ui/clipboard-paste-text.ts'
 
 const PNG = readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png'))
 
@@ -31,6 +31,19 @@ describe('clipboard media', () => {
 })
 
 describe('submitting while a paste is pending', () => {
+  it('sends the renderer value when no paste is pending', () => {
+    expect(planPasteSubmit({ pending: null, claimed: false, eventValue: 'typed' })).toEqual({ action: 'send', text: 'typed' })
+  })
+
+  it('waits for a paste that no submit has claimed yet', () => {
+    expect(planPasteSubmit({ pending: Promise.resolve(), claimed: false, eventValue: 'typed' })).toEqual({ action: 'wait' })
+  })
+
+  it('ignores a second submit for the same paste', () => {
+    // Enter pressed twice, or Enter followed by the Send button, must not send the same draft twice.
+    expect(planPasteSubmit({ pending: Promise.resolve(), claimed: true, eventValue: 'typed' })).toEqual({ action: 'ignore' })
+  })
+
   it('uses the renderer value when nothing is pending', async () => {
     expect(await resolveSubmittedText({ pending: null, eventValue: 'typed', currentDraft: () => 'stale' })).toBe('typed')
   })

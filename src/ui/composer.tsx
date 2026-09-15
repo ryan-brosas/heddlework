@@ -8,7 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
-import { resolveSubmittedText } from './clipboard-paste-text.ts'
+import { planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
@@ -27,6 +27,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const [pastingImage, setPastingImage] = useState(false)
   /** The paste the keystroke started, so a submit that arrives first cannot send the pre-paste draft. */
   const pendingPaste = useRef<Promise<void> | null>(null)
+  /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
+  const pendingPasteClaimed = useRef(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
@@ -167,11 +169,22 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const trackPaste = (work: Promise<void>): void => {
     const tracked = work.then(() => undefined, () => undefined)
     pendingPaste.current = tracked
-    void tracked.then(() => { if (pendingPaste.current === tracked) pendingPaste.current = null })
+    void tracked.then(() => {
+      if (pendingPaste.current !== tracked) return
+      pendingPaste.current = null
+      pendingPasteClaimed.current = false
+    })
   }
 
   /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
   const submitDraft = (eventValue: string, queue = false): void => {
+    const plan = planPasteSubmit({ pending: pendingPaste.current, claimed: pendingPasteClaimed.current, eventValue })
+    if (plan.action === 'ignore') return
+    if (plan.action === 'send') {
+      send(plan.text, queue)
+      return
+    }
+    pendingPasteClaimed.current = true
     void resolveSubmittedText({
       pending: pendingPaste.current,
       eventValue,

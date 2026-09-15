@@ -1,4 +1,27 @@
 /**
+ * What a submit should do while a paste may be pending.
+ *
+ * The renderer keeps several ways to submit the composer, and they can arrive while the same paste is still
+ * being read: Enter pressed twice, or Enter followed by the Send button. The first submit claims the paste;
+ * a second one that arrives while that submit is still waiting must be dropped, or the same draft is sent
+ * twice (`send` is idempotent only for an empty draft).
+ */
+export type PasteSubmitPlan =
+  | { readonly action: 'send'; readonly text: string }
+  | { readonly action: 'wait' }
+  | { readonly action: 'ignore' }
+
+export function planPasteSubmit(input: {
+  readonly pending: Promise<unknown> | null
+  readonly claimed: boolean
+  readonly eventValue: string
+}): PasteSubmitPlan {
+  if (input.pending === null) return { action: 'send', text: input.eventValue }
+  if (input.claimed) return { action: 'ignore' }
+  return { action: 'wait' }
+}
+
+/**
  * Text a submit should send while a paste is still in flight.
  *
  * A clipboard read is asynchronous and the `Shift+Insert` path starts it without blocking the composer, so
