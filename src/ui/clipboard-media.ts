@@ -49,21 +49,13 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
 }
 
 /**
- * Read plain text from the clipboard, using the same helpers as the write direction so both agree on
- * which tool owns the clipboard per platform. Readers answer from stdout, so a helper that hands its
- * stdio to a surviving selection owner still terminates.
- */
-/**
- * Plain-text clipboard readers in the order they are tried. `wl-paste` infers the clipboard type, so
- * a non-text clipboard fails here instead of yielding binary; `--no-newline` keeps the payload exactly
- * what the user copied, because bare `wl-paste` appends a newline that was never on the clipboard.
- * Windows uses the same reasoning: `Get-Clipboard -Raw` returns the text itself, where the default
- * adds the newline that terminated it.
+ * Request text explicitly: MIME inference can return image bytes decoded as UTF-8. On Wayland,
+ * --no-newline also prevents wl-paste from appending a newline absent from the clipboard.
  */
 export function clipboardTextCommands(platform: NodeJS.Platform): readonly (readonly string[])[] {
   if (platform === 'darwin') return [['/usr/bin/pbpaste']]
   if (platform === 'win32') return [['powershell', '-NoProfile', '-Command', 'Get-Clipboard -Raw']]
-  return [['wl-paste', '--no-newline'], ['xclip', '-selection', 'clipboard', '-o']]
+  return [['wl-paste', '--no-newline', '--type', 'text'], ['xclip', '-selection', 'clipboard', '-target', 'UTF8_STRING', '-o']]
 }
 
 /**
@@ -278,7 +270,8 @@ export async function runClipboardProcess(
       settled = true
       if (drainTimer) clearTimeout(drainTimer)
       if (wallTimer) clearTimeout(wallTimer)
-      if (killTimer) clearTimeout(killTimer)
+      // A failed result may settle before the helper dies. Keep its escalation timer until exit;
+      // cancelling it here would let a SIGTERM-ignoring helper survive the timeout or output bound.
       // Release the pipes too: a helper we stopped must not hold the read open through its stdio.
       if (child) {
         child.stdin.destroy()
@@ -346,6 +339,8 @@ export async function runClipboardProcess(
     // The normal path: every pipe closed, so the captured stdout is complete.
     child.on('close', (code) => (completion === 'stdout-end' ? finishReader(code, true) : finishWithStatus(code)))
     child.on('exit', (code) => {
+      if (killTimer) clearTimeout(killTimer)
+      killTimer = undefined
       exited = true
       exitCode = code
       if (completion === 'stdout-end') {

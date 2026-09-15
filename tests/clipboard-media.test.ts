@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { clipboardTextCommands, createComposerImage, editorTextAfterImagePaste, hydrateMessageImages, runClipboardProcess } from '../src/ui/clipboard-media.ts'
 
 const PNG = readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png'))
@@ -82,6 +83,38 @@ describe('clipboard helper completion', () => {
     expect(result).toEqual({ ok: false, stdout: Buffer.alloc(0) })
   })
 
+  for (const failure of ['timeout', 'output-limit'] as const) {
+    itUnix(`kills a helper that ignores SIGTERM after ${failure}`, async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'hw-clipboard-kill-'))
+      const pidPath = join(directory, 'pid')
+      let pid: number | undefined
+      const alive = (): boolean => {
+        if (pid === undefined) return false
+        try { process.kill(pid, 0); return true } catch { return false }
+      }
+      try {
+        const script = [
+          "const { writeFileSync } = require('node:fs')",
+          "process.on('SIGTERM', () => {})",
+          `writeFileSync(${JSON.stringify(pidPath)}, String(process.pid))`,
+          'setInterval(() => {}, 100)',
+          failure === 'output-limit' ? 'setTimeout(() => process.stdout.write("x".repeat(8192)), 50)' : '',
+        ].join(';')
+        const result = await runClipboardProcess(process.execPath, ['-e', script], {
+          completion: 'stdout-end', timeoutMs: 1_000, maxBytes: 32,
+        })
+        pid = Number(readFileSync(pidPath, 'utf8'))
+        expect(result).toEqual({ ok: false, stdout: Buffer.alloc(0) })
+        const deadline = performance.now() + 1_000
+        while (alive() && performance.now() < deadline) await Bun.sleep(20)
+        expect(alive()).toBe(false)
+      } finally {
+        if (alive()) process.kill(pid!, 'SIGKILL')
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }, 5_000)
+  }
+
   it('does not block on noisy stderr or include it in the clipboard payload', async () => {
     const result = await runClipboardProcess(process.execPath, ['-e', 'process.stderr.write("x".repeat(1024 * 1024)); process.stdout.write("ok")'], {
       completion: 'stdout-end', timeoutMs: 1_000,
@@ -108,7 +141,10 @@ describe('clipboard text readers', () => {
   it('reads Wayland text without the newline wl-paste would add', () => {
     // Bare `wl-paste` appends a newline that was never on the clipboard, so every paste carried a
     // trailing line the user never copied.
-    expect(clipboardTextCommands('linux')).toEqual([['wl-paste', '--no-newline'], ['xclip', '-selection', 'clipboard', '-o']])
+    expect(clipboardTextCommands('linux')).toEqual([
+      ['wl-paste', '--no-newline', '--type', 'text'],
+      ['xclip', '-selection', 'clipboard', '-target', 'UTF8_STRING', '-o'],
+    ])
   })
 
   it('keeps one reader shape per supported platform', () => {

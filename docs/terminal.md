@@ -15,6 +15,12 @@ Terminal key routing resolves copy, paste, and interrupt commands **before** ter
 - **Copy**: `Ctrl+Shift+C` (Linux/Windows) and `Command+C` (macOS). A copy command writes **zero PTY bytes**, including when the clipboard write fails.
 - **Interrupt**: plain `Ctrl+C` writes exactly one ETX, never a copy.
 - **Paste**: `Ctrl+V` / `Command+V` reads the clipboard once and writes it to the focused session, wrapped in bracketed-paste markers when the emulator enabled DEC mode 2004. A failed read stays local and never falls through to key encoding.
+
+The Linux text readers name the type they want (`wl-paste --no-newline --type text`, `xclip -target
+UTF8_STRING -type`): an inferred MIME type can hand image bytes to a UTF-8 decode. A helper that overruns its
+wall bound or output bound is killed with SIGTERM and then SIGKILL, and that escalation must survive the
+failed result - a settled failure used to cancel its own kill timer, so a helper that ignored SIGTERM stayed
+alive. `tests/clipboard-media.test.ts` runs both cases against a real child that traps SIGTERM.
 - **Direct events**: `textInput` and `paste` events carry their own text and bypass keyboard encoding.
 
 Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
