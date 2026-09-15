@@ -21,6 +21,15 @@ UTF8_STRING -type`): an inferred MIME type can hand image bytes to a UTF-8 decod
 wall bound or output bound is killed with SIGTERM and then SIGKILL, and that escalation must survive the
 failed result - a settled failure used to cancel its own kill timer, so a helper that ignored SIGTERM stayed
 alive. `tests/clipboard-media.test.ts` runs both cases against a real child that traps SIGTERM.
+
+**PTY lifetime: close on stream end, never on process exit.** Bun resolves `subprocess.exited` before it
+dispatches the last chunk it already read, so closing the PTY from the exit path dropped the final output of
+`printf x; exit 0` in 1 of 60 measured runs - the intermittent `hello-pty` failure in CI. `BunPtyBackend`
+now releases the PTY (and flushes the output buffer) from the terminal's own stream-end callback, which also
+keeps a session readable while a child still holds the slave. The limitation that remains is upstream: a
+child that writes *after* the shell exits is not delivered at all (measured through the same probe), because
+Bun stops reading the PTY when the spawned process exits. `tests/terminal-pty.test.ts` pins the ordering
+deterministically through `BunPtyBackend`'s injected PTY lifecycle.
 - **Direct events**: `textInput` and `paste` events carry their own text and bypass keyboard encoding.
 
 Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.

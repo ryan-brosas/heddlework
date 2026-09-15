@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { bunTerminalAvailable, BunPtyBackend, TerminalOutputBuffer } from '../src/terminal/backend.ts'
+import type { TerminalProcessStatus } from '../src/terminal/types.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 import { dispatchTerminalKey, type TerminalKeyEffects } from '../src/terminal/keys.ts'
 import { TERMINAL_COPY_SOURCE, TERMINAL_INTERRUPT_MARKER, TERMINAL_PASTE_ECHO, TERMINAL_SMOKE_SHELL } from '../scripts/linux-terminal-smoke-contract.ts'
@@ -71,6 +72,45 @@ describe('terminal output buffering', () => {
   })
 })
 
+/**
+ * A PTY whose data and stream-end dispatch the test controls, so the ordering Bun produces under load
+ * (process exit first, final chunk second) is reproducible instead of rare.
+ */
+interface FakeTerminalOptions {
+  data?: (terminal: unknown, chunk: Uint8Array) => void
+  exit?: (terminal: unknown, exitCode: number | null, signal: string | null) => void
+}
+
+class FakeTerminal {
+  static last: FakeTerminal | undefined
+  closed = false
+  readonly #options: FakeTerminalOptions
+
+  constructor(options: FakeTerminalOptions = {}) {
+    this.#options = options
+    FakeTerminal.last = this
+  }
+
+  write(): number { return 0 }
+  resize(): void {}
+  close(): void { this.closed = true }
+  deliver(text: string): void { this.#options.data?.(this, encode(text)) }
+  end(): void { this.#options.exit?.(this, 0, null) }
+}
+
+class FakeSubprocess {
+  readonly pid = 4242
+  readonly exited: Promise<number>
+  #resolve: ((code: number) => void) | undefined
+
+  constructor() {
+    this.exited = new Promise((resolve) => { this.#resolve = resolve })
+  }
+
+  finish(code: number): void { this.#resolve?.(code) }
+  kill(): void {}
+}
+
 describePty('Bun.Terminal PTY', () => {
   it('runs a login-free shell command through the session service', async () => {
     const service = new TerminalSessionService({
@@ -93,6 +133,38 @@ describePty('Bun.Terminal PTY', () => {
     expect(service.grid(id)?.viewport.some((row) => row.text.includes('hello-pty'))).toBe(true)
     await service.dispose()
   }, 8_000)
+
+  /**
+   * Bun resolves `subprocess.exited` before it dispatches the last chunk. Closing the PTY from the exit
+   * path therefore dropped the shell's final output in 1 of 60 measured runs of `printf x; exit 0` - the
+   * intermittent failure this test pins down deterministically through the injected PTY lifecycle.
+   */
+  it('keeps the PTY open until its stream ends, so the last output still arrives', async () => {
+    const subprocess = new FakeSubprocess()
+    const backend = new BunPtyBackend({
+      createTerminal: FakeTerminal as never,
+      spawn: (() => subprocess) as never,
+    })
+    const ptyProcess = await backend.spawn({ cwd: process.cwd(), cols: 40, rows: 10, shell: '/bin/sh', args: [] })
+    const terminal = FakeTerminal.last!
+    const chunks: string[] = []
+    const statuses: TerminalProcessStatus[] = []
+    ptyProcess.onData((chunk) => chunks.push(decode(chunk)))
+    ptyProcess.onExit((status) => statuses.push(status))
+
+    // The process exits first, then the PTY dispatches the bytes it had already read.
+    subprocess.finish(0)
+    await Bun.sleep(5)
+    expect(statuses).toEqual([{ kind: 'exited', exitCode: 0 }])
+    expect(terminal.closed).toBe(false)
+
+    terminal.deliver('hello-pty')
+    await Bun.sleep(5)
+    expect(chunks.join('')).toBe('hello-pty')
+
+    terminal.end()
+    expect(terminal.closed).toBe(true)
+  })
 
   const itUnix = process.platform === 'win32' ? it.skip : it
   itUnix('resizes a foreground TUI process group', async () => {
