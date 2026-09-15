@@ -8,7 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
-import { resolveSubmittedText } from './clipboard-paste-text.ts'
+import { planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
@@ -27,6 +27,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const [pastingImage, setPastingImage] = useState(false)
   /** The paste the keystroke started, so a submit that arrives first cannot send the pre-paste draft. */
   const pendingPaste = useRef<Promise<void> | null>(null)
+  /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
+  const pendingPasteClaimed = useRef(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
@@ -164,14 +166,29 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }
 
   /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */
-  const trackPaste = (work: Promise<void>): void => {
-    const tracked = work.then(() => undefined, () => undefined)
-    pendingPaste.current = tracked
-    void tracked.then(() => { if (pendingPaste.current === tracked) pendingPaste.current = null })
+  const startPaste = (work: () => Promise<void>): void => {
+    // An overlapping key joins the running read: replacing the marker here would clear it while the
+    // clipboard read is still in flight, and a submit in that window would send the pre-paste draft.
+    if (pendingPaste.current !== null) return
+    const started = work()
+    pendingPaste.current = started
+    pendingPasteClaimed.current = false
+    void started.catch(() => undefined).then(() => {
+      if (pendingPaste.current !== started) return
+      pendingPaste.current = null
+      pendingPasteClaimed.current = false
+    })
   }
 
   /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
   const submitDraft = (eventValue: string, queue = false): void => {
+    const plan = planPasteSubmit({ pending: pendingPaste.current, claimed: pendingPasteClaimed.current, eventValue })
+    if (plan.action === 'ignore') return
+    if (plan.action === 'send') {
+      send(plan.text, queue)
+      return
+    }
+    pendingPasteClaimed.current = true
     void resolveSubmittedText({
       pending: pendingPaste.current,
       eventValue,
@@ -235,8 +252,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       completeActiveSlashCommand()
       keepComposerFocus()
     }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) trackPaste(pasteClipboardImage(state.editorText))
-    if (resolveInsertKeyCommand(event) === 'paste') trackPaste(pasteClipboardIntoComposer())
+    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) startPaste(() => pasteClipboardImage(state.editorText))
+    if (resolveInsertKeyCommand(event) === 'paste') startPaste(pasteClipboardIntoComposer)
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       submitDraft(state.editorText, true)
@@ -384,7 +401,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               tabIndex={matchingCommands.length > 0 ? -1 : 0}
               queueHintVisible={queueHintOpen}
               width={primaryActionWidth}
-              onSend={() => send(state.editorText)}
+              onSend={() => submitDraft(state.editorText)}
               onStop={() => void controller.abort().catch(notifyFailure(controller, 'Could not stop the run'))}
             />
           </div>
