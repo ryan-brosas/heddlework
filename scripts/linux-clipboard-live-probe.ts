@@ -176,8 +176,10 @@ try {
   console.error(await draftView('before-paste'))
   await composer.press('enter')
   const pasted = await waitForRow(pasteMarker)
-  if (pasted) pass('shift-insert-pastes-real-clipboard', `the composer submitted the real clipboard text ${JSON.stringify(pasteMarker)} through the real wl-paste path`)
-  else {
+  // Without a validated submit path a paste miss measures the harness, not the paste path.
+  if (controlMarker === '') inconclusive.push('shift-insert-pastes-real-clipboard')
+  if (pasted && controlMarker !== '') pass('shift-insert-pastes-real-clipboard', `the composer submitted the real clipboard text ${JSON.stringify(pasteMarker)} through the real wl-paste path`)
+  else if (controlMarker !== '') {
     fail('shift-insert-pastes-real-clipboard', `no submitted message matched ${JSON.stringify(pasteMarker)} (clipboard held ${JSON.stringify(staged.stdout)}, exit ${staged.code}); rows=${JSON.stringify(await rows())}${stderr === '' ? '' : ` stderr=${stderr.slice(-300)}`}`)
   }
 
@@ -211,8 +213,9 @@ try {
     await composer.press('ctrl-insert')
     await Bun.sleep(1_200)
     const read = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
-    if (read.stdout.includes(selectedMarker)) pass('ctrl-insert-copies-real-selection', `this session's clipboard holds the dragged selection: ${JSON.stringify(read.stdout)}`)
-    else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) without ${JSON.stringify(selectedMarker)}`)
+    // Exact equality: a clipboard that merely contains the selection is not the selection.
+    if (read.stdout === selectedText) pass('ctrl-insert-copies-real-selection', `this session's clipboard holds exactly the dragged selection: ${JSON.stringify(read.stdout)}`)
+    else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) instead of the dragged selection ${JSON.stringify(selectedText)}`)
     }
   }
 } finally {

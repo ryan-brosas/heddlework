@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { clipboardTextCommands, createComposerImage, editorTextAfterImagePaste, hydrateMessageImages, runClipboardProcess } from '../src/ui/clipboard-media.ts'
+import { resolveSubmittedText } from '../src/ui/clipboard-paste-text.ts'
 
 const PNG = readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png'))
 
@@ -26,6 +27,29 @@ describe('clipboard media', () => {
     const content = messages[0]!.content
     expect(Array.isArray(content)).toBe(true)
     if (Array.isArray(content)) expect(content[1]?.previewPath).toBeTruthy()
+  })
+})
+
+describe('submitting while a paste is pending', () => {
+  it('uses the renderer value when nothing is pending', async () => {
+    expect(await resolveSubmittedText({ pending: null, eventValue: 'typed', currentDraft: () => 'stale' })).toBe('typed')
+  })
+
+  it('waits for the paste and submits the draft it produced', async () => {
+    // Without the wait, Enter sends the pre-paste draft and the pasted text reappears in the composer.
+    let draft = 'pre-paste'
+    const pending = (async () => { await Bun.sleep(20); draft = 'pre-paste-pasted' })()
+    expect(await resolveSubmittedText({ pending, eventValue: draft, currentDraft: () => draft })).toBe('pre-paste-pasted')
+  })
+
+  it('keeps the renderer value when the paste added nothing', async () => {
+    const pending = (async () => { await Bun.sleep(10) })()
+    expect(await resolveSubmittedText({ pending, eventValue: 'kept', currentDraft: () => '' })).toBe('kept')
+  })
+
+  it('still submits when the paste read failed', async () => {
+    const pending = Promise.reject(new Error('clipboard read failed'))
+    expect(await resolveSubmittedText({ pending, eventValue: 'typed', currentDraft: () => 'typed' })).toBe('typed')
   })
 })
 

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { captureProcessOutput, directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, systemTargetCommand } from '../src/ui/open-external.ts'
 
 describe('external targets', () => {
@@ -20,6 +23,29 @@ describe('bounded CLI picker fallback', () => {
   it('still returns the output of a picker that finishes inside the bound', async () => {
     expect(await captureProcessOutput('/bin/sh', ['-c', 'printf /tmp/from-picker'], 5_000)).toBe('/tmp/from-picker')
   }, 8_000)
+
+  it('escalates to SIGKILL when a picker ignores SIGTERM', async () => {
+    // A blocked KDE/Qt service can leave kdialog alive past its bound; the escalation must outlive the
+    // settled result, so this asserts the child is really gone rather than just that the promise resolved.
+    const directory = mkdtempSync(join(tmpdir(), 'hw-picker-kill-'))
+    const pidPath = join(directory, 'pid')
+    let pid: number | undefined
+    const alive = (): boolean => {
+      if (pid === undefined) return false
+      try { process.kill(pid, 0); return true } catch { return false }
+    }
+    try {
+      const output = await captureProcessOutput('/bin/sh', ['-c', `printf '%s' "$$" > "${pidPath}"; trap '' TERM; while :; do sleep 1; done`], 300)
+      pid = Number(readFileSync(pidPath, 'utf8'))
+      expect(output).toBeUndefined()
+      const deadline = performance.now() + 2_000
+      while (alive() && performance.now() < deadline) await Bun.sleep(20)
+      expect(alive()).toBe(false)
+    } finally {
+      if (alive()) process.kill(pid!, 'SIGKILL')
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 6_000)
 })
 
 describe('workspace directory picker', () => {

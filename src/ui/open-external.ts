@@ -105,6 +105,9 @@ function openSystemTarget(target: string): void {
   }
 }
 
+/** Grace between the soft and hard kill of a picker that overran its bound. */
+const TERMINATION_GRACE_MS = 250
+
 /**
  * Run one CLI picker and report its output. The bound is injectable so the timeout itself is
  * regression-tested instead of waiting out the real session budget.
@@ -121,9 +124,12 @@ export function captureProcessOutput(
   return new Promise((resolveOutput) => {
     let settled = false
     let child: ChildProcess | undefined
+    let killTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
-      // Kill first: a picker blocked on its own startup must not hold the promise open.
+      // Settle the caller now, then escalate: a picker that ignores SIGTERM must not outlive its bound.
+      // The escalation is cleared by the child's own exit, never by the settled result.
       try { child?.kill('SIGTERM') } catch { /* already gone */ }
+      killTimer = setTimeout(() => { try { child?.kill('SIGKILL') } catch { /* already gone */ } }, TERMINATION_GRACE_MS)
       finish()
     }, timeoutMs)
     const finish = (value?: string) => {
@@ -145,7 +151,10 @@ export function captureProcessOutput(
     }
     const chunks: Buffer[] = []
     stdout.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)))
-    child.on('error', () => finish())
-    child.on('close', (code) => finish(code === 0 ? Buffer.concat(chunks).toString('utf8') : undefined))
+    child.on('error', () => { if (killTimer) clearTimeout(killTimer); finish() })
+    child.on('close', (code) => {
+      if (killTimer) clearTimeout(killTimer)
+      finish(code === 0 ? Buffer.concat(chunks).toString('utf8') : undefined)
+    })
   })
 }
