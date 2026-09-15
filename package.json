@@ -43,6 +43,7 @@
     "smoke:browser": "bun scripts/smoke-browser.ts",
     "smoke:selection": "bun scripts/linux-selection-smoke.ts",
     "smoke:workbench-keys": "bun scripts/linux-workbench-key-smoke.ts",
+    "smoke:clipboard-live": "bash scripts/linux-clipboard-live.sh",
     "benchmark:terminal": "bun scripts/benchmark-terminal.ts && bun scripts/benchmark-terminal-ui.tsx",
     "benchmark:terminal:hires": "bun scripts/benchmark-terminal-hires.ts",
     "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx",
