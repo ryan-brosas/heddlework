@@ -59,7 +59,9 @@ export function classifyNativeCopy(input: {
   if (read.code !== 0) {
     return { status: 'inconclusive', evidence: `wl-paste exited ${String(read.code)}, so the clipboard was not read` }
   }
-  if (selectedText === '' || sentinel === '' || selectedText === sentinel || selectedText.includes(sentinel)) {
+  // Only an exact collision is ambiguous: pass and skip would then both match the same bytes. A selection
+  // that merely contains the sentinel stays distinguishable, because every comparison here is byte-exact.
+  if (selectedText === '' || sentinel === '' || selectedText === sentinel) {
     return {
       status: 'inconclusive',
       evidence: `the dragged selection ${JSON.stringify(selectedText)} cannot be told apart from the staged sentinel ${JSON.stringify(sentinel)}`,
@@ -91,18 +93,31 @@ export function classifyNativeCopy(input: {
  * installer's launcher resolves to the executable it execs, and a running process is identified by the
  * image at `/proc/<pid>/exe`.
  */
+export interface RunningArtifact {
+  readonly pid: number
+  /** The image at `/proc/<pid>/exe`, or undefined when it could not be read. */
+  readonly image: string | undefined
+}
+
+/**
+ * One line per candidate artifact. Every running process is listed and the match covers all of them: a stale
+ * window must not be attributed to the artifact under test just because it was the first PID found.
+ */
 export function describeArtifact(input: {
   readonly path: string
   readonly exists: boolean
   readonly sha256: string
   readonly launchedFrom?: string | undefined
-  readonly runningPids: readonly number[]
-  readonly runningImage?: string | undefined
+  readonly running?: readonly RunningArtifact[]
+  readonly error?: string | undefined
 }): string {
+  // A launcher whose target is gone cannot be identified at all; that is a finding, not a crash.
+  if (input.error !== undefined) return `${input.path}: cannot identify the artifact (${input.error})`
   if (!input.exists) return `${input.path}: missing`
   const launch = input.launchedFrom === undefined ? '' : ` launcher=${input.launchedFrom}`
-  const running = input.runningPids.length === 0 ? 'not running' : `running=${input.runningPids.join(',')}`
-  const image = input.runningImage === undefined ? '' : ` image=${input.runningImage}`
-  const match = input.runningImage === undefined ? '' : ` imageMatchesArtifact=${String(input.runningImage === input.path)}`
-  return `${input.path} sha256=${input.sha256}${launch} ${running}${image}${match}`
+  const running = input.running ?? []
+  if (running.length === 0) return `${input.path} sha256=${input.sha256}${launch} not running`
+  const listed = running.map((entry) => `${String(entry.pid)}@${entry.image ?? 'unreadable'}`).join(',')
+  const allMatch = running.every((entry) => entry.image === input.path)
+  return `${input.path} sha256=${input.sha256}${launch} running=${listed} allMatchArtifact=${String(allMatch)}`
 }

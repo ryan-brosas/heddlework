@@ -46,6 +46,14 @@ describe('native copy evidence', () => {
     }
   })
 
+  it('decides a selection that merely contains the sentinel', () => {
+    // Containment is not ambiguity: every comparison is byte-exact, so a copy of the longer selection is
+    // distinguishable from an untouched clipboard still holding the shorter sentinel.
+    const withSentinel = `prefix ${sentinel} suffix`
+    expect(classifyNativeCopy({ selectedText: withSentinel, sentinel, read: { code: 0, stdout: withSentinel }, stderrSinceGesture: '' }).status).toBe('pass')
+    expect(classifyNativeCopy({ selectedText: withSentinel, sentinel, read: { code: 0, stdout: sentinel }, stderrSinceGesture: '' }).status).toBe('skip')
+  })
+
   it('reports unchanged bytes as a named manual skip, recording which reason was observed', () => {
     const measured = result(sentinel, 0, `runtime: ${noSerial}\n`)
     expect(measured.status).toBe('skip')
@@ -76,13 +84,33 @@ describe('live probe wiring', () => {
 })
 
 describe('artifact provenance', () => {
-  it('distinguishes a missing artifact, a launcher, and a stale running image', () => {
-    expect(describeArtifact({ path: '/x', exists: false, sha256: '', runningPids: [] })).toBe('/x: missing')
-    const launched = describeArtifact({ path: '/app', exists: true, sha256: 'abc', launchedFrom: '/bin/launcher', runningPids: [7], runningImage: '/app' })
+  it('distinguishes a missing artifact, a launcher, and a launcher whose target is gone', () => {
+    expect(describeArtifact({ path: '/x', exists: false, sha256: '' })).toBe('/x: missing')
+    const launched = describeArtifact({
+      path: '/app',
+      exists: true,
+      sha256: 'abc',
+      launchedFrom: '/bin/launcher',
+      running: [{ pid: 7, image: '/app' }],
+    })
     expect(launched).toContain('sha256=abc')
     expect(launched).toContain('launcher=/bin/launcher')
-    expect(launched).toContain('imageMatchesArtifact=true')
-    expect(describeArtifact({ path: '/app', exists: true, sha256: 'abc', runningPids: [] })).toContain('not running')
-    expect(describeArtifact({ path: '/app', exists: true, sha256: 'abc', runningPids: [7], runningImage: '/stale' })).toContain('imageMatchesArtifact=false')
+    expect(launched).toContain('allMatchArtifact=true')
+    // A stale launcher must be a reported finding, not an unhandled read error.
+    expect(JSON.parse(JSON.stringify(describeArtifact({ path: '/bin/launcher', exists: true, sha256: '', error: 'ENOENT: no such file' })))).toBe('/bin/launcher: cannot identify the artifact (ENOENT: no such file)')
+  })
+
+  it('reports every running process instead of attributing the first one', () => {
+    expect(describeArtifact({ path: '/app', exists: true, sha256: 'abc' })).toContain('not running')
+    const mixed = describeArtifact({
+      path: '/app',
+      exists: true,
+      sha256: 'abc',
+      running: [{ pid: 7, image: '/app' }, { pid: 9, image: '/stale' }, { pid: 11, image: undefined }],
+    })
+    expect(mixed).toContain('running=7@/app,9@/stale,11@unreadable')
+    expect(mixed).toContain('allMatchArtifact=false')
+    const all = describeArtifact({ path: '/app', exists: true, sha256: 'abc', running: [{ pid: 7, image: '/app' }] })
+    expect(all).toContain('allMatchArtifact=true')
   })
 })

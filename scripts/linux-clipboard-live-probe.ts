@@ -238,16 +238,18 @@ try {
       console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: the drag selected ${JSON.stringify(selectedText)} instead of ${JSON.stringify(selectedMarker)}`)
     } else {
     // The clipboard is staged with a sentinel before the gesture. The previous step left the submitted paste
-    // text on it, and that text is the very row being dragged here, so an untouched clipboard would otherwise
-    // satisfy the byte comparison by itself. With the sentinel proven present first, only a gesture that
-    // replaced it can produce the dragged text.
+    // text on it, and that text is the very row being dragged here, so an untouched clipboard holding that text
+    // would satisfy the byte comparison by itself. With the sentinel proven present first, the dragged text can
+    // only appear if the gesture replaced it.
     const sentinel = `${marker}-sentinel`
     const sentinelWrite = await run(['wl-copy', '--type', 'text/plain'], env, { input: sentinel })
     const stagedBeforeCopy = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
+    // The stage only has to be trustworthy; an ambiguous selection (one equal to the sentinel, or empty) is
+    // the classifier's own inconclusive case, and a selection that merely contains the sentinel is fine.
     const stageError = clipboardStageError(sentinelWrite, stagedBeforeCopy, sentinel)
-    if (stageError !== undefined || selectedText.includes(sentinel)) {
+    if (stageError !== undefined) {
       inconclusive.push('ctrl-insert-copies-real-selection')
-      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: ${stageError ?? `the dragged selection ${JSON.stringify(selectedText)} contains the staged sentinel, so a copy verdict could not be attributed`}`)
+      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: ${stageError}`)
     } else {
     captureGestureStart()
     await composer.press('ctrl-insert')

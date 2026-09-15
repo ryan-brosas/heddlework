@@ -42,21 +42,33 @@ function processImage(pid: number): string | undefined {
   }
 }
 
-const pids = runningPids()
+const running = runningPids().map((pid) => ({ pid, image: processImage(pid) }))
 for (const candidate of candidates) {
   const path = resolve(candidate)
   if (!existsSync(path)) {
-    console.log(describeArtifact({ path, exists: false, sha256: '', runningPids: [] }))
+    console.log(describeArtifact({ path, exists: false, sha256: '' }))
     continue
   }
-  const identity = readArtifactIdentity(path)
-  const runningImage = pids.length === 0 ? undefined : pids.map((pid) => processImage(pid)).find((image) => image !== undefined)
+  // Two ways this path can fail to identify an artifact, and both must be a finding rather than a misleading
+  // hash: an unreadable file throws, and a launcher whose target no longer exists is not an executable - the
+  // shared reader reports that as an `unknown` backend, which would otherwise print the launcher's own hash as
+  // if it were the application's.
+  let identity
+  try {
+    identity = readArtifactIdentity(path)
+  } catch (error) {
+    console.log(describeArtifact({ path, exists: true, sha256: '', error: error instanceof Error ? error.message : String(error) }))
+    continue
+  }
+  if (identity.backend === 'unknown') {
+    console.log(describeArtifact({ path, exists: true, sha256: '', error: 'not an executable and its launcher target does not exist' }))
+    continue
+  }
   console.log(describeArtifact({
     path: identity.path,
     exists: true,
     sha256: identity.sha256,
     launchedFrom: identity.launchedFrom,
-    runningPids: pids,
-    runningImage,
+    running,
   }))
 }
