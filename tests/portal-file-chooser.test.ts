@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { portalResponseMatchesToken, requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
+import { portalResponseMatchesToken, portalSignalForToken, requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
 import type { PortalPickerProbe } from '../src/ui/portal-file-chooser.ts'
 
 function handleFor(token: string): string {
@@ -15,7 +15,8 @@ function portalProbe(response: string | undefined): PortalPickerProbe {
       const token = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]
       return token ? "(objectpath '" + handleFor(token) + "',)" : undefined
     },
-    monitor: async () => response,
+    monitor: async (_command, _args, _timeoutMs, token) =>
+      (response === undefined ? undefined : signalHeader(token) + '\n' + response),
   }
 }
 
@@ -52,9 +53,9 @@ describe('requestPortalDirectory', () => {
       token = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1] ?? ''
       return await new Promise<string>((resolve) => { releaseOpen = () => resolve("(objectpath '" + handleFor(token) + "',)") })
     }
-    const monitor: NonNullable<PortalPickerProbe['monitor']> = async (command) => {
+    const monitor: NonNullable<PortalPickerProbe['monitor']> = async (command, _args, _timeoutMs, armed) => {
       commands.push(command)
-      return "uint32 0\n  string 'file:///home/user/project'"
+      return signalHeader(armed) + "\nuint32 0\n  string 'file:///home/user/project'"
     }
 
     const pending = requestPortalDirectory({ run, monitor })
@@ -94,5 +95,76 @@ describe('requestPortalDirectory', () => {
     })
     expect(result.status).toBe('selected')
     expect(result.path).toBe('/tmp/project')
+  })
+})
+
+/** One dbus-monitor Response record header, as Wayland prints it (unquoted request path). */
+function signalHeader(requestToken: string): string {
+  return 'signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/'
+    + requestToken + '; interface=org.freedesktop.portal.Request; member=Response'
+}
+
+function responseRecord(requestToken: string, code: number, uri?: string): string {
+  const header = signalHeader(requestToken)
+  if (!uri) return [header, '   uint32 ' + code].join('\n')
+  return [
+    header,
+    '   uint32 ' + code,
+    '   array [',
+    '      dict entry(',
+    '         string "uris"',
+    '         variant             array [',
+    '               string "' + uri + '"',
+    '            ]',
+    '      )',
+    '   ]',
+  ].join('\n')
+}
+
+// dbus-monitor is session-wide, so a probe must be able to answer with the token it was armed for.
+function probeWithResponse(response: (token: string) => string | undefined): PortalPickerProbe {
+  return {
+    run: async (_command, args) => {
+      const token = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]
+      return token ? "(objectpath '" + handleFor(token) + "',)" : undefined
+    },
+    monitor: async (_command, _args, _timeoutMs, token) => response(token),
+  }
+}
+
+describe('portal response ownership', () => {
+  it('ignores another application response mixed into the same capture', async () => {
+    // A faster portal client (a browser's own file picker, a GTK dialog) can land its Response in the
+    // capture before ours. Reading the first uint32/URI out of the whole buffer adopts a stranger's
+    // selection as the picked folder, so only the record carrying our handle_token may be read.
+    const result = await requestPortalDirectory(probeWithResponse((token) => [
+      responseRecord('heddlework_other', 0, 'file:///tmp/OTHER-APP-PICK'),
+      responseRecord(token, 1),
+    ].join('\n')))
+    expect(result.status).toBe('cancelled')
+    expect(result.path).toBeUndefined()
+  })
+
+  it('reports unavailable when the capture holds no response for this request', async () => {
+    const result = await requestPortalDirectory(
+      probeWithResponse(() => responseRecord('heddlework_other', 0, 'file:///tmp/OTHER-APP-PICK')),
+    )
+    expect(result.status).toBe('unavailable')
+  })
+
+  it('reads this request own response even when a stranger answered first', async () => {
+    const result = await requestPortalDirectory(probeWithResponse((token) => [
+      responseRecord('heddlework_other', 0, 'file:///tmp/OTHER-APP-PICK'),
+      responseRecord(token, 0, 'file:///tmp/OUR-PICK'),
+    ].join('\n')))
+    expect(result.status).toBe('selected')
+    expect(result.path).toBe('/tmp/OUR-PICK')
+  })
+
+  it('selects the record whose request path carries the token', () => {
+    const capture = [responseRecord('heddlework_other', 0, 'file:///tmp/OTHER-APP-PICK'), responseRecord('heddlework_mine', 1)].join('\n')
+    expect(portalSignalForToken(capture, 'heddlework_mine')).toContain('uint32 1')
+    expect(portalSignalForToken(capture, 'heddlework_mine')).not.toContain('OTHER-APP-PICK')
+    expect(portalSignalForToken(capture, 'heddlework_missing')).toBeUndefined()
   })
 })

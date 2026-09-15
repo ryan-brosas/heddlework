@@ -15,6 +15,21 @@ Terminal key routing resolves copy, paste, and interrupt commands **before** ter
 - **Copy**: `Ctrl+Shift+C` (Linux/Windows) and `Command+C` (macOS). A copy command writes **zero PTY bytes**, including when the clipboard write fails.
 - **Interrupt**: plain `Ctrl+C` writes exactly one ETX, never a copy.
 - **Paste**: `Ctrl+V` / `Command+V` reads the clipboard once and writes it to the focused session, wrapped in bracketed-paste markers when the emulator enabled DEC mode 2004. A failed read stays local and never falls through to key encoding.
+
+The Linux text readers name the type they want (`wl-paste --no-newline --type text`, `xclip -target
+UTF8_STRING -type`): an inferred MIME type can hand image bytes to a UTF-8 decode. A helper that overruns its
+wall bound or output bound is killed with SIGTERM and then SIGKILL, and that escalation must survive the
+failed result - a settled failure used to cancel its own kill timer, so a helper that ignored SIGTERM stayed
+alive. `tests/clipboard-media.test.ts` runs both cases against a real child that traps SIGTERM.
+
+**PTY lifetime: close on stream end, never on process exit.** Bun resolves `subprocess.exited` before it
+dispatches the last chunk it already read, so closing the PTY from the exit path dropped the final output of
+`printf x; exit 0` in 1 of 60 measured runs - the intermittent `hello-pty` failure in CI. `BunPtyBackend`
+now releases the PTY (and flushes the output buffer) from the terminal's own stream-end callback, which also
+keeps a session readable while a child still holds the slave. The limitation that remains is upstream: a
+child that writes *after* the shell exits is not delivered at all (measured through the same probe), because
+Bun stops reading the PTY when the spawned process exits. `tests/terminal-pty.test.ts` pins the ordering
+deterministically through `BunPtyBackend`'s injected PTY lifecycle.
 - **Direct events**: `textInput` and `paste` events carry their own text and bypass keyboard encoding.
 
 Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
@@ -85,8 +100,9 @@ as if it had no clipboard at all - measured on this box against the installed bu
 `src/ui/insert-key.ts` resolves that convention once, and every surface that accepts keys uses it:
 `Shift+Insert` pastes (composer and terminal), and `Ctrl+Insert`/`Cmd+Insert` copies the document
 selection through the window-level listener in `src/main.tsx`. Paste from `Shift+Insert` in the
-composer appends to the draft, since only the native path knows the caret; the terminal inserts at
-the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
+composer appends to the draft, since only the native path knows the caret, and attaches the image
+instead when the clipboard holds one - a remapped desktop has no other way to paste a screenshot; the
+terminal inserts at the cursor as usual. `tests/insert-key.test.ts` pins the policy and `tests/terminal-keys.test.ts` the
 terminal routing, both on Linux without a compositor.
 
 The wiring itself is proven end to end by a lane that runs the real application in demo mode on a
@@ -100,14 +116,42 @@ bun run smoke:workbench-keys
 It drags over a message, sends `Ctrl+Insert`, and asserts the clipboard helper received exactly that
 selection; it stages text for `Shift+Insert` and asserts the composer submitted it; and it re-asserts
 the native `Ctrl+C`/`Ctrl+V` round trip so the remapped shortcuts cannot quietly replace the normal
-ones. The lane is deliberately not part of `scripts/linux-compositor-smoke.sh`: those cases build a
-purpose-made window from repository sources, while this one needs the installed application binary
-(override it with `HEDDLEWORK_APP_BINARY`).
+ones. The pinned Linux automation text tree does not expose the composer's draft, so the lane checks
+submitted user-message rows instead. Before Enter, positive paste checks wait for the stub to log a
+text-read attempt, then allow two polling intervals for the asynchronous paste to settle. The logged
+75 ms in a local run included that deliberate wait; it is **not** a measured paste-latency guarantee.
+
+The image-only stub rejects both image and text reads: its negative check covers refusal to paste stale
+text, not successful screenshot attachment. Empty-Enter checks and the exact-message checks provide
+indirect evidence about drafts, not a native input-value readback. Stubbed Xvfb results do not prove
+Hyprland input-serial handling or real Wayland clipboard ownership; those need a separate live test.
+
+The lane defaults to the checkout's `dist/heddlework`; rebuild it with `bun run build` before testing
+source changes. Use `--installed` for the installed app or `HEDDLEWORK_APP_BINARY` for an explicit
+artifact. It is separate from `scripts/linux-compositor-smoke.sh`, whose cases build a purpose-made
+window rather than launching the full application.
 
 Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
 key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
 the selection is correct (measured: the selection is present, the clipboard is unchanged). Drive the real
 window or press the key by hand, then read the clipboard back with `wl-paste`.
+
+### Live clipboard acceptance (real compositor, real helpers)
+
+`bun run smoke:clipboard-live` is the one lane that runs on a real Wayland compositor with real clipboard tools. It
+needs the explicit opt-in `HEDDLEWORK_CLIPBOARD_LIVE=1` and starts a disposable nested Hyprland on a private
+`XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. The host `DISPLAY` is stripped from every child, so the run can
+neither read nor replace the operator's clipboard. `wl-paste`/`wl-copy` are logging shims that delegate to the real tools, so the bytes are
+real and the call log is evidence. On this box it passes three checks twice in a row: the session clipboard
+round-trips through the real `wl-copy`/`wl-paste`; the application submits the exact real clipboard text
+through `Shift+Insert`; and `Ctrl+Insert` over a dragged transcript selection puts that exact text on the
+session clipboard.
+
+What it does not judge: a compositor's own remap to `Shift+Insert` is not exercised, because the lane delivers
+the paste key through the application's automation surface, and screenshots are unavailable on Linux. Submits
+are queued while a turn streams, so the lane waits for the paste key and Enter *separately*, waits for the turn
+to settle before Enter, and calibrates: a typed probe must land before any paste verdict counts - without
+that gate a queued submit looks exactly like a dropped paste.
 
 ### Compositor verification
 

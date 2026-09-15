@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ComposerImage, PiMessage } from '../pi/types.ts'
 
 const IMAGE_CACHE_DIRECTORY = join(tmpdir(), 'heddlework-images-v1')
@@ -49,29 +49,30 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
 }
 
 /**
- * Read plain text from the clipboard, using the same helpers as the write direction so both agree on
- * which tool owns the clipboard per platform. Readers answer from stdout, so a helper that hands its
- * stdio to a surviving selection owner still terminates.
+ * Request text explicitly: MIME inference can return image bytes decoded as UTF-8. On Wayland,
+ * --no-newline also prevents wl-paste from appending a newline absent from the clipboard.
+ */
+export function clipboardTextCommands(platform: NodeJS.Platform): readonly (readonly string[])[] {
+  if (platform === 'darwin') return [['/usr/bin/pbpaste']]
+  if (platform === 'win32') return [['powershell', '-NoProfile', '-Command', 'Get-Clipboard -Raw']]
+  return [['wl-paste', '--no-newline', '--type', 'text'], ['xclip', '-selection', 'clipboard', '-target', 'UTF8_STRING', '-o']]
+}
+
+/**
+ * Read plain text from the clipboard through the same bounded runner as every other clipboard helper,
+ * so a helper that hangs, floods its output or exits nonzero reports "no text" instead of handing
+ * partial bytes to the draft.
  */
 export async function readClipboardText(): Promise<string | undefined> {
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) return (await navigator.clipboard.readText()) || undefined
-    if (process.platform === 'darwin') {
-      const proc = Bun.spawn(['/usr/bin/pbpaste'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    if (process.platform === 'win32') {
-      const proc = Bun.spawn(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
-      try {
-        const proc = Bun.spawn([...command], { stdout: 'pipe' })
-        const text = await new Response(proc.stdout).text()
-        if (text) return text
-      } catch {
-        // try the next clipboard command
-      }
+    for (const spec of clipboardTextCommands(process.platform)) {
+      const command = spec[0]
+      if (!command) continue
+      const result = await runClipboardProcess(command, spec.slice(1), { completion: 'stdout-end' })
+      if (!result.ok) continue
+      const text = result.stdout.toString('utf8')
+      if (text) return text
     }
   } catch {
     return undefined
@@ -226,6 +227,12 @@ const PROCESS_DRAIN_GRACE_MS = 250
  */
 const PROCESS_READ_TIMEOUT_MS = 3_000
 
+/** Wall bound for a writer, whose own exit normally lands in milliseconds. */
+const PROCESS_WRITE_TIMEOUT_MS = 5_000
+
+/** Grace between the soft and hard kill of a helper that overran its bound. */
+const KILL_GRACE_MS = 200
+
 /**
  * Run a clipboard helper and report its exit status plus stdout. Exported so the completion rule
  * itself is regression-tested with a deterministic child instead of a real compositor.
@@ -239,23 +246,43 @@ const PROCESS_READ_TIMEOUT_MS = 3_000
 export async function runClipboardProcess(
   command: string,
   args: string[],
-  options: { readonly input?: Uint8Array; readonly completion?: ClipboardCompletion } = {},
+  options: {
+    readonly input?: Uint8Array
+    readonly completion?: ClipboardCompletion
+    /** Wall bound from spawn: a helper that never exits must not wedge a read or a write. */
+    readonly timeoutMs?: number
+    /** Output bound: exceeding it fails the read instead of returning a truncated payload. */
+    readonly maxBytes?: number
+  } = {},
 ): Promise<{ ok: boolean; stdout: Buffer }> {
-  const { input, completion = 'exit' } = options
+  const { input, completion = 'exit', maxBytes = MAX_CLIPBOARD_IMAGE_BYTES } = options
+  const wallMs = options.timeoutMs ?? (completion === 'stdout-end' ? PROCESS_READ_TIMEOUT_MS : PROCESS_WRITE_TIMEOUT_MS)
   return await new Promise((resolve) => {
     let settled = false
     let exited = false
     let exitCode: number | null = null
     let stdoutEnded = false
     let drainTimer: ReturnType<typeof setTimeout> | undefined
+    let wallTimer: ReturnType<typeof setTimeout> | undefined
+    let killTimer: ReturnType<typeof setTimeout> | undefined
     const finish = (value: { ok: boolean; stdout: Buffer }) => {
       if (settled) return
       settled = true
       if (drainTimer) clearTimeout(drainTimer)
+      if (wallTimer) clearTimeout(wallTimer)
+      // A failed result may settle before the helper dies. Keep its escalation timer until exit;
+      // cancelling it here would let a SIGTERM-ignoring helper survive the timeout or output bound.
+      // Release the pipes too: a helper we stopped must not hold the read open through its stdio.
+      if (child) {
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+      }
       resolve(value)
     }
-    const finishWithStatus = (code: number | null) => finish({ ok: code === 0, stdout: Buffer.concat(chunks) })
-    let child
+    // A failure returns no payload at all: partial output must never look like clipboard content.
+    const finishWithStatus = (code: number | null) => finish({ ok: code === 0, stdout: code === 0 ? Buffer.concat(chunks) : empty })
+    let child!: ChildProcessWithoutNullStreams
     try {
       child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     } catch {
@@ -263,25 +290,68 @@ export async function runClipboardProcess(
       return
     }
     const chunks: Buffer[] = []
-    child.stdout.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)))
+    const empty = Buffer.alloc(0)
+    let totalBytes = 0
+    const fail = () => finish({ ok: false, stdout: empty })
+    const killChild = () => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGTERM')
+      killTimer = setTimeout(() => {
+        // Escalate only for a helper that ignored the soft kill. A clipboard's own selection owner is
+        // a separate process, so the value already written to the clipboard is not withdrawn.
+        try { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL') } catch { /* already gone */ }
+      }, KILL_GRACE_MS)
+    }
+    // A reader's payload is complete only when stdout ends and the helper succeeded.
+    const finishReader = (code: number | null, complete: boolean) => {
+      const ok = code === 0 && complete
+      finish({ ok, stdout: ok ? Buffer.concat(chunks) : empty })
+    }
+    wallTimer = setTimeout(() => {
+      killChild()
+      fail()
+    }, wallMs)
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      if (settled) return
+      const buffer = Buffer.from(chunk)
+      totalBytes += buffer.byteLength
+      // A flooding helper is stopped rather than allowed to grow the parent without bound, and its
+      // partial output is reported as a failure instead of as clipboard content.
+      if (totalBytes > maxBytes) {
+        killChild()
+        fail()
+        return
+      }
+      chunks.push(buffer)
+    })
     child.stdout.on('end', () => {
       stdoutEnded = true
-      if (exited) finishWithStatus(exitCode)
+      if (!exited) return
+      // A reader can complete here; a writer still completes on its own exit.
+      if (completion === 'stdout-end') finishReader(exitCode, true)
+      else finishWithStatus(exitCode)
     })
-    child.on('error', () => finish({ ok: false, stdout: Buffer.alloc(0) }))
+    child.stdout.on('error', fail)
+    child.stderr.on('data', () => {})
+    child.stderr.on('error', () => {})
+    child.stdin.on('error', () => {})
+    child.on('error', fail)
     // The normal path: every pipe closed, so the captured stdout is complete.
-    child.on('close', (code) => finishWithStatus(code))
+    child.on('close', (code) => (completion === 'stdout-end' ? finishReader(code, true) : finishWithStatus(code)))
     child.on('exit', (code) => {
+      if (killTimer) clearTimeout(killTimer)
+      killTimer = undefined
       exited = true
       exitCode = code
+      if (completion === 'stdout-end') {
+        if (stdoutEnded) finishReader(code, true)
+        return
+      }
       if (stdoutEnded) return finishWithStatus(code)
-      // A reader waits for stdout to end, because that output is the payload being returned; a
-      // writer only needs the short drain window, because a daemonized selection owner keeps the
-      // inherited stdout open long enough that waiting for it would hang.
-      drainTimer = setTimeout(
-        () => finishWithStatus(code),
-        completion === 'stdout-end' ? PROCESS_READ_TIMEOUT_MS : PROCESS_DRAIN_GRACE_MS,
-      )
+      // Only a writer reaches this point: its own exit is its completion signal, because a daemonized
+      // selection owner keeps the inherited stdout open, so waiting for stdout end would hang. The
+      // short drain window lets a helper that closes its stdout as it exits finish through `close`.
+      drainTimer = setTimeout(() => finishWithStatus(code), PROCESS_DRAIN_GRACE_MS)
     })
     if (input) child.stdin.end(input)
     else child.stdin.end()

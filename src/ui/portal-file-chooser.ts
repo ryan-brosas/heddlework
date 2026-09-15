@@ -31,7 +31,7 @@ const TITLE = "'Open project in Heddlework'"
 const IPC_TIMEOUT_MS = 6_000
 // The folder dialog stays open for human navigation and can take minutes;
 // only the D-Bus call that opens it is bounded by the short IPC timeout.
-const SESSION_TIMEOUT_MS = 5 * 60_000
+export const SESSION_TIMEOUT_MS = 5 * 60_000
 
 function quoteVariant(value: string): string {
   return String.fromCharCode(0x27) + value + String.fromCharCode(0x27)
@@ -85,12 +85,20 @@ export async function requestPortalDirectory(
 
   const signalOutput = await signalPromise
   if (signalOutput === undefined) return { status: 'unavailable', error: 'File dialog portal timed out' }
+  // dbus-monitor is session-wide, so this capture mixes every portal request on the bus, including
+  // other applications' dialogs. Only the record whose request path carries this call's handle_token
+  // is our answer: reading the first uint32/URI out of the whole buffer adopts whichever dialog
+  // answered first, which silently picked a stranger's folder.
+  const response = portalSignalForToken(signalOutput, token)
+  if (response === undefined) {
+    return { status: 'unavailable', error: 'File dialog portal returned no response for this request' }
+  }
 
-  const code = parseCode(signalOutput)
+  const code = parseCode(response)
   if (code === undefined) return { status: 'unavailable', error: 'File dialog portal returned an unknown response' }
   if (code === 1) return { status: 'cancelled' }
 
-  const uri = parseUris(signalOutput)[0]
+  const uri = parseUris(response)[0]
   if (!uri) return { status: 'unavailable', error: 'File dialog portal returned no selection' }
   return { status: 'selected', path: resolve(toFilePath(uri)) }
 }
@@ -101,6 +109,21 @@ export function portalResponseMatchesToken(output: string, token: string): boole
     `/org/freedesktop/portal/desktop/request/[^/\\s'"]+/${escapeRegExp(token)}`,
     'u',
   ).test(output)
+}
+
+/**
+ * Select the Response record that belongs to `token` from a `dbus-monitor` capture.
+ *
+ * dbus-monitor is session-wide: the capture mixes every portal request on the bus, so the first
+ * `uint32` and the first `file:` URI in it may belong to another application's dialog. Records are
+ * separated on their `signal` header and only the one matching this request path survives.
+ */
+export function portalSignalForToken(output: string, token: string): string | undefined {
+  if (!token) return undefined
+  for (const record of output.split(/^(?=signal )/mu)) {
+    if (portalResponseMatchesToken(record, token)) return record
+  }
+  return undefined
 }
 
 function escapeRegExp(value: string): string {
@@ -190,12 +213,12 @@ function runPortalMonitor(command: string, args: string[], timeoutMs: number, to
     stdout.on('data', (c: Buffer | string) => {
       chunks.push(Buffer.from(c))
       const output = Buffer.concat(chunks).toString('utf8')
-      const code = extractResponseCode(output)
-      if (code !== undefined && portalResponseMatchesToken(output, token)) done(output)
+      const record = portalSignalForToken(output, token)
+      if (record !== undefined && extractResponseCode(record) !== undefined) done(record)
     })
     stderr.on('data', () => {})
     child.on('error', () => done(undefined))
-    child.on('close', () => done(Buffer.concat(chunks).toString('utf8') || undefined))
+    child.on('close', () => done(portalSignalForToken(Buffer.concat(chunks).toString('utf8'), token)))
   })
 }
 

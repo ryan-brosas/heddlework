@@ -197,7 +197,18 @@ interface BunTerminalCtor {
     cols?: number
     rows?: number
     data?: (terminal: BunTerminalHandle, chunk: Uint8Array) => void
+    exit?: (terminal: BunTerminalHandle, exitCode: number, signal: string | null) => void
   }): BunTerminalHandle
+}
+
+/**
+ * Injection points for the PTY lifecycle. Production always uses `Bun.spawn` and `Bun.Terminal`; a test
+ * supplies its own so the ordering that loses output (process exit before the final data dispatch)
+ * is reproducible instead of a 1-in-60 race.
+ */
+export interface BunPtyBackendDependencies {
+  readonly spawn?: typeof Bun.spawn
+  readonly createTerminal?: BunTerminalCtor
 }
 
 function bunTerminalCtor(): BunTerminalCtor | undefined {
@@ -226,8 +237,16 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
 }
 
 export class BunPtyBackend implements TerminalBackend {
+  readonly #spawn: typeof Bun.spawn
+  readonly #terminal: BunTerminalCtor | undefined
+
+  constructor(dependencies: BunPtyBackendDependencies = {}) {
+    this.#spawn = dependencies.spawn ?? Bun.spawn
+    this.#terminal = dependencies.createTerminal ?? bunTerminalCtor()
+  }
+
   async spawn(request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
-    const Terminal = bunTerminalCtor()
+    const Terminal = this.#terminal
     if (!Terminal) throw new Error('Bun.Terminal is not available in this runtime')
     const dataListeners = new Set<(chunk: Uint8Array, metadata?: TerminalOutputMetadata) => void>()
     const exitListeners = new Set<(status: TerminalProcessStatus) => void>()
@@ -235,11 +254,24 @@ export class BunPtyBackend implements TerminalBackend {
       for (const listener of dataListeners) listener(chunk, metadata)
     })
     let status: TerminalProcessStatus = { kind: 'running' }
+    /**
+     * Release the PTY only once its stream has ended, never when the spawned process exits: Bun resolves
+     * `subprocess.exited` *before* it dispatches the last chunk (`printf x; exit 0` was measured losing its
+     * output in 1 of 60 runs when the handle was closed from the exit path). The stream end also covers a
+     * session whose shell exits while a child still holds the PTY.
+     */
+    function releaseTerminalStream(): void {
+      output.close()
+      if (!terminal.closed) terminal.close()
+    }
     const terminal = new Terminal({
       cols: request.cols,
       rows: request.rows,
       data(_handle, chunk) {
         output.write(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk))
+      },
+      exit() {
+        releaseTerminalStream()
       },
     })
     const command = request.shell ?? defaultShell().command
@@ -250,7 +282,7 @@ export class BunPtyBackend implements TerminalBackend {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     }
-    const subprocess = Bun.spawn([command, ...args], {
+    const subprocess = this.#spawn([command, ...args], {
       cwd: request.cwd,
       env,
       terminal,
@@ -259,13 +291,10 @@ export class BunPtyBackend implements TerminalBackend {
     void subprocess.exited.then((exitCode) => {
       if (status.kind === 'exited') return
       status = { kind: 'exited', exitCode: typeof exitCode === 'number' ? exitCode : null }
-      output.close()
       for (const listener of exitListeners) listener(status)
-      if (!terminal.closed) terminal.close()
     }).catch(() => {
       if (status.kind === 'exited') return
       status = { kind: 'exited', exitCode: null }
-      output.close()
       for (const listener of exitListeners) listener(status)
     })
     return {

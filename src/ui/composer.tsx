@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
+import { resolveSubmittedText } from './clipboard-paste-text.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
@@ -24,6 +25,8 @@ const PRIMARY_ACTION_SIZE = 34
 export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchService; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
+  /** The paste the keystroke started, so a submit that arrives first cannot send the pre-paste draft. */
+  const pendingPaste = useRef<Promise<void> | null>(null)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
@@ -110,16 +113,25 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     void controller.submit(value, { queue }).catch(notifyFailure(controller, 'Could not send the message'))
   }
 
+  /**
+   * Attach a clipboard image when available, preserving text according to the native image-paste policy.
+   */
+  const insertPastedImage = async (editorTextBeforePaste: string): Promise<boolean> => {
+    const image = await readClipboardImage()
+    if (!image) return false
+    controller.addEditorImage(image)
+    const currentText = controller.getSnapshot().editorText
+    const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
+    if (restoredText !== currentText) controller.setEditorText(restoredText)
+    return true
+  }
+
+  /** Native `Ctrl+V`: the runtime inserts text at the caret itself, so only an image needs the app. */
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
     setPastingImage(true)
     try {
-      const image = await readClipboardImage()
-      if (!image) return
-      controller.addEditorImage(image)
-      const currentText = controller.getSnapshot().editorText
-      const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
-      if (restoredText !== currentText) controller.setEditorText(restoredText)
+      await insertPastedImage(editorTextBeforePaste)
     } finally {
       setPastingImage(false)
     }
@@ -127,15 +139,44 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
   /**
    * Paste for the compositor insert-key convention (`Shift+Insert`, which is what Omarchy's Hyprland
-   * bindings send for `Ctrl+V`). Text lands at the end of the draft, matching a paste with the caret
-   * at the end; the native `Ctrl+V` path still inserts at the caret.
+   * bindings send for `Ctrl+V`). The runtime never sees that keystroke as a paste, so this path owns
+   * the whole action: it takes an image when the clipboard holds one - otherwise a remapped desktop
+   * could not paste a screenshot at all - and otherwise appends the text, matching a paste with the
+   * caret at the end. Text is appended to the current controller draft after the asynchronous read.
    */
-  const pasteClipboardTextIntoComposer = async () => {
-    const text = await readClipboardText()
-    if (!text) return
-    const current = controller.getSnapshot().editorText
-    controller.setEditorText(current ? current + text : text)
-    keepComposerFocus()
+  const pasteClipboardIntoComposer = async () => {
+    if (pastingImage) return
+    setPastingImage(true)
+    try {
+      const draft = controller.getSnapshot().editorText
+      if (await insertPastedImage(draft)) {
+        keepComposerFocus()
+        return
+      }
+      const text = await readClipboardText()
+      if (!text) return
+      const current = controller.getSnapshot().editorText
+      controller.setEditorText(current ? current + text : text)
+      keepComposerFocus()
+    } finally {
+      setPastingImage(false)
+    }
+  }
+
+  /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */
+  const trackPaste = (work: Promise<void>): void => {
+    const tracked = work.then(() => undefined, () => undefined)
+    pendingPaste.current = tracked
+    void tracked.then(() => { if (pendingPaste.current === tracked) pendingPaste.current = null })
+  }
+
+  /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
+  const submitDraft = (eventValue: string, queue = false): void => {
+    void resolveSubmittedText({
+      pending: pendingPaste.current,
+      eventValue,
+      currentDraft: () => controller.getSnapshot().editorText,
+    }).then((text) => send(text, queue))
   }
 
   const showQueueHint = () => {
@@ -194,11 +235,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       completeActiveSlashCommand()
       keepComposerFocus()
     }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
-    if (resolveInsertKeyCommand(event) === 'paste') void pasteClipboardTextIntoComposer()
+    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) trackPaste(pasteClipboardImage(state.editorText))
+    if (resolveInsertKeyCommand(event) === 'paste') trackPaste(pasteClipboardIntoComposer())
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
-      send(state.editorText, true)
+      submitDraft(state.editorText, true)
       queueMicrotask(() => { queuedByKeyDown.current = false })
     }
   }
@@ -288,7 +329,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               queuedByKeyDown.current = false
               return
             }
-            send(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
+            submitDraft(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
           }}
         />
         {matchingCommands.length > 0 && commandQuery ? (
