@@ -166,11 +166,15 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }
 
   /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */
-  const trackPaste = (work: Promise<void>): void => {
-    const tracked = work.then(() => undefined, () => undefined)
-    pendingPaste.current = tracked
-    void tracked.then(() => {
-      if (pendingPaste.current !== tracked) return
+  const startPaste = (work: () => Promise<void>): void => {
+    // An overlapping key joins the running read: replacing the marker here would clear it while the
+    // clipboard read is still in flight, and a submit in that window would send the pre-paste draft.
+    if (pendingPaste.current !== null) return
+    const started = work()
+    pendingPaste.current = started
+    pendingPasteClaimed.current = false
+    void started.catch(() => undefined).then(() => {
+      if (pendingPaste.current !== started) return
       pendingPaste.current = null
       pendingPasteClaimed.current = false
     })
@@ -248,8 +252,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       completeActiveSlashCommand()
       keepComposerFocus()
     }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) trackPaste(pasteClipboardImage(state.editorText))
-    if (resolveInsertKeyCommand(event) === 'paste') trackPaste(pasteClipboardIntoComposer())
+    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) startPaste(() => pasteClipboardImage(state.editorText))
+    if (resolveInsertKeyCommand(event) === 'paste') startPaste(pasteClipboardIntoComposer)
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       submitDraft(state.editorText, true)
