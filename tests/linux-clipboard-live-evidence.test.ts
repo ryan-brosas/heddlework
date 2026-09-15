@@ -100,6 +100,27 @@ describe('artifact provenance', () => {
     expect(JSON.parse(JSON.stringify(describeArtifact({ path: '/bin/launcher', exists: true, sha256: '', error: 'ENOENT: no such file' })))).toBe('/bin/launcher: cannot identify the artifact (ENOENT: no such file)')
   })
 
+  it('matches through a symlinked artifact path', () => {
+    // `/proc/<pid>/exe` reports the target, so a symlink to the app would otherwise look like a mismatch.
+    const linked = describeArtifact({
+      path: '/opt/link/heddlework',
+      resolvedPath: '/opt/real/heddlework',
+      exists: true,
+      sha256: 'abc',
+      running: [{ pid: 7, image: '/opt/real/heddlework' }],
+    })
+    expect(linked).toContain('resolved=/opt/real/heddlework')
+    expect(linked).toContain('allMatchArtifact=true')
+    const stale = describeArtifact({
+      path: '/opt/link/heddlework',
+      resolvedPath: '/opt/real/heddlework',
+      exists: true,
+      sha256: 'abc',
+      running: [{ pid: 9, image: '/opt/other/heddlework' }],
+    })
+    expect(stale).toContain('allMatchArtifact=false')
+  })
+
   it('reports every running process instead of attributing the first one', () => {
     expect(describeArtifact({ path: '/app', exists: true, sha256: 'abc' })).toContain('not running')
     const mixed = describeArtifact({

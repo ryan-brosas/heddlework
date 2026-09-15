@@ -9,7 +9,7 @@
  *   bun scripts/linux-artifact-check.ts [path]
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readlinkSync } from 'node:fs'
+import { existsSync, readlinkSync, realpathSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describeArtifact } from './linux-clipboard-live-evidence.ts'
 import { readArtifactIdentity } from './linux-workbench-key-harness.ts'
@@ -34,9 +34,18 @@ function runningPids(): number[] {
   }
 }
 
+/** `realpathSync` so a symlinked artifact and `/proc/<pid>/exe` can be compared as the same file. */
+function canonical(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
 function processImage(pid: number): string | undefined {
   try {
-    return readlinkSync(`/proc/${String(pid)}/exe`)
+    return canonical(readlinkSync(`/proc/${String(pid)}/exe`))
   } catch {
     return undefined
   }
@@ -66,6 +75,7 @@ for (const candidate of candidates) {
   }
   console.log(describeArtifact({
     path: identity.path,
+    resolvedPath: canonical(identity.path),
     exists: true,
     sha256: identity.sha256,
     launchedFrom: identity.launchedFrom,

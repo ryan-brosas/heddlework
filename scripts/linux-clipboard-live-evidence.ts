@@ -105,6 +105,8 @@ export interface RunningArtifact {
  */
 export function describeArtifact(input: {
   readonly path: string
+  /** The artifact with symlinks resolved, which is what `/proc/<pid>/exe` reports and what matching uses. */
+  readonly resolvedPath?: string | undefined
   readonly exists: boolean
   readonly sha256: string
   readonly launchedFrom?: string | undefined
@@ -115,9 +117,13 @@ export function describeArtifact(input: {
   if (input.error !== undefined) return `${input.path}: cannot identify the artifact (${input.error})`
   if (!input.exists) return `${input.path}: missing`
   const launch = input.launchedFrom === undefined ? '' : ` launcher=${input.launchedFrom}`
+  // A symlinked artifact and a running process name the same file differently, so both sides are compared
+  // through the resolved path; the caller passes the linker's own path as `path`.
+  const executable = input.resolvedPath ?? input.path
+  const resolved = input.resolvedPath !== undefined && input.resolvedPath !== input.path ? ` resolved=${input.resolvedPath}` : ''
   const running = input.running ?? []
-  if (running.length === 0) return `${input.path} sha256=${input.sha256}${launch} not running`
+  if (running.length === 0) return `${input.path} sha256=${input.sha256}${launch}${resolved} not running`
   const listed = running.map((entry) => `${String(entry.pid)}@${entry.image ?? 'unreadable'}`).join(',')
-  const allMatch = running.every((entry) => entry.image === input.path)
-  return `${input.path} sha256=${input.sha256}${launch} running=${listed} allMatchArtifact=${String(allMatch)}`
+  const allMatch = running.every((entry) => entry.image === executable)
+  return `${input.path} sha256=${input.sha256}${launch}${resolved} running=${listed} allMatchArtifact=${String(allMatch)}`
 }
