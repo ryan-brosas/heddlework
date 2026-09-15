@@ -29,13 +29,6 @@ export function listRuntimePatches(directory: string): RuntimeSourcePatch[] {
   })
 }
 
-export function patchTargets(patch: string): string[] {
-  return [...new Set(patch.split('\n').flatMap((line) => {
-    const path = /^\+\+\+ b\/(.+)$/u.exec(line)?.[1]
-    return path === undefined ? [] : [path]
-  }))]
-}
-
 export function runtimePatchFingerprint(patches: readonly RuntimeSourcePatch[]): string {
   return digest(patches.map((patch) => `${patch.name}:${patch.sha256}`).join('\n'))
 }
@@ -132,15 +125,36 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
   }
 }
 
+/**
+ * Apply every declared patch, or leave the checkout exactly as it was found.
+ *
+ * A patch set is applied as one unit: a set that stops halfway would leave a cached checkout carrying part
+ * of a revision, which is a state no later run can interpret. Patches this invocation applied are reversed
+ * before the refusal propagates, so the refusal is the only trace of the attempt.
+ */
 export function applyRuntimePatches(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
+  const appliedHere: RuntimeSourcePatch[] = []
   for (const patch of patches) {
-    const applied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
-    if (applied.exitCode === 0) continue
-    // A cached checkout carries the patch revision it was built from, and both CI and a developer machine
-    // reuse that cache after the patch changes. Repairing the files this patch owns is what turns that into a
-    // rebuild; anything the patch does not declare still fails the check below, so this cannot bury real work.
-    resetDeclaredTargets(directory, patch)
-    git(directory, ['apply', patch.path])
+    const alreadyApplied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
+    if (alreadyApplied.exitCode === 0) continue
+    try {
+      git(directory, ['apply', patch.path])
+      appliedHere.push(patch)
+    } catch (error) {
+      rollbackApplied(directory, appliedHere)
+      // A cached checkout carries the patch revision it was built from, so editing a patch leaves a cache
+      // that no longer matches it. Every file there is a derived copy of the pin, but the installer does
+      // not rewrite them to make room for the current patch: a hand edit in a file a patch happens to
+      // touch is indistinguishable from an older revision of the same patch, and discarding it silently
+      // is not a repair. The checkout is reported with its recovery instead. CI cannot reach this state -
+      // the workflow cache key hashes this patch set - and a local cache is one directory to remove.
+      throw new Error([
+        `${patch.name} does not apply in ${directory}: the checkout is not the pinned revision plus this patch set.`,
+        'A cache patched from an older revision of this patch set is the usual cause.',
+        `Recovery: remove ${directory} and re-run \`bun run setup:native\`, or point HEDDLEWORK_GPUIX_SOURCE at a clean checkout of the pin.`,
+        `git apply said: ${error instanceof Error ? error.message : String(error)}`,
+      ].join('\n'))
+    }
   }
   // Only this repository's own index is checked here. A nested checkout has its own patch set
   // (`runtimePatchSets`), and checking it against an empty declaration from the outer set failed every
@@ -148,24 +162,15 @@ export function applyRuntimePatches(directory: string, patches: readonly Runtime
   assertDeclaredSource(directory, patches, paths)
 }
 
-/**
- * Restore the files a patch declares to the pinned revision, naming them: a stale checkout is repaired
- * loudly, never silently. Untracked declared targets are removed, tracked ones are checked out from HEAD.
- */
-function resetDeclaredTargets(directory: string, patch: RuntimeSourcePatch): void {
-  const targets = patchTargets(readFileSync(patch.path, 'utf8'))
-  const status = git(directory, ['status', '--porcelain', '--untracked-files=all', '--', ...targets]).toString()
-  const dirty = [...new Set(status.split('\n').flatMap((line) => {
-    const entry = line.trimEnd()
-    if (entry === '') return []
-    return [entry.slice(3).split(' -> ').pop()?.trim() ?? '']
-  }))].filter((path) => path !== '')
-  if (dirty.length === 0) return
-  console.warn(`[heddlework] ${patch.name} does not match ${directory}; restoring its declared files to the pinned revision:\n  ${dirty.join('\n  ')}`)
-  const untracked = dirty.filter((path) => status.includes(`?? ${path}`))
-  for (const path of untracked) rmSync(resolve(directory, path), { force: true })
-  const tracked = dirty.filter((path) => !untracked.includes(path))
-  if (tracked.length > 0) git(directory, ['checkout', 'HEAD', '--', ...tracked])
+/** Reverse the patches an invocation applied, so a refusal leaves the checkout as it was found. */
+function rollbackApplied(directory: string, appliedHere: readonly RuntimeSourcePatch[]): void {
+  for (const patch of [...appliedHere].reverse()) {
+    try {
+      git(directory, ['apply', '--reverse', patch.path])
+    } catch {
+      // Rollback is best effort; the refusal about to be thrown is the report either way.
+    }
+  }
 }
 
 function digest(value: string | Uint8Array): string {

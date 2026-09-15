@@ -117,7 +117,11 @@ also what the web companion uses, and the chosen mode is logged at startup.
 **Which thread it belongs to.** A clipboard read, an attached image, and a submit that waited for a paste
 all outlive a click on another thread, because the composer is not remounted on a switch. Each step
 re-checks the session file it started in (`pasteTargetsSameSession`) and drops a late result instead of
-writing it into the thread that is open now.
+writing it into the thread that is open now. The current side of that comparison is read from the
+controller at the moment of the write (`attachClipboardImage`), never from React state or a ref: the
+switch publishes the new session synchronously, while the effect that tracks it runs after the next
+render, so a read resolving inside that window would pass a stale check and attach the previous thread's
+image to the thread on screen. `tests/composer-paste-session.test.ts` drives that window directly.
 
 `src/ui/insert-key.ts` still resolves that convention and the terminal uses it for its own routing, and it is
 what the composer's fallback handler consults when the runtime does not bind the keys - there, the window

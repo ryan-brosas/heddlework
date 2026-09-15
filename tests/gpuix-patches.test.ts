@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -55,6 +55,27 @@ function patchFor(_directory: string, file: string, before: string, after: strin
   return { name: '0001-declared.patch', path, sha256: fileFingerprint(path) }
 }
 
+/** A patch from explicit hunk lines, for the shapes a one-line replacement cannot express. */
+function patchLines(name: string, lines: readonly string[]): { name: string; path: string; sha256: string } {
+  const path = join(scratchDirectory(), name)
+  writeFileSync(path, [...lines, ''].join('\n'))
+  return { name, path, sha256: fileFingerprint(path) }
+}
+
+/**
+ * Apply a patch set that the checkout does not match and return the refusal, failing the test when the
+ * installer does not refuse. The refusal is the contract: the checkout is reported with its recovery
+ * instead of being rewritten.
+ */
+function refusalMessage(directory: string, patches: Parameters<typeof applyRuntimePatches>[1]): string {
+  try {
+    applyRuntimePatches(directory, patches, ['src'])
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+  throw new Error('Expected the installer to refuse this checkout')
+}
+
 /** A patch that turns `src/input.rs` into `patched`. */
 function declaredPatch(directory: string, patched: string): { name: string; path: string; sha256: string } {
   return patchFor(directory, 'src/input.rs', readFileSync(resolve(directory, 'src/input.rs'), 'utf8'), patched)
@@ -100,24 +121,73 @@ describe('runtime source patches', () => {
     expect(() => applyRuntimePatches(directory, [patch], ['src'])).toThrow(/Undeclared runtime source changes/u)
   })
 
-  it('restores a declared target that was edited by hand, and says so', () => {
+  it('refuses a checkout its patches do not match, without rewriting the files', () => {
     const directory = scratchRepository()
     const patch = declaredPatch(directory, 'patched')
     applyRuntimePatches(directory, [patch], ['src'])
-    // A hand edit inside patch-owned territory is repaired to the pinned revision, loudly: it cannot be told
-    // apart from an older revision of the same patch, and the strict check below still governs everything the
-    // patch does not declare.
+    // Anything else in a file a patch happens to touch cannot be told apart from an older revision of that
+    // patch, so the installer reports the checkout instead of resetting it: the edit here survives, and the
+    // message names the recovery.
     writeFileSync(resolve(directory, 'src/input.rs'), 'patched\nand something else\n')
-    const warnings = spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      applyRuntimePatches(directory, [patch], ['src'])
-    } finally {
-      // Read the recorded calls before restoring: `mockRestore` also discards them.
-      const recorded = warnings.mock.calls.flat().join(' ')
-      warnings.mockRestore()
-      expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('patched\n')
-      expect(recorded).toContain('0001-declared.patch')
-    }
+    const message = refusalMessage(directory, [patch])
+    expect(message).toContain('0001-declared.patch does not apply in')
+    expect(message).toContain(`Recovery: remove ${directory}`)
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('patched\nand something else\n')
+  })
+
+  it('leaves the checkout unchanged when a later patch of the set refuses', () => {
+    const directory = scratchRepository()
+    writeFileSync(resolve(directory, 'src/other.rs'), 'initial\n')
+    commitAll(directory, 'second file')
+    const first = patchLines('0001-first.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      '--- a/src/input.rs',
+      '+++ b/src/input.rs',
+      '@@ -1 +1 @@',
+      '-initial',
+      '+first applied',
+    ])
+    const second = patchLines('0002-second.patch', [
+      'diff --git a/src/other.rs b/src/other.rs',
+      '--- a/src/other.rs',
+      '+++ b/src/other.rs',
+      '@@ -1 +1 @@',
+      '-expected',
+      '+second applied',
+    ])
+    // The set is one unit: the first patch is rolled back, so the refusal leaves the checkout exactly as
+    // this run found it instead of half-patched.
+    const message = refusalMessage(directory, [first, second])
+    expect(message).toContain('0002-second.patch does not apply in')
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('initial\n')
+    expect(readFileSync(resolve(directory, 'src/other.rs'), 'utf8')).toBe('initial\n')
+    // The rolled-back state is applicable again, which is what makes a retry meaningful.
+    applyRuntimePatches(directory, [first], ['src'])
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('first applied\n')
+  })
+
+  it('refuses a patch that deletes a file whose content the patch does not describe', () => {
+    const directory = scratchRepository()
+    applyRuntimePatches(directory, [patchLines('0001-set-older.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      '--- a/src/input.rs',
+      '+++ b/src/input.rs',
+      '@@ -1 +1 @@',
+      '-initial',
+      '+older',
+    ])], ['src'])
+    // The deletion describes 'current' but the file holds 'older'. The file is reported, not removed: a
+    // reset that deletes first would discard content the patch never described.
+    const deletion = patchLines('0002-delete.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      'deleted file mode 100644',
+      '--- a/src/input.rs',
+      '+++ /dev/null',
+      '@@ -1 +0,0 @@',
+      '-current',
+    ])
+    expect(refusalMessage(directory, [deletion])).toContain('0002-delete.patch does not apply in')
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('older\n')
   })
 
   it('fingerprints working-tree bytes, not the index state', () => {
@@ -204,38 +274,51 @@ describe('runtime source patches', () => {
     }
   })
 
-  it('repairs a cached checkout that carries an older revision of a declared patch', () => {
+  it('names the cache when a checkout carries an older revision of a declared patch', () => {
     // CI and a developer machine both reuse the native cache across patch edits, so the checkout can hold the
-    // previous revision of the same patch. Applying the current one restores only the files it declares.
+    // previous revision of the same patch. That is reported with its recovery - the cache is a derived
+    // directory, and rewriting it would also rewrite a hand edit that looks identical.
     const directory = scratchRepository()
     const older = patchFor(directory, 'src/input.rs', 'initial\n', 'older revision')
     applyRuntimePatches(directory, [older], ['src'])
     expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('older revision\n')
 
     const current = patchFor(directory, 'src/input.rs', 'initial\n', 'current revision')
-    applyRuntimePatches(directory, [current], ['src'])
-    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('current revision\n')
+    expect(() => applyRuntimePatches(directory, [current], ['src'])).toThrow(new RegExp(`${directory}.*Recovery: remove ${directory}`, 'su'))
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('older revision\n')
   })
 
-  it('repairs a declared file that a patch adds, when the cache already patched it', () => {
+  it('stays idempotent for a patch that adds a file', () => {
     const directory = scratchRepository()
-    const added = [
+    const patch = patchLines('0001-extra.patch', [
       'diff --git a/src/extra.rs b/src/extra.rs',
       'new file mode 100644',
       '--- /dev/null',
       '+++ b/src/extra.rs',
       '@@ -0,0 +1 @@',
       '+telemetry',
-      '',
-    ].join('\n')
-    const path = join(scratchDirectory(), '0001-extra.patch')
-    writeFileSync(path, added)
-    const patch = { name: '0001-extra.patch', path, sha256: fileFingerprint(path) }
+    ])
     applyRuntimePatches(directory, [patch], ['src'])
     expect(readFileSync(resolve(directory, 'src/extra.rs'), 'utf8')).toBe('telemetry\n')
-    // The second run finds the file present and the patch already applied: no repair, no error.
+    // The second run finds the file present and the patch already applied: no reset, no error.
     applyRuntimePatches(directory, [patch], ['src'])
     expect(readFileSync(resolve(directory, 'src/extra.rs'), 'utf8')).toBe('telemetry\n')
+  })
+
+  it('stays idempotent for a patch that deletes a file', () => {
+    const directory = scratchRepository()
+    const patch = patchLines('0001-remove.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      'deleted file mode 100644',
+      '--- a/src/input.rs',
+      '+++ /dev/null',
+      '@@ -1 +0,0 @@',
+      '-initial',
+    ])
+    applyRuntimePatches(directory, [patch], ['src'])
+    expect(existsSync(resolve(directory, 'src/input.rs'))).toBe(false)
+    applyRuntimePatches(directory, [patch], ['src'])
+    expect(existsSync(resolve(directory, 'src/input.rs'))).toBe(false)
   })
 
   it('re-runs on a cached checkout whose nested repository already carries its own patch', () => {

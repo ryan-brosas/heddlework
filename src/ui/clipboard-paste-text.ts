@@ -1,3 +1,5 @@
+import type { ComposerImage } from '../pi/types.ts'
+
 /**
  * What a submit should do while a paste may be pending.
  *
@@ -60,6 +62,30 @@ export function pasteTargetsSameSession(startedSessionFile: string, currentSessi
  * A paste that reported nothing (a DOM paste, or a runtime that predates the field) left the draft as the
  * current one, which is why that is the fallback rather than a guess.
  */
+/**
+ * Attach the clipboard image half of a paste, unless the thread changed while the clipboard was read.
+ *
+ * Both paste paths need this: the read is asynchronous and the composer is not remounted when the user
+ * clicks a thread. The thread the paste started in is compared against the *current* one at the moment of
+ * the write, and the current one is read through a callback rather than captured earlier: the composer's
+ * React effect that tracks the session runs after the render that switched threads, so a read resolving
+ * inside that window would pass a check against a value React had not updated yet and attach the previous
+ * thread's image to the thread now on screen. The callback reads the controller snapshot, which the switch
+ * updates synchronously.
+ */
+export async function attachClipboardImage(options: {
+  readonly startedSessionFile: string
+  readonly currentSessionFile: () => string
+  readonly readImage: () => Promise<ComposerImage | undefined>
+  readonly attachImage: (image: ComposerImage) => void
+}): Promise<'attached' | 'unavailable' | 'stale'> {
+  const image = await options.readImage()
+  if (!image) return 'unavailable'
+  if (!pasteTargetsSameSession(options.startedSessionFile, options.currentSessionFile())) return 'stale'
+  options.attachImage(image)
+  return 'attached'
+}
+
 export function draftBeforeNativePaste(report: { contentBefore?: unknown }, currentDraft: string): string {
   return typeof report.contentBefore === 'string' ? report.contentBefore : currentDraft
 }

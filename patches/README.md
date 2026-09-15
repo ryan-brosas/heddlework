@@ -13,6 +13,12 @@ fails on anything they do not explain.
 
 - A patch is applied once: a patch that is already applied reverse-applies cleanly, so re-running
   `setup:native` on a cache is idempotent.
+- A cached checkout that no longer matches the patch set is **reported, not rewritten**. Editing a patch
+  leaves a cache patched from its previous revision, and its files are derived copies of the pin - but a hand
+  edit in a file a patch happens to touch is indistinguishable from an older revision of the same patch, so
+  the installer fails with the recovery (remove the cache directory and re-run, or point
+  `HEDDLEWORK_GPUIX_SOURCE` at a clean checkout) instead of resetting files. CI cannot reach that state: the
+  workflow cache key hashes the patch set.
 - `sourceIdentity`/`sourceFingerprint` hash the *working-tree bytes* of the build inputs, so a cached
   runtime is never reused after a build input changes - including a change that was never staged.
 - `assertDeclaredSource` reverse-applies the declared patches in a temporary Git index of the real build

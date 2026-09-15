@@ -256,7 +256,7 @@ try {
     const attached = previewAfter - previewBefore
     if (stagedImage.code !== 0 || imageEcho.code !== 0 || stagedBytes === 0) {
       inconclusive.push('shift-insert-attaches-real-clipboard-image')
-      console.error(`INCONCLUSIVE shift-insert-attaches-real-clipboard-image: staging reported wl-copy exit ${stagedImage.code} / wl-paste image/png exit ${imageEcho.code} for a ${String(stagedBytes)}-byte fixture`) 
+      console.error(`INCONCLUSIVE shift-insert-attaches-real-clipboard-image: staging reported wl-copy exit ${stagedImage.code} / wl-paste image/png exit ${imageEcho.code} for a ${String(stagedBytes)}-byte fixture`)
     } else if (attached === 1) {
       pass('shift-insert-attaches-real-clipboard-image', `with only ${String(stagedBytes)} image byte(s) on the clipboard, Shift+Insert added exactly one composer attachment and submitted nothing`)
     } else {

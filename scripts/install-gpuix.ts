@@ -160,4 +160,3 @@ async function run(command: string[], cwd: string) {
   const child = Bun.spawn(command, { cwd, env: environment, stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' })
   if (await child.exited !== 0) throw new Error(`Failed: ${command.join(' ')}`)
 }
-
