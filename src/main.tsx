@@ -23,7 +23,8 @@ import {
 } from './workbench/plugins.ts'
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
 import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
-import { assertNativeRuntime } from './native-runtime.ts'
+import { assertNativeRuntime, runtimeOwnsNativeClipboardEditing } from './native-runtime.ts'
+import { setNativeClipboardEditing } from './ui/clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './ui/insert-key.ts'
 import { copyTextToClipboard } from './ui/clipboard-media.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment } from './host/plugin.ts'
@@ -41,6 +42,12 @@ declare global {
 }
 
 assertNativeRuntime(GpuixRenderer.prototype)
+// One owner per clipboard gesture, decided once from the runtime's own answer: a patched build binds copy and
+// paste itself, and a runtime that predates the patch keeps the JavaScript fallback instead of losing the
+// gesture. Every surface asks the same flag, so no keystroke can be handled twice.
+const nativeClipboardEditing = runtimeOwnsNativeClipboardEditing(GpuixRenderer.prototype)
+setNativeClipboardEditing(nativeClipboardEditing)
+console.log(`[heddlework] clipboard editing: ${nativeClipboardEditing ? 'native' : 'javascript fallback'}`)
 
 const workspacePath = resolveWorkspacePath()
 const demoMode = process.env.HEDDLEWORK_DEMO === '1'
@@ -168,6 +175,9 @@ process.once('SIGTERM', handleSignal)
  * element.
  */
 const handleWindowKeyDown: WindowKeyEventHandler = (event, renderer) => {
+  // A runtime that binds the clipboard keys copies the document selection itself, and two owners writing one
+  // clipboard is the same double handling the paste path avoids.
+  if (nativeClipboardEditing) return
   if (resolveInsertKeyCommand(event) !== 'copy') return
   const selected = renderer.getSelectedText?.()
   if (selected) void copyTextToClipboard(selected)

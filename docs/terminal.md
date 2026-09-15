@@ -93,16 +93,36 @@ newer one. `createTerminalCopyAction` binds the same core to the terminal's own 
 
 Omarchy's Hyprland bindings rewrite clipboard shortcuts before any window sees them: `Ctrl+V`
 becomes `Shift+Insert` (`Direct paste`) and `Super+C` becomes `Ctrl+Insert` (`Universal copy`). The
-pinned GPUiX input element binds `ctrl-v`/`cmd-v` only, so with those bindings active the app looked
-as if it had no clipboard at all - measured on this box against the installed build: `Ctrl+C` then
+pinned GPUiX input element bound `ctrl-v`/`cmd-v` only, so before the patch described below landed the
+app looked as if it had no clipboard at all - measured on this box against the installed build: `Ctrl+C` then
 `Ctrl+V` round-tripped, while `Shift+Insert` and `Ctrl+Insert` did nothing.
 
-`src/ui/insert-key.ts` resolves that convention once, and every surface that accepts keys uses it:
-`Shift+Insert` pastes (composer and terminal), and `Ctrl+Insert`/`Cmd+Insert` copies the document
-selection through the window-level listener in `src/main.tsx`. Paste from `Shift+Insert` in the
-composer appends to the draft, since only the native path knows the caret, and attaches the image
-instead when the clipboard holds one - a remapped desktop has no other way to paste a screenshot; the
-terminal inserts at the cursor as usual. A clipboard read is asynchronous, so every way of submitting
+**Who owns the keystroke.** The pinned runtime is patched (`patches/gpuix/0001-linux-native-runtime.patch`,
+applied by `bun run setup:native`) so it binds the desktop clipboard keys itself: `Ctrl+Insert` - the key
+Omarchy delivers for `Super+C` - runs the same selection-aware action as `Ctrl+C` in input and textarea
+contexts alike and in the runtime's document-selection copy listener, while `Ctrl+V`/`Cmd+V`/`Shift+Insert`
+run that element's own paste action, so text lands at the caret with undo and no app-side handler appends it.
+
+A text input cannot hold a clipboard image, so each paste action also emits one `paste` event carrying the
+text it inserted. The composer uses that event - never the key - to attach the image half, and an image
+attach still delays a submit until its bounded read finishes. The earlier design (native copy only, with the
+app appending pasted text at the end of the draft) is gone: one gesture now produces one insertion and one
+image.
+
+The capability is probed (`supportsNativeClipboardEditing`) rather than required: when the runtime answers it,
+this repository's fallback stands down - the copy listener in `src/main.tsx` and the composer's own key
+handler - so one keystroke never has two owners. A runtime that does not answer keeps the fallback, which is
+also what the web companion uses, and the chosen mode is logged at startup.
+
+**Which thread it belongs to.** A clipboard read, an attached image, and a submit that waited for a paste
+all outlive a click on another thread, because the composer is not remounted on a switch. Each step
+re-checks the session file it started in (`pasteTargetsSameSession`) and drops a late result instead of
+writing it into the thread that is open now.
+
+`src/ui/insert-key.ts` still resolves that convention and the terminal uses it for its own routing, and it is
+what the composer's fallback handler consults when the runtime does not bind the keys - there, the window
+listener copies the document selection and the composer reads the clipboard, appends the text and attaches
+an image, which is as far as a draft-level handler can go without knowing the caret. A clipboard read is asynchronous, so every way of submitting
 the composer - Enter, Alt+Enter and the Send button - waits for a paste already in flight and then
 submits the draft that paste produced (`resolveSubmittedText`). Without that wait an Enter pressed
 right after the paste key submits the pre-paste draft and the pasted text reappears in the composer,
@@ -117,17 +137,29 @@ depend on nor disturb the operator's clipboard:
 bun run smoke:workbench-keys
 ```
 
-It drags over a message, sends `Ctrl+Insert`, and asserts the clipboard helper received exactly that
-selection; it stages text for `Shift+Insert` and asserts the composer submitted it; and it re-asserts
-the native `Ctrl+C`/`Ctrl+V` round trip so the remapped shortcuts cannot quietly replace the normal
-ones. The pinned Linux automation text tree does not expose the composer's draft, so the lane checks
-submitted user-message rows instead. Before Enter, positive paste checks wait for the stub to log a
-text-read attempt, then allow two polling intervals for the asynchronous paste to settle. The logged
+The lane is owner-aware, and the owner decides what it can even observe. A runtime that binds the clipboard
+keys performs both gestures against the **real** platform clipboard, which the stubbed helpers deliberately
+do not serve: the app never reaches them, so nothing the lane can stage produces a native copy or paste. It
+reports those ten checks as named **skips** that say so and name the lane that can prove them, rather than
+asserting an app route that no longer exists. What still runs is everything the stub *can* observe plus the
+owner-independent checks: exact transcript accounting, the empty-draft rule, the renderer's own
+`Ctrl+C`/`Ctrl+V` round trip, and `insert-keys-single-owner`, which drags a real selection and presses
+`Ctrl+Insert` to prove the app wrote nothing. With a runtime that does not bind the keys, the whole paste
+route and the copy checks run instead, and the lane drags over a message, sends `Ctrl+Insert`, and asserts
+the clipboard helper received exactly that selection. The pinned Linux automation text tree does not expose the composer's draft, so
+the lane checks submitted user-message rows instead. Byte-level proof of the native path needs a real
+compositor: `HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live` starts a disposable nested Hyprland
+with the real helpers and asserts that `Shift+Insert` pasted the staged text into a submitted message, that
+`Ctrl+Insert` left exactly the dragged selection on the session clipboard, and that a `Shift+Insert` against
+a clipboard holding only a PNG added exactly one composer attachment and submitted nothing - the screenshot
+half a text input cannot hold. In the fallback mode, positive paste checks wait for the stub to log a
+text-read attempt before Enter, then allow two polling intervals for the asynchronous paste to settle. The logged
 75 ms in a local run included that deliberate wait; it is **not** a measured paste-latency guarantee.
 
 The image-only stub rejects both image and text reads: its negative check covers refusal to paste stale
-text, not successful screenshot attachment. Empty-Enter checks and the exact-message checks provide
-indirect evidence about drafts, not a native input-value readback. Stubbed Xvfb results do not prove
+text, not successful screenshot attachment, and the live lane - not the stub - is what asserts a real
+screenshot attachment. Empty-Enter checks and the exact-message checks provide indirect evidence about
+drafts, not a native input-value readback. Stubbed Xvfb results do not prove
 Hyprland input-serial handling or real Wayland clipboard ownership; those need a separate live test.
 
 The lane defaults to the checkout's `dist/heddlework`; rebuild it with `bun run build` before testing

@@ -37,6 +37,7 @@ interface FakeWorkbenchOptions {
   /** Model a submit that never clears the draft. */
   readonly keepDraftAfterSubmit?: boolean
   /** Model an empty draft that resubmits the previous message. */
+  readonly insertKeyOwner?: 'native' | 'javascript'
   readonly resubmitOnEmpty?: boolean
   /** Model a submit that stores a mutated message (the old `includes` pass). */
   readonly mutateSubmit?: (text: string) => string
@@ -48,6 +49,8 @@ class FakeWorkbench {
   readonly copies: string[] = []
   /** The clipboard channel: what the app asked the helpers for, in order. */
   readonly reads: string[] = []
+  /** Attachments the composer holds, as the app-side half of a clipboard image paste. */
+  readonly imagePreviews: string[] = []
   draft = ''
   selection: string | null = null
   focused = true
@@ -98,14 +101,27 @@ class FakeWorkbench {
   pressComposer(key: string): void {
     switch (key) {
       case 'ctrl-insert':
+        // A native runtime copies the selection itself: the app never asks the helper channel, so no write is
+        // recorded here even though the key really was pressed.
+        if (this.options.insertKeyOwner === 'native') return
         if (this.selection !== null) this.copy(this.selection)
         else if (this.options.copyWithoutSelection === true) this.copy('')
         return
       case 'shift-insert':
-        // The app probes the clipboard whenever the paste key arrives: image attempts first, then the text
-        // read the lane waits for before it submits.
-        this.reads.push('image image/png', 'text text')
-        if (this.focused) this.paste()
+        // A blurred composer consumes nothing at all, so it cannot read the clipboard either.
+        if (!this.focused) return
+        if (this.options.insertKeyOwner === 'native') {
+          // The runtime inserted the text itself and reported the paste, so the app only ever looks for an
+          // image: one read per reported paste, and no text read that could append the clipboard twice.
+          this.reads.push('image image/png')
+        } else {
+          // The fallback owns the whole gesture: it reads the clipboard image first, then the text it appends.
+          this.reads.push('image image/png', 'text text')
+        }
+        // A staged image is attached rather than pasted as text: that is the app-side half the lane checks on
+        // a runtime that pastes text itself.
+        if (this.stagedKind === 'image') this.imagePreviews.push('image')
+        else this.paste()
         return
       case 'enter':
         this.submit()
@@ -162,7 +178,9 @@ function fakeApp(workbench: FakeWorkbench): { app: App; clipboard: WorkbenchKeyL
       workbench.pressComposer(key)
     },
     bounds: async () => workbench.boxes()[0] ?? { x: 0, y: 0, width: 0, height: 0 },
-    all: async () => testId === 'user-message-text'
+    all: async () => testId === 'composer-image-preview'
+      ? workbench.imagePreviews.map((_, index) => ({ id: 200 + index, type: 'image', testId, bounds: { x: 0, y: 0, width: 0, height: 0 } }))
+      : testId === 'user-message-text'
       ? workbench.boxes().map((bounds, index) => ({ id: 100 + index, type: 'text', testId, text: workbench.messages[index], bounds }))
       // The lane gates every submit on the composer action reading `send` (idle) rather than `abort`
       // (streaming). This fake never streams, so the action is always present and idle.
@@ -206,8 +224,11 @@ function fakeApp(workbench: FakeWorkbench): { app: App; clipboard: WorkbenchKeyL
   return { app: app as unknown as App, clipboard }
 }
 
-async function runLane(options: FakeWorkbenchOptions = {}): Promise<{ checks: WorkbenchKeyLaneCheck[]; workbench: FakeWorkbench }> {
-  const workbench = new FakeWorkbench(options)
+async function runLane(
+  options: FakeWorkbenchOptions = {},
+  insertKeyOwner: 'native' | 'javascript' = 'javascript',
+): Promise<{ checks: WorkbenchKeyLaneCheck[]; workbench: FakeWorkbench }> {
+  const workbench = new FakeWorkbench({ ...options, insertKeyOwner })
   const { app, clipboard } = fakeApp(workbench)
   const laneOptions: WorkbenchKeyLaneOptions = {
     compositor: COMPOSITOR,
@@ -215,6 +236,7 @@ async function runLane(options: FakeWorkbenchOptions = {}): Promise<{ checks: Wo
     clipboard,
     negativeQuietMs: QUIET_MS,
     timeouts: { composerMs: 2_000, transcriptMs: 600, selectionMs: 400 },
+    insertKeyOwner,
   }
   const checks = await runWorkbenchKeyLane(app, laneOptions)
   return { checks, workbench }
@@ -236,7 +258,11 @@ const LANE_CHECK_NAMES = [
 describe('workbench key lane', () => {
   it('passes every exact-bytes check on a correct workbench', async () => {
     const { checks, workbench } = await runLane()
-    expect(checks.map((check) => check.name)).toEqual(LANE_CHECK_NAMES)
+    expect(checks.map((check) => check.name)).toEqual([
+      ...LANE_CHECK_NAMES.slice(0, 8),
+      'paste-attaches-clipboard-image',
+      ...LANE_CHECK_NAMES.slice(8),
+    ])
     expect(workbench.messages).toEqual([
       workbench.markers.selection,
       workbench.markers.other,
@@ -253,6 +279,48 @@ describe('workbench key lane', () => {
     expect(checks[1]!.evidence).toContain(COMPOSITOR)
     expect(checks[1]!.evidence).toContain(JSON.stringify(workbench.markers.selection))
     expect(checks[4]!.evidence).toContain(JSON.stringify(workbench.markers.paste))
+  })
+
+  it('reports the insert-key checks as skips when the runtime owns the keys', async () => {
+    const { checks, workbench } = await runLane({}, 'native')
+    // The helper-route names and their order stay comparable with a JavaScript-owner run; the two checks the
+    // app still owns sit where the helper-route block was, before the owner-independent ones.
+    expect(checks.map((check) => check.name)).toEqual([
+      ...LANE_CHECK_NAMES.slice(0, 5),
+      'native-paste-leaves-text-to-the-runtime',
+      ...LANE_CHECK_NAMES.slice(5, 8),
+      'paste-attaches-clipboard-image',
+      'paste-reads-image-once',
+      'insert-keys-single-owner',
+      ...LANE_CHECK_NAMES.slice(8),
+    ])
+    const skipped = checks.filter((check) => check.skipped === true)
+    // Every gesture the runtime performs itself is a named skip here: a stubbed display can stage neither a
+    // copy nor a paste against the real platform clipboard. The live compositor lane is the proof for those.
+    expect(skipped.map((check) => check.name)).toEqual([
+      'ctrl-insert-copies-exact-selection',
+      'copy-disabled-without-selection',
+      'copy-follows-current-selection',
+      'shift-insert-pastes-exact-draft',
+      'native-paste-leaves-text-to-the-runtime',
+      'duplicate-paste-keeps-exact-copies',
+      'paste-disabled-without-focus',
+      'paste-disabled-image-only-clipboard',
+      'paste-attaches-clipboard-image',
+      'paste-reads-image-once',
+    ])
+    // The copy checks may carry no byte-level evidence here; the paste route runs for real, the app still
+    // attaches the image half, and the app never wrote the clipboard itself for the copy key.
+    expect(workbench.copies).toEqual([])
+    // The runtime owns both gestures, so the app never reaches its clipboard helpers at all.
+    expect(workbench.reads).toEqual([])
+    expect(workbench.imagePreviews).toEqual([])
+    expect(skipped.every((check) => check.evidence.includes('smoke:clipboard-live'))).toBe(true)
+    for (const name of ['insert-keys-single-owner']) {
+      expect(checks.find((check) => check.name === name)?.skipped).toBeUndefined()
+    }
+    // Only the owner-independent checks submit here: the two exact messages and the renderer round trip.
+    expect(workbench.messages).toEqual([workbench.markers.selection, workbench.markers.other, workbench.markers.native])
   })
 
   it('fails a copy that only nearly matches the selection', async () => {

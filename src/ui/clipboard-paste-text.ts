@@ -40,6 +40,31 @@ export async function resolveSubmittedText(options: {
   return options.currentDraft() || options.eventValue
 }
 
+/**
+ * Whether a paste or submit still belongs to the thread it started in.
+ *
+ * The clipboard read is asynchronous and the composer is not remounted when the user clicks a thread, so a
+ * read, an attached image, or a waiting submit can outlive the session it began in. Comparing the session
+ * file - not the session object identity - is what keeps a late result from being written into the thread
+ * the user is looking at now, where it would look like the paste went to the wrong place.
+ */
+export function pasteTargetsSameSession(startedSessionFile: string, currentSessionFile: string): boolean {
+  return startedSessionFile === currentSessionFile
+}
+
+/**
+ * The draft as it was before the native paste action inserted `inserted`.
+ *
+ * A runtime that owns the clipboard keys inserts at the caret and then reports the inserted text, so the
+ * draft it produced is the only record of that insertion. Inverting exactly that text - rather than
+ * guessing from a path-shaped string - is what lets the image half compare against the pre-paste draft and
+ * drop a pasted image path once the image itself is attached.
+ */
+export function draftBeforeNativePaste(current: string, inserted: string): string {
+  if (inserted === '' || !current.endsWith(inserted)) return current
+  return current.slice(0, current.length - inserted.length)
+}
+
 /** Pure paste-path classifier shared by src/ui/clipboard-media.ts and its web alias src/dom/shims/clipboard-media.ts. */
 export function editorTextAfterImagePaste(previous: string, current: string): string {
   if (previous === current) return current

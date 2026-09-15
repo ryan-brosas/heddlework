@@ -1,0 +1,594 @@
+diff --git a/packages/native/src/custom_elements/input.rs b/packages/native/src/custom_elements/input.rs
+index aa70dda..009e0de 100644
+--- a/packages/native/src/custom_elements/input.rs
++++ b/packages/native/src/custom_elements/input.rs
+@@ -241,6 +241,11 @@ fn text_editor_bindings(
+             context,
+         ),
+     ]);
++    // The desktop clipboard convention: `Ctrl+Insert` is what a remapped compositor sends for copy
++    // (`Super+C` on Omarchy/Hyprland), and it must run the same selection-aware action as `Ctrl+C`.
++    if bind_paste_shortcut {
++        bindings.push(KeyBinding::new("ctrl-insert", Copy, context));
++    }
+     for prefix in ["cmd", "ctrl"] {
+         bindings.extend([
+             KeyBinding::new(&format!("{prefix}-a"), SelectAll, context),
+@@ -253,6 +258,12 @@ fn text_editor_bindings(
+             bindings.push(KeyBinding::new(&format!("{prefix}-v"), Paste, context));
+         }
+     }
++    // `Shift+Insert` is the other half of that convention (`Super+V`/`Ctrl+V` on the same desktops).
++    // Binding it here keeps the insertion caret-aware in input, textarea and submitting textarea alike,
++    // instead of leaving the key to a host-level handler that can only append text.
++    if bind_paste_shortcut {
++        bindings.push(KeyBinding::new("shift-insert", Paste, context));
++    }
+     bindings
+ }
+ 
+@@ -1081,9 +1092,21 @@ impl TextEditorState {
+         if self.read_only {
+             return;
+         }
+-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
++        // One clipboard snapshot per paste: the text inserted below and the `value` reported to the host
++        // come from the same read. A host that attaches clipboard images cannot see a different clipboard
++        // than the editor did, and it learns when the insertion happened from this event rather than from
++        // the key that caused it.
++        let Some(item) = cx.read_from_clipboard() else {
++            return;
++        };
++        let text = item.text();
++        if let Some(text) = text.as_deref() {
+             self.replace_text_in_range(None, &text, window, cx);
+         }
++        emit_event_full(&self.callback, self.element_id, "paste", |payload| {
++            payload.value = text;
++            payload.key = Some("insert".to_string());
++        });
+     }
+ 
+     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+@@ -1950,6 +1973,9 @@ mod tests {
+ 
+         assert!(!has_binding(&bindings, "cmd-v", &Paste));
+         assert!(!has_binding(&bindings, "ctrl-v", &Paste));
++        // A browser element must not claim the desktop insert keys either.
++        assert!(!has_binding(&bindings, "shift-insert", &Paste));
++        assert!(!has_binding(&bindings, "ctrl-insert", &Copy));
+     }
+ 
+     #[test]
+@@ -1960,6 +1986,25 @@ mod tests {
+         assert!(has_binding(&bindings, "ctrl-v", &Paste));
+     }
+ 
++    #[test]
++    fn desktop_clipboard_keys_use_the_platform_actions_in_every_editor_context() {
++        for (context, multiline, submit) in [
++            (INPUT_KEY_CONTEXT, false, true),
++            (TEXTAREA_KEY_CONTEXT, true, false),
++            (TEXTAREA_SUBMIT_KEY_CONTEXT, true, true),
++        ] {
++            let bindings = text_editor_bindings(context, multiline, submit, false, true);
++            // `Shift+Insert` is what a remapped compositor sends for paste: it has to reach the same
++            // caret-aware action as `Ctrl+V`, in every editor context rather than only the composer.
++            assert!(has_binding(&bindings, "shift-insert", &Paste));
++            // `Ctrl+Insert` is the matching copy key.
++            assert!(has_binding(&bindings, "ctrl-insert", &Copy));
++            // The alt/shift variants stay unbound so a terminal or editor inside the app keeps them.
++            assert!(!has_binding(&bindings, "alt-shift-insert", &Paste));
++            assert!(!has_binding(&bindings, "shift-ctrl-insert", &Copy));
++        }
++    }
++
+     #[test]
+     fn textarea_enter_inserts_a_newline_unless_on_submit_is_set() {
+         let textarea = text_editor_bindings(TEXTAREA_KEY_CONTEXT, true, false, true, true);
+diff --git a/packages/native/src/lib.rs b/packages/native/src/lib.rs
+index 3f2ab59..fa4b2c0 100644
+--- a/packages/native/src/lib.rs
++++ b/packages/native/src/lib.rs
+@@ -22,6 +22,13 @@ mod element_tree;
+ mod markdown;
+ mod motion;
+ mod renderer;
++
++// Window-parented XDG portal primitives (ported from the historical heddlework
++// patch tree; upstream into the fork branch before the next pin bump).
++#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
++mod portal_file_chooser;
++#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
++mod system_appearance;
+ // The data model is public so `examples/bench_serde.rs` measures the real
+ // types instead of a copy that silently drifts from them.
+ pub mod retained_tree;
+diff --git a/packages/native/src/portal_file_chooser.rs b/packages/native/src/portal_file_chooser.rs
+new file mode 100644
+index 0000000..4344f7b
+--- /dev/null
++++ b/packages/native/src/portal_file_chooser.rs
+@@ -0,0 +1,230 @@
++//! Window-parented XDG directory chooser delivery. The TSFN targets a guarded
++//! trampoline, not the application listener: disposal also fences events
++//! already queued, and the `closed` promise settles even when the listener is
++//! disabled. Delivery safeguards follow the appearance module.
++use crate::renderer::{recv_ui_response, GpuixRenderer, UiCommand};
++use napi::bindgen_prelude::{FromNapiValue, Function, FunctionRef, Object};
++use napi::threadsafe_function::ThreadsafeFunctionCallMode;
++use napi::{CleanupEnvHook, Env, JsValue, Result};
++use napi_derive::napi;
++use std::cell::{Cell, RefCell};
++use std::rc::Rc;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{Arc, Mutex};
++
++#[napi(object)]
++pub struct DirectoryDialogOptions {
++  pub title: Option<String>,
++}
++
++#[napi(object)]
++pub struct DirectoryDialogResult {
++  pub status: String,
++  pub path: Option<String>,
++  pub reason: Option<String>,
++  /// Renders as `safeToFallback` in JavaScript.
++  pub safe_to_fallback: Option<bool>,
++}
++
++/// Resolves the handle's `closed` promise from any thread.
++type CleanupResolver = Box<dyn FnOnce(Env) -> Result<String> + Send>;
++type CleanupDeferred = napi::JsDeferred<String, CleanupResolver>;
++
++struct State {
++  active: Cell<bool>,
++  listener: RefCell<Option<FunctionRef<DirectoryDialogResult, ()>>>,
++  #[cfg(target_os = "linux")]
++  request: RefCell<Option<gpui_platform::DirectoryRequest>>,
++}
++impl State {
++  fn dispose(&self) {
++    self.active.set(false);
++    #[cfg(target_os = "linux")]
++    // Dropping the transport sends the portal close signal from this thread,
++    // so environment teardown never waits for a JavaScript turn.
++    self.request.borrow_mut().take();
++    self.listener.borrow_mut().take();
++  }
++}
++
++/// Cleanup settlement shared between the JS thread and the transport thread.
++struct Shared {
++  env_alive: AtomicBool,
++  deferreds: Mutex<Vec<CleanupDeferred>>,
++  settled: Mutex<Option<String>>,
++}
++impl Shared {
++  fn settle(&self, outcome: &str) {
++    let mut settled = self.settled.lock().unwrap();
++    if settled.is_some() {
++      return;
++    }
++    *settled = Some(outcome.to_string());
++    let deferreds = std::mem::take(&mut *self.deferreds.lock().unwrap());
++    drop(settled);
++    for deferred in deferreds {
++      let value = outcome.to_string();
++      deferred.resolve(Box::new(move |_| Ok(value.clone())));
++    }
++  }
++}
++
++#[napi]
++pub struct DirectoryDialogRequest {
++  state: Rc<State>,
++  shared: Arc<Shared>,
++  env: Env,
++  hook: Option<CleanupEnvHook<Arc<Shared>>>,
++}
++
++#[napi]
++impl DirectoryDialogRequest {
++  /// Settles independently of result delivery: `closed` when native cleanup
++  /// is confirmed, `uncertain` when a dialog may still be open. Resolves once.
++  #[napi(getter, ts_return_type = "Promise<'closed' | 'uncertain'>")]
++  pub fn closed(&self, env: Env) -> Result<Object<'static>> {
++    let (deferred, promise) = env.create_deferred::<String, CleanupResolver>()?;
++    if let Some(outcome) = self.shared.settled.lock().unwrap().clone() {
++      deferred.resolve(Box::new(move |_| Ok(outcome)));
++    } else {
++      self.shared.deferreds.lock().unwrap().push(deferred);
++    }
++    // The promise outlives the local borrow; Object's lifetime is a marker.
++    let raw = JsValue::raw(&promise);
++    unsafe { <Object<'static> as FromNapiValue>::from_napi_value(env.raw(), raw) }
++  }
++
++  #[napi]
++  pub fn dispose(&mut self) {
++    self.state.dispose();
++    if let Some(hook) = self.hook.take() {
++      if self.shared.env_alive.load(Ordering::Acquire) {
++        let _ = self.env.remove_env_cleanup_hook(hook);
++      }
++    }
++  }
++}
++impl Drop for DirectoryDialogRequest {
++  fn drop(&mut self) {
++    self.dispose();
++  }
++}
++
++#[napi]
++pub fn open_directory_dialog(
++  env: Env,
++  renderer: &GpuixRenderer,
++  options: Option<DirectoryDialogOptions>,
++  listener: Function<DirectoryDialogResult, ()>,
++) -> Result<DirectoryDialogRequest> {
++  let state = Rc::new(State {
++    active: Cell::new(true),
++    listener: RefCell::new(Some(listener.create_ref()?)),
++    #[cfg(target_os = "linux")]
++    request: RefCell::new(None),
++  });
++  let shared = Arc::new(Shared {
++    env_alive: AtomicBool::new(true),
++    deferreds: Mutex::new(Vec::new()),
++    settled: Mutex::new(None),
++  });
++  let weak = Rc::downgrade(&state);
++  let trampoline = env.create_function_from_closure::<DirectoryDialogResult, (), _>(
++    "deliverDirectoryDialog", move |ctx| {
++      let Some(state) = weak.upgrade() else { return Ok(()); };
++      if !state.active.get() { return Ok(()); }
++      // Release the RefCell borrow before calling JS: a listener may dispose itself.
++      let listener = state.listener.borrow().as_ref()
++        .map(|listener| listener.borrow_back(&ctx.env)).transpose()?;
++      if let Some(listener) = listener { listener.call(ctx.get::<DirectoryDialogResult>(0)?)?; }
++      Ok(())
++    },
++  )?;
++  let callback = Arc::new(trampoline.build_threadsafe_function::<DirectoryDialogResult>()
++    .callee_handled::<false>().weak::<true>().build()?);
++  let hook = env.add_env_cleanup_hook(shared.clone(), |shared: Arc<Shared>| {
++    shared.env_alive.store(false, Ordering::Release);
++    shared.deferreds.lock().unwrap().clear();
++  })?;
++
++  let title = options.and_then(|options| options.title);
++
++  #[cfg(target_os = "linux")]
++  {
++    // Capture the invoking window before scheduling asynchronous work so the
++    // dialog parents to this renderer's window, not whichever one is focused later.
++    let (response_sender, response_receiver) = std::sync::mpsc::sync_channel(1);
++    renderer.send_ui_command(UiCommand::GetParentIdentifier { response: response_sender })?;
++    let parent_window = recv_ui_response(response_receiver, "the GPUI parent window query").ok().flatten();
++    match parent_window {
++      Some(parent_window) => {
++        let shared_for_transport = shared.clone();
++        let callback_for_transport = callback.clone();
++        let request = gpui_platform::DirectoryRequest::new(
++          Some(parent_window),
++          title,
++          move |event| match event {
++            gpui_platform::DirectoryEvent::Response(response) => {
++              let result = match response {
++                gpui_platform::DirectoryResponse::Selected(path) => DirectoryDialogResult {
++                  status: "selected".into(),
++                  path: Some(path),
++                  reason: None,
++                  safe_to_fallback: None,
++                },
++                gpui_platform::DirectoryResponse::Cancelled => DirectoryDialogResult {
++                  status: "cancelled".into(),
++                  path: None,
++                  reason: None,
++                  safe_to_fallback: None,
++                },
++                gpui_platform::DirectoryResponse::Unavailable { reason, safe_to_fallback } => {
++                  DirectoryDialogResult {
++                    status: "unavailable".into(),
++                    path: None,
++                    reason: Some(reason),
++                    safe_to_fallback: Some(safe_to_fallback),
++                  }
++                }
++              };
++              callback_for_transport.call(result, ThreadsafeFunctionCallMode::NonBlocking);
++            }
++            gpui_platform::DirectoryEvent::Cleanup(outcome) => {
++              let outcome = match outcome {
++                gpui_platform::DirectoryCleanupOutcome::Closed => "closed",
++                gpui_platform::DirectoryCleanupOutcome::Uncertain => "uncertain",
++              };
++              shared_for_transport.settle(outcome);
++            }
++          },
++        );
++        *state.request.borrow_mut() = Some(request);
++      }
++      None => {
++        // No live invoking window: fail before opening the dialog. Retry and
++        // fallback remain safe because nothing was opened.
++        let _ = callback.call(DirectoryDialogResult {
++          status: "unavailable".into(),
++          path: None,
++          reason: Some("The invoking window could not be identified".into()),
++          safe_to_fallback: Some(true),
++        }, ThreadsafeFunctionCallMode::NonBlocking);
++        shared.settle("closed");
++      }
++    }
++  }
++
++  #[cfg(not(target_os = "linux"))]
++  {
++    let _ = title;
++    let _ = callback.call(DirectoryDialogResult {
++      status: "unavailable".into(),
++      path: None,
++      reason: Some("unsupported-platform".into()),
++      safe_to_fallback: Some(true),
++    }, ThreadsafeFunctionCallMode::NonBlocking);
++    shared.settle("closed");
++  }
++
++  Ok(DirectoryDialogRequest { state, shared, env, hook: Some(hook) })
++}
+diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
+index 571684b..d0e3c9d 100644
+--- a/packages/native/src/renderer.rs
++++ b/packages/native/src/renderer.rs
+@@ -252,7 +252,7 @@ pub(crate) fn debug_frame_overlay_stats_js(
+ }
+ 
+ #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+-fn recv_ui_response<T>(receiver: std::sync::mpsc::Receiver<T>, operation: &str) -> Result<T> {
++pub(crate) fn recv_ui_response<T>(receiver: std::sync::mpsc::Receiver<T>, operation: &str) -> Result<T> {
+     match receiver.recv_timeout(Duration::from_secs(2)) {
+         Ok(response) => Ok(response),
+         Err(RecvTimeoutError::Timeout) => Err(Error::from_reason(format!(
+@@ -366,13 +366,16 @@ enum ClockControl {
+ }
+ 
+ #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+-enum UiCommand {
++pub(crate) enum UiCommand {
+     Invalidate,
+     ActivateWindow,
+     SetWindowTitle(String),
+     GetWindowState {
+         response: SyncSender<WindowState>,
+     },
++    GetParentIdentifier {
++        response: SyncSender<Option<String>>,
++    },
+     MinimizeWindow,
+     ToggleMaximizeWindow,
+     CloseWindow,
+@@ -477,6 +480,23 @@ async fn run_ui_commands(
+                     response.send(window_state(window)).ok();
+                 })
+             }
++            UiCommand::GetParentIdentifier { response } => {
++                match window.update(cx, move |_view, window, _cx| window.parent_window_identifier())
++                {
++                    Ok(Some(task)) => {
++                        cx.spawn(async move |_| {
++                            let identifier = task.await;
++                            response.send(identifier).ok();
++                        })
++                        .detach();
++                        Ok(())
++                    }
++                    _ => {
++                        response.send(None).ok();
++                        Ok(())
++                    }
++                }
++            }
+             UiCommand::MinimizeWindow => {
+                 window.update(cx, |_view, window, _cx| window.minimize_window())
+             }
+@@ -830,7 +850,7 @@ impl GpuixRenderer {
+     }
+ 
+     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+-    fn send_ui_command(&self, command: UiCommand) -> Result<()> {
++    pub(crate) fn send_ui_command(&self, command: UiCommand) -> Result<()> {
+         self.ui_commands
+             .lock()
+             .unwrap()
+@@ -1338,6 +1358,16 @@ impl GpuixRenderer {
+         true
+     }
+ 
++    /// Whether this build binds the desktop clipboard keys itself: `Ctrl+Insert` (what a remapped
++    /// compositor sends for copy) copies the selection, and `Ctrl+V`/`Cmd+V`/`Shift+Insert` run the
++    /// caret-aware paste action, which also emits a `paste` event carrying the inserted text. A host that
++    /// probes this owns no key of its own for those gestures, which is what keeps one keystroke from
++    /// having two owners; a host that does not must keep its own fallback.
++    #[napi]
++    pub fn supports_native_clipboard_editing(&self) -> bool {
++        true
++    }
++
+     #[napi]
+     pub fn supports_native_browser(&self) -> bool {
+         crate::custom_elements::browser::available()
+diff --git a/packages/native/src/system_appearance.rs b/packages/native/src/system_appearance.rs
+new file mode 100644
+index 0000000..f5d8993
+--- /dev/null
++++ b/packages/native/src/system_appearance.rs
+@@ -0,0 +1,113 @@
++//! Window-independent Settings delivery. The TSFN targets a guarded trampoline,
++//! not the application listener: disposal also fences events already queued.
++use napi::bindgen_prelude::{Function, FunctionRef};
++use napi::threadsafe_function::ThreadsafeFunctionCallMode;
++use napi::{CleanupEnvHook, Env, Result};
++use napi_derive::napi;
++use std::cell::{Cell, RefCell};
++use std::rc::{Rc, Weak};
++
++#[napi(object)]
++pub struct SystemAppearanceEvent {
++    pub status: String,
++    pub preference: Option<String>,
++    pub reason: Option<String>,
++}
++
++struct State {
++    active: Cell<bool>,
++    env_alive: Cell<bool>,
++    listener: RefCell<Option<FunctionRef<SystemAppearanceEvent, ()>>>,
++    #[cfg(target_os = "linux")]
++    task: RefCell<Option<gpui_platform::SystemAppearanceSubscription>>,
++}
++impl State {
++    fn dispose(&self) {
++        self.active.set(false);
++        #[cfg(target_os = "linux")]
++        self.task.borrow_mut().take();
++        self.listener.borrow_mut().take();
++    }
++}
++
++#[napi]
++pub struct SystemAppearanceSubscription {
++    state: Rc<State>,
++    env: Env,
++    hook: Option<CleanupEnvHook<Weak<State>>>,
++}
++
++#[napi]
++impl SystemAppearanceSubscription {
++    #[napi]
++    pub fn dispose(&mut self) {
++        self.state.dispose();
++        if let Some(hook) = self.hook.take() {
++            if self.state.env_alive.get() {
++                let _ = self.env.remove_env_cleanup_hook(hook);
++            }
++        }
++    }
++}
++impl Drop for SystemAppearanceSubscription {
++    fn drop(&mut self) { self.dispose(); }
++}
++
++#[napi]
++pub fn subscribe_system_appearance(
++    env: Env,
++    listener: Function<SystemAppearanceEvent, ()>,
++) -> Result<SystemAppearanceSubscription> {
++    let state = Rc::new(State {
++        active: Cell::new(true),
++        env_alive: Cell::new(true),
++        listener: RefCell::new(Some(listener.create_ref()?)),
++        #[cfg(target_os = "linux")]
++        task: RefCell::new(None),
++    });
++    let weak = Rc::downgrade(&state);
++    let trampoline = env.create_function_from_closure::<SystemAppearanceEvent, (), _>(
++        "deliverSystemAppearance", move |ctx| {
++            let Some(state) = weak.upgrade() else { return Ok(()); };
++            if !state.active.get() { return Ok(()); }
++            // Release the RefCell borrow before calling JS: a listener may dispose itself.
++            let listener = state.listener.borrow().as_ref()
++                .map(|listener| listener.borrow_back(&ctx.env)).transpose()?;
++            if let Some(listener) = listener { listener.call(ctx.get::<SystemAppearanceEvent>(0)?)?; }
++            Ok(())
++        },
++    )?;
++    let callback = trampoline.build_threadsafe_function::<SystemAppearanceEvent>()
++        .callee_handled::<false>().weak::<true>().build()?;
++    let hook = env.add_env_cleanup_hook(Rc::downgrade(&state), |weak| {
++        if let Some(state) = weak.upgrade() {
++            state.env_alive.set(false);
++            state.dispose();
++        }
++    })?;
++    #[cfg(target_os = "linux")]
++    {
++        let task = gpui_platform::SystemAppearanceSubscription::new(move |result| {
++            let event = match result {
++                Ok(value) => SystemAppearanceEvent {
++                    status: "available".into(),
++                    preference: Some(match value {
++                        gpui_platform::AppearancePreference::None => "none",
++                        gpui_platform::AppearancePreference::Dark => "dark",
++                        gpui_platform::AppearancePreference::Light => "light",
++                    }.into()), reason: None,
++                },
++                Err(reason) => SystemAppearanceEvent {
++                    status: "unavailable".into(), preference: None, reason: Some(reason),
++                },
++            };
++            callback.call(event, ThreadsafeFunctionCallMode::NonBlocking);
++        });
++        *state.task.borrow_mut() = Some(task);
++    }
++    #[cfg(not(target_os = "linux"))]
++    callback.call(SystemAppearanceEvent {
++        status: "unavailable".into(), preference: None, reason: Some("unsupported-platform".into()),
++    }, ThreadsafeFunctionCallMode::NonBlocking);
++    Ok(SystemAppearanceSubscription { state, env, hook: Some(hook) })
++}
+diff --git a/packages/native/src/text/paint.rs b/packages/native/src/text/paint.rs
+index 28a2d88..98ec9fe 100644
+--- a/packages/native/src/text/paint.rs
++++ b/packages/native/src/text/paint.rs
+@@ -646,7 +646,15 @@ fn register_copy_listener(window: &mut Window, selection: &SharedSelection) {
+             return;
+         }
+         let modifiers = &e.keystroke.modifiers;
+-        if e.keystroke.key != "c" || !(modifiers.platform || modifiers.control) {
++        // The compositor copy key (`Ctrl+Insert`, what Omarchy sends for `Super+C`) has to reach the
++        // document selection too, not only the focused input: the transcript is not a text element.
++        let insert_copy = e.keystroke.key == "insert"
++            && modifiers.control
++            && !modifiers.shift
++            && !modifiers.alt
++            && !modifiers.platform;
++        let standard_copy = e.keystroke.key == "c" && (modifiers.platform || modifiers.control);
++        if !standard_copy && !insert_copy {
+             return;
+         }
+         // Release the selection lock before entering the platform clipboard.
+diff --git a/packages/react/src/reconciler/host-config.ts b/packages/react/src/reconciler/host-config.ts
+index d320cfa..5ad03af 100644
+--- a/packages/react/src/reconciler/host-config.ts
++++ b/packages/react/src/reconciler/host-config.ts
+@@ -71,6 +71,9 @@ const EVENT_PROPS = [
+   ["onHighlight", "highlight"],
+   ["onChange", "change"],
+   ["onSubmit", "submit"],
++  // Fires once per native paste action, after the caret-aware insertion, with the inserted text in
++  // `value`. A host that attaches clipboard images needs this timing rather than the key that caused it.
++  ["onPaste", "paste"],
+   // Mouse events
+   ["onClick", "click"],
+   ["onAuxClick", "auxClick"],
+diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
+index d508c45..86af66f 100644
+--- a/packages/react/src/types/host.ts
++++ b/packages/react/src/types/host.ts
+@@ -425,6 +425,12 @@ export interface Props {
+   onChange?: (event: EventPayload) => void
+   /** Enter on `<input>`, or Enter on `<textarea>` when this listener is set. */
+   onSubmit?: (event: EventPayload) => void
++  /**
++   * Fires once per native paste action (`Ctrl+V`, `Cmd+V` or `Shift+Insert`), after the caret-aware
++   * text insertion, with the inserted text in `value`. Bind this to attach clipboard images: the key
++   * itself can no longer be observed by a React handler, because the native action owns it.
++   */
++  onPaste?: (event: EventPayload) => void
+ 
+   // ── Native component events ─────────────────────────────────────
+   onToggleFile?: (event: EventPayload) => void

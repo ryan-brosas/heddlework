@@ -73,6 +73,11 @@ export interface WorkbenchKeyLaneOptions {
   readonly negativeQuietMs?: number
   /** Override the poll deadlines; tests shrink them so a red run stays fast. */
   readonly timeouts?: WorkbenchKeyLaneTimeouts
+  /**
+   * Which owner handles the compositor insert keys. `native` means the pinned runtime binds them, so the
+   * app's helpers are not on that path; the driver probes the loaded runtime and passes the answer.
+   */
+  readonly insertKeyOwner?: 'native' | 'javascript'
 }
 
 export interface WorkbenchKeyLaneTimeouts {
@@ -84,6 +89,11 @@ export interface WorkbenchKeyLaneTimeouts {
 export interface WorkbenchKeyLaneCheck {
   readonly name: string
   readonly evidence: string
+  /**
+   * True when the runtime owns this gesture itself, so the lane cannot observe it through the app's
+   * clipboard helpers. A skip is reported by name instead of being counted as a pass.
+   */
+  readonly skipped?: boolean
 }
 
 /** Throws on the first failed assertion; returns the check report on success. */
@@ -214,8 +224,13 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
     const before = await clipboardTextReads()
     await composer.press('shift-insert')
     const started = Date.now()
-    await poll(clipboardTextReads, (count) => count > before, composerMs, `${description} to finish its clipboard text read`)
-    // The stub logs the read before it serves the payload, so let the app consume and apply it.
+    if (insertKeyOwner === 'javascript') {
+      // The app's own paste path ends in a clipboard text read, and pressing Enter before that read settles
+      // would turn a slow paste into a phantom failure.
+      await poll(clipboardTextReads, (count) => count > before, composerMs, `${description} to finish its clipboard text read`)
+    }
+    // A native runtime inserts the text before it reports the paste, so there is no read to wait for; the
+    // image half it reports is asynchronous, and the stub logs its read before serving the payload anyway.
     await pause()
     await pause()
     return Date.now() - started
@@ -274,38 +289,66 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
   await submit(markers.other)
   pass('exact-transcript-ready', `the workbench submitted ${JSON.stringify(markers.selection)} and ${JSON.stringify(markers.other)} as exact user messages on ${options.compositor}`)
 
-  // 1. Ctrl+Insert copies the current document selection byte for byte.
-  const firstSelection = await selectMessage(SELECTION_ROW, markers.selection)
-  assert(!firstSelection.includes(markers.other), `the selection for the first message also matched the second: ${JSON.stringify(firstSelection)}`)
-  const firstCopied = await pressAndWaitForCopy(options.clipboard.copyWrites())
-  assert(firstCopied === firstSelection, `Ctrl+Insert wrote ${JSON.stringify(firstCopied)} instead of the exact selection ${JSON.stringify(firstSelection)}`)
-  pass('ctrl-insert-copies-exact-selection',
-    `a drag selected ${JSON.stringify(firstSelection)} and Ctrl+Insert handed those exact ${Buffer.byteLength(firstCopied)} bytes to the clipboard helper on ${options.compositor}`)
+  const insertKeyOwner = options.insertKeyOwner ?? 'javascript'
+  if (insertKeyOwner === 'javascript') {
+    // 1. Ctrl+Insert copies the current document selection byte for byte.
+    const firstSelection = await selectMessage(SELECTION_ROW, markers.selection)
+    assert(!firstSelection.includes(markers.other), `the selection for the first message also matched the second: ${JSON.stringify(firstSelection)}`)
+    const firstCopied = await pressAndWaitForCopy(options.clipboard.copyWrites())
+    assert(firstCopied === firstSelection, `Ctrl+Insert wrote ${JSON.stringify(firstCopied)} instead of the exact selection ${JSON.stringify(firstSelection)}`)
+    pass('ctrl-insert-copies-exact-selection',
+      `a drag selected ${JSON.stringify(firstSelection)} and Ctrl+Insert handed those exact ${Buffer.byteLength(firstCopied)} bytes to the clipboard helper on ${options.compositor}`)
 
-  // 2. With no selection the same key must not write anything - and must still work on the next selection.
-  await app.call('clearSelection', {})
-  const writesBeforeEmptyCopy = options.clipboard.copyWrites()
-  const emptyCopyStarted = Date.now()
-  while (Date.now() - emptyCopyStarted < quietMs) {
-    await composer.press('ctrl-insert')
-    if (options.clipboard.copyWrites() !== writesBeforeEmptyCopy) break
-    await pause()
+    // 2. With no selection the same key must not write anything - and must still work on the next selection.
+    await app.call('clearSelection', {})
+    const writesBeforeEmptyCopy = options.clipboard.copyWrites()
+    const emptyCopyStarted = Date.now()
+    while (Date.now() - emptyCopyStarted < quietMs) {
+      await composer.press('ctrl-insert')
+      if (options.clipboard.copyWrites() !== writesBeforeEmptyCopy) break
+      await pause()
+    }
+    const emptyCopyWrites = options.clipboard.copyWrites()
+    assert(emptyCopyWrites === writesBeforeEmptyCopy, `Ctrl+Insert with no selection wrote ${emptyCopyWrites - writesBeforeEmptyCopy} clipboard payload(s)`)
+    pass('copy-disabled-without-selection',
+      `Ctrl+Insert with no selection wrote nothing across ${quietMs}ms of repeated presses; the control below is the same key on a real selection`)
+
+    // 3. The copy follows the *current* selection, not the previous one.
+    const otherSelection = await selectMessage(PASTE_FOCUS_ROW, markers.other)
+    assert(otherSelection.includes(markers.other) && !otherSelection.includes(markers.selection),
+      `the second selection does not identify the second message: ${JSON.stringify(otherSelection)}`)
+    const secondCopied = await pressAndWaitForCopy(emptyCopyWrites)
+    assert(secondCopied === otherSelection, `the second Ctrl+Insert wrote ${JSON.stringify(secondCopied)} instead of the exact selection ${JSON.stringify(otherSelection)}`)
+    assert(secondCopied !== firstCopied, 'Ctrl+Insert re-copied the stale selection instead of the current one')
+    pass('copy-follows-current-selection',
+      `after copying ${JSON.stringify(firstSelection)}, selecting ${JSON.stringify(otherSelection)} and pressing Ctrl+Insert wrote the new exact bytes on the same run`)
+
+  } else {
+    // The pinned runtime copies the document selection itself, so these three checks never reach the app's
+    // clipboard helpers on a stubbed display. A named skip is the honest report; the byte-level proof is
+    // `bun run smoke:clipboard-live` on a real compositor.
+    for (const name of ['ctrl-insert-copies-exact-selection', 'copy-disabled-without-selection', 'copy-follows-current-selection']) {
+      checks.push({
+        name,
+        skipped: true,
+        evidence: 'the pinned runtime copies the document selection itself, so this check is not on the app helper path; verify on a compositor with bun run smoke:clipboard-live',
+      })
+    }
   }
-  const emptyCopyWrites = options.clipboard.copyWrites()
-  assert(emptyCopyWrites === writesBeforeEmptyCopy, `Ctrl+Insert with no selection wrote ${emptyCopyWrites - writesBeforeEmptyCopy} clipboard payload(s)`)
-  pass('copy-disabled-without-selection',
-    `Ctrl+Insert with no selection wrote nothing across ${quietMs}ms of repeated presses; the control below is the same key on a real selection`)
 
-  // 3. The copy follows the *current* selection, not the previous one.
-  const otherSelection = await selectMessage(PASTE_FOCUS_ROW, markers.other)
-  assert(otherSelection.includes(markers.other) && !otherSelection.includes(markers.selection),
-    `the second selection does not identify the second message: ${JSON.stringify(otherSelection)}`)
-  const secondCopied = await pressAndWaitForCopy(emptyCopyWrites)
-  assert(secondCopied === otherSelection, `the second Ctrl+Insert wrote ${JSON.stringify(secondCopied)} instead of the exact selection ${JSON.stringify(otherSelection)}`)
-  assert(secondCopied !== firstCopied, 'Ctrl+Insert re-copied the stale selection instead of the current one')
-  pass('copy-follows-current-selection',
-    `after copying ${JSON.stringify(firstSelection)}, selecting ${JSON.stringify(otherSelection)} and pressing Ctrl+Insert wrote the new exact bytes on the same run`)
-
+  // From here the lane needs a paste it can stage. A runtime that owns the clipboard keys performs that paste
+  // against the real platform clipboard, which the stubbed helpers deliberately do not serve, so the app
+  // never touches them and nothing here can produce the gesture. Those checks are reported as named skips;
+  // `HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live` proves the same gesture with real helpers.
+  if (insertKeyOwner === 'native') {
+    for (const name of ['shift-insert-pastes-exact-draft', 'native-paste-leaves-text-to-the-runtime', 'duplicate-paste-keeps-exact-copies', 'paste-disabled-without-focus', 'paste-disabled-image-only-clipboard', 'paste-attaches-clipboard-image', 'paste-reads-image-once']) {
+      checks.push({
+        name,
+        skipped: true,
+        evidence: 'the runtime pastes against the real platform clipboard, which stubbed helpers cannot stage; verify with HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live',
+      })
+    }
+  } else {
   // 4. Shift+Insert pastes into the composer as exact bytes, and the draft clears on submit.
   options.clipboard.stagePaste(markers.paste)
   await composer.fill('')
@@ -347,6 +390,37 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
   await submitAndRequireExact(markers.paste)
   pass('paste-disabled-image-only-clipboard',
     `an image-only clipboard left the draft empty - the Enter that followed submitted nothing - and staging text again pasted exactly ${JSON.stringify(markers.paste)} through the same key`)
+  // The half a runtime never does for the app: reading an image off the clipboard and attaching it. A
+  // runtime cannot do this for the composer, so this is the half the app always owns.
+  const imagePreviews = async (): Promise<number> => (await app.getByTestId('composer-image-preview').all()).length
+  options.clipboard.stageImage()
+  await composer.fill('')
+  await composer.press('shift-insert')
+  const attached = await poll(imagePreviews, (count) => count >= 1, composerMs, 'the composer to attach the clipboard image after Shift+Insert')
+  pass('paste-attaches-clipboard-image',
+    `Shift+Insert reached the composer, which attached ${String(attached)} clipboard image(s) on ${options.compositor}`)
+
+  }
+  // Submitting clears the attachment, so the empty-draft checks below stay meaningful.
+  await waitForIdleTurn()
+  await composer.press('enter')
+
+  if (insertKeyOwner === 'native') {
+    // Press the gesture instead of asserting on a run that never made it: with a selection dragged over a
+    // real message, the app must still not write the clipboard itself. A runtime that owns the key copies the
+    // selection without the app's helpers ever seeing it, and two writers on one keystroke is the double
+    // handling this binding replaced.
+    const ownedSelection = await selectMessage(0, markers.other)
+    assert(ownedSelection.includes(markers.other), `the drag for the ownership check selected ${JSON.stringify(ownedSelection)}`)
+    const writesBeforeOwnership = options.clipboard.copyWrites()
+    await composer.press('ctrl-insert')
+    await pause()
+    const selfWrites = options.clipboard.copyWrites() - writesBeforeOwnership
+    assert(selfWrites === 0, `a runtime that copies the document selection still saw the app write the clipboard ${String(selfWrites)} time(s)`)
+    pass('insert-keys-single-owner',
+      `Ctrl+Insert over the selection ${JSON.stringify(ownedSelection)} wrote nothing through the app on ${options.compositor}: the runtime owns that key`)
+  }
+
 
   // 8. Enter with an empty draft submits nothing, right after it submitted exact text.
   await composer.fill('')

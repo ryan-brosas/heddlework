@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { existsSync, statSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { connectStdio, type App } from '@gpuix/react/automation'
 
 /**
@@ -8,6 +9,11 @@ import { connectStdio, type App } from '@gpuix/react/automation'
  *
  * The probe validates itself before it judges the app: a typed message must submit through the same
  * composer, so a failed paste cannot be confused with a harness that was never ready.
+ *
+ * The claims are about the clipboard contract, not about which side of the app owns the key: the pinned
+ * runtime binds the clipboard keys itself (`patches/gpuix/0001-linux-native-runtime.patch`), so a real
+ * compositor is the only place this path can be observed. Paste is judged by the message the composer
+ * actually submitted, and copy by reading the session clipboard with the real helpers.
  */
 const runtimeDir = required('PROBE_RUNTIME_DIR')
 const waylandDisplay = required('PROBE_WAYLAND_DISPLAY')
@@ -178,7 +184,7 @@ try {
   const pasted = await waitForRow(pasteMarker)
   // Without a validated submit path a paste miss measures the harness, not the paste path.
   if (controlMarker === '') inconclusive.push('shift-insert-pastes-real-clipboard')
-  if (pasted && controlMarker !== '') pass('shift-insert-pastes-real-clipboard', `the composer submitted the real clipboard text ${JSON.stringify(pasteMarker)} through the real wl-paste path`)
+  if (pasted && controlMarker !== '') pass('shift-insert-pastes-real-clipboard', `Shift+Insert pasted the real clipboard text staged with wl-copy, and the composer submitted it as exactly ${JSON.stringify(pasteMarker)}`)
   else if (controlMarker !== '') {
     fail('shift-insert-pastes-real-clipboard', `no submitted message matched ${JSON.stringify(pasteMarker)} (clipboard held ${JSON.stringify(staged.stdout)}, exit ${staged.code}); rows=${JSON.stringify(await rows())}${stderr === '' ? '' : ` stderr=${stderr.slice(-300)}`}`)
   }
@@ -218,6 +224,45 @@ try {
     else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) instead of the dragged selection ${JSON.stringify(selectedText)}`)
     }
   }
+
+  // Image half: an image-only clipboard has no text for the runtime to insert, so the paste action reports
+  // the gesture and the application owns the attachment. This is the screenshot path a remapped desktop
+  // depends on, and the only check here that observes an attachment rather than submitted text.
+  const imagePath = resolve(import.meta.dir, '..', 'tests/fixtures/pasted-image.png')
+  if (!existsSync(imagePath)) {
+    inconclusive.push('shift-insert-attaches-real-clipboard-image')
+    console.error(`INCONCLUSIVE shift-insert-attaches-real-clipboard-image: no fixture PNG at ${imagePath}`)
+  } else {
+    // `run` feeds stdin as UTF-8 text, so the bytes go through a file: binary must not be re-encoded.
+    const stagedImage = await run(['sh', '-c', 'wl-copy --type image/png < "$1"', 'sh', imagePath], env)
+    // `run` decodes stdout as UTF-8, which cannot represent PNG bytes, so the stage-verification is the
+    // helper's exit status for the image type plus the fixture's own size - not a byte comparison of text.
+    const imageEcho = await run(['wl-paste', '--no-newline', '--type', 'image/png'], env, { completion: 'stdout-end' })
+    const stagedBytes = statSync(imagePath).size
+    // Stage-verification: a clipboard that did not take the image would make the app look wrong for a
+    // harness reason, so the check is declared inconclusive before the app is judged.
+    const composerNode = await composer.element()
+    await app.call('focus', { elementId: composerNode.id })
+    await composer.fill('')
+    await waitForIdle()
+    const previewBefore = (await app.getByTestId('composer-image-preview').all()).length
+    await composer.press('shift-insert')
+    let previewAfter = previewBefore
+    const previewDeadline = Date.now() + 15_000
+    while (previewAfter <= previewBefore && Date.now() < previewDeadline) {
+      await Bun.sleep(200)
+      previewAfter = (await app.getByTestId('composer-image-preview').all()).length
+    }
+    const attached = previewAfter - previewBefore
+    if (stagedImage.code !== 0 || imageEcho.code !== 0 || stagedBytes === 0) {
+      inconclusive.push('shift-insert-attaches-real-clipboard-image')
+      console.error(`INCONCLUSIVE shift-insert-attaches-real-clipboard-image: staging reported wl-copy exit ${stagedImage.code} / wl-paste image/png exit ${imageEcho.code} for a ${String(stagedBytes)}-byte fixture`) 
+    } else if (attached === 1) {
+      pass('shift-insert-attaches-real-clipboard-image', `with only ${String(stagedBytes)} image byte(s) on the clipboard, Shift+Insert added exactly one composer attachment and submitted nothing`)
+    } else {
+      fail('shift-insert-attaches-real-clipboard-image', `Shift+Insert against an image-only clipboard changed the attachment count by ${String(attached)} (previews ${String(previewAfter)}); rows=${JSON.stringify(await rows())}`)
+    }
+  }
 } finally {
   try { child.kill('SIGTERM') } catch { /* already gone */ }
 }
@@ -230,4 +275,4 @@ if (inconclusive.length > 0) {
   console.error(`live clipboard probe inconclusive: ${inconclusive.join(', ')}`)
   process.exit(2)
 }
-console.error('live clipboard probe complete: 3 checks passed on a real compositor session')
+console.error('live clipboard probe complete: 4 checks passed on a real compositor session')

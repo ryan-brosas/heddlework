@@ -8,7 +8,8 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
-import { planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
+import { draftBeforeNativePaste, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
+import { nativeClipboardEditing } from './clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
@@ -29,12 +30,23 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const pendingPaste = useRef<Promise<void> | null>(null)
   /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
   const pendingPasteClaimed = useRef(false)
+  /** The thread the asynchronous paste steps below still belong to. */
+  const sessionFileRef = useRef(state.session.sessionFile ?? '')
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queueHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const gpuix = useGpuix()
+  // A switch drops the paste bookkeeping: what a previous thread's clipboard read produced must not be
+  // submitted into the thread that is open now.
+  useEffect(() => {
+    const sessionFile = state.session.sessionFile ?? ''
+    if (sessionFileRef.current === sessionFile) return
+    sessionFileRef.current = sessionFile
+    pendingPaste.current = null
+    pendingPasteClaimed.current = false
+  }, [state.session.sessionFile])
   const composerId = useRef<number | undefined>(undefined)
   const setComposerNode = useCallback((instance: { id: number } | null) => {
     composerId.current = instance?.id
@@ -106,7 +118,12 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     setQueueHintVisible(false)
   }
 
-  const send = (value: string, queue = false) => {
+  /**
+   * Submit a draft decided in `startedSessionFile`. The check runs at delivery because a submit that
+   * waited for a clipboard read can finish after the user clicked another thread.
+   */
+  const send = (value: string, queue = false, startedSessionFile = sessionFileRef.current) => {
+    if (!pasteTargetsSameSession(startedSessionFile, sessionFileRef.current)) return
     clearQueueHint()
     if (!value.trim() && state.editorImages.length === 0) {
       if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
@@ -118,9 +135,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   /**
    * Attach a clipboard image when available, preserving text according to the native image-paste policy.
    */
-  const insertPastedImage = async (editorTextBeforePaste: string): Promise<boolean> => {
+  const insertPastedImage = async (editorTextBeforePaste: string, startedSessionFile: string): Promise<boolean> => {
     const image = await readClipboardImage()
     if (!image) return false
+    // The read is asynchronous: a thread switched meanwhile must not receive this image.
+    if (!pasteTargetsSameSession(startedSessionFile, sessionFileRef.current)) return false
     controller.addEditorImage(image)
     const currentText = controller.getSnapshot().editorText
     const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
@@ -131,38 +150,52 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   /** Native `Ctrl+V`: the runtime inserts text at the caret itself, so only an image needs the app. */
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
+    const startedSessionFile = sessionFileRef.current
     setPastingImage(true)
     try {
-      await insertPastedImage(editorTextBeforePaste)
+      await insertPastedImage(editorTextBeforePaste, startedSessionFile)
     } finally {
       setPastingImage(false)
     }
   }
 
   /**
-   * Paste for the compositor insert-key convention (`Shift+Insert`, which is what Omarchy's Hyprland
-   * bindings send for `Ctrl+V`). The runtime never sees that keystroke as a paste, so this path owns
-   * the whole action: it takes an image when the clipboard holds one - otherwise a remapped desktop
-   * could not paste a screenshot at all - and otherwise appends the text, matching a paste with the
-   * caret at the end. Text is appended to the current controller draft after the asynchronous read.
+   * Fallback paste for a runtime that does not bind the clipboard keys: `Shift+Insert` (what Omarchy's
+   * Hyprland bindings send for `Ctrl+V`) has to be handled here. This path owns the whole action - it takes
+   * an image when the clipboard holds one, otherwise it appends the text, matching a paste with the caret at
+   * the end - and it exists only for a runtime that predates the native binding.
    */
   const pasteClipboardIntoComposer = async () => {
     if (pastingImage) return
+    const startedSessionFile = sessionFileRef.current
     setPastingImage(true)
     try {
       const draft = controller.getSnapshot().editorText
-      if (await insertPastedImage(draft)) {
+      if (await insertPastedImage(draft, startedSessionFile)) {
         keepComposerFocus()
         return
       }
       const text = await readClipboardText()
       if (!text) return
+      if (!pasteTargetsSameSession(startedSessionFile, sessionFileRef.current)) return
       const current = controller.getSnapshot().editorText
       controller.setEditorText(current ? current + text : text)
       keepComposerFocus()
     } finally {
       setPastingImage(false)
     }
+  }
+
+  /**
+   * The runtime's own paste already inserted its text at the caret, and this event is how the composer learns
+   * that happened - not the key, which never reaches a React handler once the native action owns it. The text
+   * is therefore already in the draft, and the half a text input cannot hold is the clipboard image, so that
+   * is all this adds, exactly once per paste.
+   */
+  const handleComposerPaste = (event: { value?: unknown }) => {
+    if (!nativeClipboardEditing()) return
+    const inserted = typeof event.value === 'string' ? event.value : ''
+    startPaste(() => pasteClipboardImage(draftBeforeNativePaste(controller.getSnapshot().editorText, inserted)))
   }
 
   /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */
@@ -182,10 +215,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
   /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
   const submitDraft = (eventValue: string, queue = false): void => {
+    const startedSessionFile = sessionFileRef.current
     const plan = planPasteSubmit({ pending: pendingPaste.current, claimed: pendingPasteClaimed.current, eventValue })
     if (plan.action === 'ignore') return
     if (plan.action === 'send') {
-      send(plan.text, queue)
+      send(plan.text, queue, startedSessionFile)
       return
     }
     pendingPasteClaimed.current = true
@@ -193,7 +227,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       pending: pendingPaste.current,
       eventValue,
       currentDraft: () => controller.getSnapshot().editorText,
-    }).then((text) => send(text, queue))
+    }).then((text) => send(text, queue, startedSessionFile))
   }
 
   const showQueueHint = () => {
@@ -252,8 +286,13 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       completeActiveSlashCommand()
       keepComposerFocus()
     }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) startPaste(() => pasteClipboardImage(state.editorText))
-    if (resolveInsertKeyCommand(event) === 'paste') startPaste(pasteClipboardIntoComposer)
+    // Fallback only. The pinned runtime binds `Ctrl+V`/`Cmd+V`/`Shift+Insert` itself, inserts at the caret and
+    // reports the insertion through `onPaste`; handling the key here as well would paste the same clipboard
+    // twice.
+    if (!nativeClipboardEditing()) {
+      if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) startPaste(() => pasteClipboardImage(state.editorText))
+      if (resolveInsertKeyCommand(event) === 'paste') startPaste(pasteClipboardIntoComposer)
+    }
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       submitDraft(state.editorText, true)
@@ -337,6 +376,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           onFocus={showQueueHint}
           onClick={() => { if (!hintShownOnce.current) showQueueHint() }}
           onKeyDown={handleComposerKeyDown}
+          onPaste={handleComposerPaste}
           onSubmit={(event) => {
             if (commandPickedByKeyDown.current) {
               commandPickedByKeyDown.current = false
