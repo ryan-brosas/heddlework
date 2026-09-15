@@ -158,16 +158,25 @@ the application submitted a typed control message, and that a `Shift+Insert` aga
 only a PNG added exactly one composer attachment and submitted nothing - the screenshot half a text input
 cannot hold.
 
-**Native copy stays manual, and the lane says so.** The copy check stages a sentinel on the clipboard and
-proves it is there before the gesture, because the text it drags over is the message the paste step
-submitted, so an untouched clipboard would otherwise satisfy an equality check on its own. Running that
-check showed the sentinel surviving the gesture, and the reason is in the pinned runtime rather than in the
-application: `SerialTracker::update` records a Wayland selection serial only from a real key or pointer
-press event (`crates/gpui_linux/src/linux/wayland/client.rs` keyboard handler), and `write_to_clipboard`
-returns early with "Skipping Wayland clipboard ownership request ..." when there is none. A press delivered
-through the automation surface never produces one, so no automated lane can prove native copy; the probe
-reports the check as a named skip and a physical `Ctrl+Insert` on a real session is the acceptance step. A
-copy that lands but puts the wrong bytes on the clipboard still fails the lane. In the fallback mode, positive paste checks wait for the stub to log a
+**Native copy stays manual, and the lane says so - with the reason it can actually show.** The copy check
+stages a sentinel on the clipboard and proves it is there before the gesture, because the text it drags over
+is the message the paste step submitted, so an untouched clipboard would otherwise satisfy an equality check
+on its own. Running that check showed the sentinel surviving the gesture, and the reason is in the pinned
+runtime rather than in the application: `SerialTracker::update` records a Wayland selection serial only from
+a real key or pointer press event (`crates/gpui_linux/src/linux/wayland/client.rs` keyboard handler), and
+`write_to_clipboard` returns early with "Skipping Wayland clipboard ownership request ..." when there is
+none. That diagnostic is **not observable in the application's stderr** - the runtime logs it through
+`log::warn!` and this build wires no logger to stderr (measured 2026-09-15: zero occurrences in a full live
+run) - so the probe reports the skip as source-documented rather than claiming it measured the warning. A
+physical `Ctrl+Insert` on a real session is the acceptance step.
+
+**The verdict has one owner.** `scripts/linux-clipboard-live-evidence.ts` decides the copy check from the
+helper's exit status, the bytes, and that gesture's own stderr: only a successful read that differs from a
+verified sentinel passes, wrong bytes fail, and an unusable selection or a helper that did not succeed is
+inconclusive. The same module gates the paste and sentinel stages, so a clipboard that a helper never
+confirmed reports a harness gap instead of judging the application - an earlier revision compared stdout
+alone, which let a failed or timed-out `wl-paste` count as clipboard evidence.
+`tests/linux-clipboard-live-evidence.test.ts` covers each branch. In the fallback mode, positive paste checks wait for the stub to log a
 text-read attempt before Enter, then allow two polling intervals for the asynchronous paste to settle. The logged
 75 ms in a local run included that deliberate wait; it is **not** a measured paste-latency guarantee.
 
@@ -185,7 +194,10 @@ window rather than launching the full application.
 Practical note for verifying copy on Linux: writing the compositor clipboard needs an input serial, and a
 key event injected through the automation protocol carries none — a synthetic Ctrl+C cannot copy even when
 the selection is correct (measured: the selection is present, the clipboard is unchanged). Drive the real
-window or press the key by hand, then read the clipboard back with `wl-paste`.
+window or press the key by hand, then read the clipboard back with `wl-paste`. Before recording a manual
+result, run `bun scripts/linux-artifact-check.ts`: it resolves `~/.local/bin/heddlework` to the executable it
+execs, hashes it, and reports the image a running window actually uses, so a result cannot be attributed to
+a different build.
 
 ### Live clipboard acceptance (real compositor, real helpers)
 
@@ -194,9 +206,10 @@ needs the explicit opt-in `HEDDLEWORK_CLIPBOARD_LIVE=1` and starts a disposable 
 `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. The host `DISPLAY` is stripped from every child, so the run can
 neither read nor replace the operator's clipboard. `wl-paste`/`wl-copy` are logging shims that delegate to the real tools, so the bytes are
 real and the call log is evidence. It asserts four things: the session clipboard round-trips through the real
-`wl-copy`/`wl-paste` helpers; the application submits the exact real clipboard text through `Shift+Insert`; `Ctrl+Insert`
-over a dragged transcript selection puts that exact text on the session clipboard; and a `Shift+Insert`
-against a clipboard holding only a PNG adds exactly one composer attachment and submits nothing.
+`wl-copy`/`wl-paste` helpers; the application submits the exact real clipboard text through `Shift+Insert`; a
+`Shift+Insert` against a clipboard holding only a PNG adds exactly one composer attachment and submits
+nothing; and `Ctrl+Insert` over a dragged transcript selection is reported as a named manual skip, because an
+automation press carries no compositor selection serial.
 
 What it does not judge: a compositor's own remap to `Shift+Insert` is not exercised, because the lane delivers
 the paste key through the application's automation surface. Submits

@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { connectStdio, type App } from '@gpuix/react/automation'
+import { classifyNativeCopy, clipboardStageError } from './linux-clipboard-live-evidence.ts'
 
 /**
  * Live clipboard probe for a real, disposable compositor session: no stubbed helpers and no host
@@ -92,7 +93,7 @@ step(`clipboard contract on ${waylandDisplay}`)
 const copied = await run(['wl-copy', '--type', 'text/plain'], env, { input: marker })
 if (copied.code !== 0) fail('live-clipboard-contract', `wl-copy exited ${copied.code}: ${copied.stderr.trim()}`)
 const echoed = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
-if (echoed.stdout === marker) pass('live-clipboard-contract', `wl-copy/wl-paste round-tripped ${JSON.stringify(marker)}`)
+if (echoed.code === 0 && echoed.stdout === marker) pass('live-clipboard-contract', `wl-copy/wl-paste round-tripped ${JSON.stringify(marker)}`)
 else fail('live-clipboard-contract', `wl-paste returned ${JSON.stringify(echoed.stdout)} (exit ${echoed.code}) instead of ${JSON.stringify(marker)}`)
 
 // 2. The application pastes that real clipboard text into its composer and submits it byte for byte.
@@ -110,7 +111,17 @@ const appEnvironment = sessionEnv({
 })
 const child: ChildProcessWithoutNullStreams = spawn(binary, [], { cwd: workspace, env: appEnvironment })
 let stderr = ''
-child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-4_000); writeFileSync(stderrPath, stderr) })
+/** Stderr written during one gesture, kept apart so the answer cannot come from an earlier gesture's log. */
+let gestureStderr = ''
+let capturingGesture = false
+child.stderr.on('data', (chunk: Buffer) => {
+  const text = chunk.toString('utf8')
+  stderr = (stderr + text).slice(-4_000)
+  if (capturingGesture) gestureStderr += text
+  writeFileSync(stderrPath, stderr)
+})
+const captureGestureStart = (): void => { gestureStderr = ''; capturingGesture = true }
+const captureGestureEnd = (): string => { capturingGesture = false; return gestureStderr }
 try {
   const connecting = connectStdio({
     write: (chunk) => { child.stdin.write(chunk) },
@@ -170,8 +181,10 @@ try {
 
   // Paste: the real clipboard text must arrive in the draft and submit byte for byte.
   const pasteMarker = `${marker}-paste`
-  await run(['wl-copy', '--type', 'text/plain'], env, { input: pasteMarker })
+  const pasteWrite = await run(['wl-copy', '--type', 'text/plain'], env, { input: pasteMarker })
   const staged = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
+  // A stage the helpers did not confirm would make a paste miss measure this harness, not the app.
+  const pasteStageError = clipboardStageError(pasteWrite, staged, pasteMarker)
   await composer.fill('')
   await waitForIdle()
   await composer.press('shift-insert')
@@ -189,7 +202,10 @@ try {
   const pasted = await waitForRow(pasteMarker)
   // Without a validated submit path a paste miss measures the harness, not the paste path.
   if (controlMarker === '') inconclusive.push('shift-insert-pastes-real-clipboard')
-  if (pasted && controlMarker !== '') pass('shift-insert-pastes-real-clipboard', `Shift+Insert pasted the real clipboard text staged with wl-copy, and the composer submitted it as exactly ${JSON.stringify(pasteMarker)}`)
+  if (pasteStageError !== undefined && controlMarker !== '') {
+    inconclusive.push('shift-insert-pastes-real-clipboard')
+    console.error(`INCONCLUSIVE shift-insert-pastes-real-clipboard: ${pasteStageError}`)
+  } else if (pasted && controlMarker !== '') pass('shift-insert-pastes-real-clipboard', `Shift+Insert pasted the real clipboard text staged with wl-copy, and the composer submitted it as exactly ${JSON.stringify(pasteMarker)}`)
   else if (controlMarker !== '') {
     fail('shift-insert-pastes-real-clipboard', `no submitted message matched ${JSON.stringify(pasteMarker)} (clipboard held ${JSON.stringify(staged.stdout)}, exit ${staged.code}); rows=${JSON.stringify(await rows())}${stderr === '' ? '' : ` stderr=${stderr.slice(-300)}`}`)
   }
@@ -222,30 +238,33 @@ try {
       console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: the drag selected ${JSON.stringify(selectedText)} instead of ${JSON.stringify(selectedMarker)}`)
     } else {
     // The clipboard is staged with a sentinel before the gesture. The previous step left the submitted paste
-    // text on it, and that text is the very row being dragged here, so an untouched clipboard would satisfy
-    // the equality below on its own and the check would prove nothing. With the sentinel proven present
-    // first, the gesture has to replace it for the assertion to hold.
+    // text on it, and that text is the very row being dragged here, so an untouched clipboard would otherwise
+    // satisfy the byte comparison by itself. With the sentinel proven present first, only a gesture that
+    // replaced it can produce the dragged text.
     const sentinel = `${marker}-sentinel`
-    await run(['wl-copy', '--type', 'text/plain'], env, { input: sentinel })
+    const sentinelWrite = await run(['wl-copy', '--type', 'text/plain'], env, { input: sentinel })
     const stagedBeforeCopy = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
-    if (stagedBeforeCopy.stdout !== sentinel || selectedText.includes(sentinel)) {
+    const stageError = clipboardStageError(sentinelWrite, stagedBeforeCopy, sentinel)
+    if (stageError !== undefined || selectedText.includes(sentinel)) {
       inconclusive.push('ctrl-insert-copies-real-selection')
-      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: the pre-copy clipboard held ${JSON.stringify(stagedBeforeCopy.stdout)} (exit ${stagedBeforeCopy.code}) instead of the staged sentinel`)
+      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: ${stageError ?? `the dragged selection ${JSON.stringify(selectedText)} contains the staged sentinel, so a copy verdict could not be attributed`}`)
     } else {
+    captureGestureStart()
     await composer.press('ctrl-insert')
     await Bun.sleep(1_200)
+    const gestureLog = captureGestureEnd()
     const read = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
-    // Exact equality against a clipboard whose previous content was proven different: the sentinel had to go.
-    if (read.stdout === selectedText) pass('ctrl-insert-copies-real-selection', `with ${JSON.stringify(sentinel)} on the clipboard, Ctrl+Insert left exactly the dragged selection: ${JSON.stringify(read.stdout)}`)
-    else if (read.stdout === sentinel) {
-      // The gesture changed nothing, and this harness cannot make it change anything: the pinned runtime
-      // only records a Wayland selection serial from a real key or pointer press event (SerialTracker::update
-      // is called with SerialKind::KeyPress from the keyboard handler), and a press delivered through the
-      // automation surface never produces one. `write_to_clipboard` then logs "Skipping Wayland clipboard
-      // ownership request ..." and returns, so no synthetic press can prove native copy. A physical
-      // Ctrl+Insert on a real session is the only stimulus that can, which makes this a manual check.
-      skip('ctrl-insert-copies-real-selection', 'the clipboard still held the staged sentinel after the gesture; a synthetic press carries no Wayland selection serial, so native copy needs a physical key press')
-    } else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) instead of the dragged selection ${JSON.stringify(selectedText)} or the sentinel staged before the gesture`) 
+    // One owner for the verdict (scripts/linux-clipboard-live-evidence.ts): from the helper's exit status, the
+    // bytes, and this gesture's own stderr it decides pass, a named manual skip (recording whether the
+    // runtime's missing-serial diagnostic was actually seen), or a failure. Wrong bytes always fail, and a
+    // helper that did not succeed is never evidence.
+    const verdict = classifyNativeCopy({ selectedText, sentinel, read, stderrSinceGesture: gestureLog })
+    if (verdict.status === 'pass') pass('ctrl-insert-copies-real-selection', verdict.evidence)
+    else if (verdict.status === 'skip') skip('ctrl-insert-copies-real-selection', verdict.evidence)
+    else if (verdict.status === 'inconclusive') {
+      inconclusive.push('ctrl-insert-copies-real-selection')
+      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: ${verdict.evidence}`)
+    } else fail('ctrl-insert-copies-real-selection', verdict.evidence)
     }
     }
   }
