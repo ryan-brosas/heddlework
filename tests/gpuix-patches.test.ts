@@ -23,14 +23,19 @@ function gitCheck(directory: string, args: string[]): number {
   return Bun.spawnSync(['git', ...args], { cwd: directory, stdout: 'ignore', stderr: 'ignore' }).exitCode
 }
 
+/** Commit everything in `directory` under an explicit identity, so no global Git config is required. */
+function commitAll(directory: string, message = 'initial'): void {
+  git(directory, ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'add', '-A'])
+  git(directory, ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '--quiet', '-m', message])
+}
+
 /** A minimal git repository with one committed source file. */
 function scratchRepository(contents = 'initial\n'): string {
   const directory = scratchDirectory()
   mkdirSync(resolve(directory, 'src'), { recursive: true })
   writeFileSync(resolve(directory, 'src/input.rs'), contents)
   git(directory, ['init', '--quiet'])
-  git(directory, ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'add', '-A'])
-  git(directory, ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '--quiet', '-m', 'initial'])
+  commitAll(directory)
   return directory
 }
 
@@ -241,8 +246,8 @@ describe('runtime source patches', () => {
     mkdirSync(resolve(nested, 'crates'), { recursive: true })
     writeFileSync(resolve(nested, 'crates/lib.rs'), 'gpui\n')
     git(nested, ['init', '--quiet'])
-    git(nested, ['add', '-A'])
-    git(nested, ['commit', '--quiet', '-m', 'initial'])
+    // The identity is explicit: CI has no global Git identity, and a bare `git commit` fails there.
+    commitAll(nested)
     applyRuntimePatches(nested, [patchFor(nested, 'crates/lib.rs', 'gpui\n', 'gpui patched')], ['.'])
 
     const outer = declaredPatch(source, 'patched')
