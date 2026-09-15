@@ -8,11 +8,14 @@
   carrying the inserted text, so the composer attaches the image half exactly once.
 - [x] Composer/session/submit and web-companion behaviour covered; the JavaScript-owner lane still passes.
 - [x] Lane evidence exercises the gesture it claims: `insert-keys-single-owner` presses `Ctrl+Insert` over a
-  real selection, and the native paste checks are named skips that point at the live compositor lane.
+  real selection and asserts no app-side clipboard write, and the native paste checks are named skips that
+  point at the live compositor lane. Native *copy* is not automatable - see the serial note below - so it is
+  a manual acceptance step.
 - [x] `bun run check` green (517 passed, 0 failed; 101 structural native-renderer skips); `bun run build`
-  matches the installed executable (`sha256=e7a103ea…`); the stubbed lane passes on the installed build with
-  named skips; the live nested-Hyprland lane passes paste and copy byte-for-byte.
-- [ ] Device-level acceptance on this machine's own Hyprland session: physical `Ctrl+V`/`Super+C` through the
+  matches the installed executable; the stubbed lane passes on the installed build with named skips; the
+  live nested-Hyprland lane passes paste byte-for-byte and reports native copy as manual.
+- [ ] Device-level acceptance on this machine's own Hyprland session: physical `Ctrl+V`/`Super+C` (including
+  the `Ctrl+Insert` copy half, which no automated lane can stimulate) through the
   desktop launcher, the 150%/100% monitor pair, IME/accessibility, real Pi work, and PTY
   interruption/cleanup. Automated results do not check this box.
 
@@ -273,10 +276,18 @@ clipboard write nor a native paste, and a green run must not imply it did. Measu
 stage neither gesture, and each skip names the lane that can), `insert-keys-single-owner` pressed
 `Ctrl+Insert` over a real selection and saw no app-side write, and `native-round-trip-exact` proved the
 runtime's own paste action with `Ctrl+A`, `Ctrl+C`, `Ctrl+V`. The live lane on a disposable nested Hyprland
-passed with real helpers: `Shift+Insert` submitted exactly the text staged by `wl-copy`, `Ctrl+Insert` left
-exactly the dragged selection on the session clipboard, and the recorded helper calls show the app reading
-only the image half. Physical `Ctrl+V` behaviour on the operator's own Hyprland session stays a manual
-acceptance step, because those bindings are delivered as insert keys before any window sees them.
+passed with real helpers: `Shift+Insert` submitted exactly the text staged by `wl-copy`, a typed control
+message submitted exactly, and the recorded helper calls show the app reading only the image half.
+
+Its copy check is manual by necessity, and it now proves that instead of hiding it: the check stages a
+sentinel and proves the clipboard is not already the selection before pressing `Ctrl+Insert`, and the
+sentinel survived the gesture. The reason is in the pinned runtime, not in the application:
+`SerialTracker::update` records a Wayland selection serial only from a real key or pointer press event
+(`crates/gpui_linux/src/linux/wayland/client.rs`), and `write_to_clipboard` returns early with "Skipping
+Wayland clipboard ownership request ..." when there is none, so a press delivered through the automation
+surface can never own the clipboard. Physical `Ctrl+V`/`Super+C` behaviour on the operator's own Hyprland
+session stays a manual acceptance step for the same class of reason: those bindings are delivered as insert
+keys before any window sees them.
 
 
 

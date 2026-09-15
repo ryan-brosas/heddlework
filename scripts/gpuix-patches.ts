@@ -134,32 +134,46 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
  */
 export function applyRuntimePatches(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
   const appliedHere: RuntimeSourcePatch[] = []
-  for (const patch of patches) {
-    const alreadyApplied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
-    if (alreadyApplied.exitCode === 0) continue
-    try {
-      git(directory, ['apply', patch.path])
+  try {
+    for (const patch of patches) {
+      const alreadyApplied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
+      if (alreadyApplied.exitCode === 0) continue
+      try {
+        git(directory, ['apply', patch.path])
+      } catch (error) {
+        throw new Error(mismatchReport(directory, patch, error))
+      }
       appliedHere.push(patch)
-    } catch (error) {
-      rollbackApplied(directory, appliedHere)
-      // A cached checkout carries the patch revision it was built from, so editing a patch leaves a cache
-      // that no longer matches it. Every file there is a derived copy of the pin, but the installer does
-      // not rewrite them to make room for the current patch: a hand edit in a file a patch happens to
-      // touch is indistinguishable from an older revision of the same patch, and discarding it silently
-      // is not a repair. The checkout is reported with its recovery instead. CI cannot reach this state -
-      // the workflow cache key hashes this patch set - and a local cache is one directory to remove.
-      throw new Error([
-        `${patch.name} does not apply in ${directory}: the checkout is not the pinned revision plus this patch set.`,
-        'A cache patched from an older revision of this patch set is the usual cause.',
-        `Recovery: remove ${directory} and re-run \`bun run setup:native\`, or point HEDDLEWORK_GPUIX_SOURCE at a clean checkout of the pin.`,
-        `git apply said: ${error instanceof Error ? error.message : String(error)}`,
-      ].join('\n'))
     }
+    // Only this repository's own index is checked here. A nested checkout has its own patch set
+    // (`runtimePatchSets`), and checking it against an empty declaration from the outer set failed every
+    // re-run: the nested tree already carries its applied patch, so the reverse-apply diff is never empty.
+    assertDeclaredSource(directory, patches, paths)
+  } catch (error) {
+    // A set is applied as one unit, and the final declared-source check is part of applying it: a refusal
+    // fails the install either way, and it must not leave a checkout carrying part of a revision.
+    rollbackApplied(directory, appliedHere)
+    throw error
   }
-  // Only this repository's own index is checked here. A nested checkout has its own patch set
-  // (`runtimePatchSets`), and checking it against an empty declaration from the outer set failed every
-  // re-run: the nested tree already carries its applied patch, so the reverse-apply diff is never empty.
-  assertDeclaredSource(directory, patches, paths)
+}
+
+/**
+ * What to say when a patch does not fit the checkout.
+ *
+ * A cached checkout carries the patch revision it was built from, so editing a patch leaves a cache that no
+ * longer matches it. Every file there is a derived copy of the pin, but the installer does not rewrite them
+ * to make room for the current patch: a hand edit in a file a patch happens to touch is indistinguishable
+ * from an older revision of the same patch, and discarding it silently is not a repair. The checkout is
+ * reported with its recovery instead. CI cannot reach this state - the workflow cache key hashes this patch
+ * set - and a local cache is one directory to remove.
+ */
+function mismatchReport(directory: string, patch: RuntimeSourcePatch, error: unknown): string {
+  return [
+    `${patch.name} does not apply in ${directory}: the checkout is not the pinned revision plus this patch set.`,
+    'A cache patched from an older revision of this patch set is the usual cause.',
+    `Recovery: remove ${directory} and re-run \`bun run setup:native\`, or point HEDDLEWORK_GPUIX_SOURCE at a clean checkout of the pin.`,
+    `git apply said: ${error instanceof Error ? error.message : String(error)}`,
+  ].join('\n')
 }
 
 /** Reverse the patches an invocation applied, so a refusal leaves the checkout as it was found. */

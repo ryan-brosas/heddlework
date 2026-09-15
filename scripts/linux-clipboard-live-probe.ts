@@ -76,9 +76,14 @@ async function run(
 
 const env = sessionEnv()
 const failures: string[] = []
+/** Checks this harness could not decide for a reason worth investigating. */
 const inconclusive: string[] = []
+/** Checks no automated input can stimulate, reported as named skips rather than as evidence. */
+const manual: string[] = []
+let passed = 0
 let steps = 0
-const pass = (name: string, evidence: string): void => console.error(`PASS ${name}: ${evidence}`)
+const pass = (name: string, evidence: string): void => { passed += 1; console.error(`PASS ${name}: ${evidence}`) }
+const skip = (name: string, reason: string): void => { manual.push(name); console.error(`SKIP ${name}: ${reason}`) }
 const fail = (name: string, evidence: string): void => { failures.push(name); console.error(`FAIL ${name}: ${evidence}`) }
 const step = (message: string): void => console.error(`[${++steps}] ${message}`)
 
@@ -216,12 +221,32 @@ try {
       inconclusive.push('ctrl-insert-copies-real-selection')
       console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: the drag selected ${JSON.stringify(selectedText)} instead of ${JSON.stringify(selectedMarker)}`)
     } else {
+    // The clipboard is staged with a sentinel before the gesture. The previous step left the submitted paste
+    // text on it, and that text is the very row being dragged here, so an untouched clipboard would satisfy
+    // the equality below on its own and the check would prove nothing. With the sentinel proven present
+    // first, the gesture has to replace it for the assertion to hold.
+    const sentinel = `${marker}-sentinel`
+    await run(['wl-copy', '--type', 'text/plain'], env, { input: sentinel })
+    const stagedBeforeCopy = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
+    if (stagedBeforeCopy.stdout !== sentinel || selectedText.includes(sentinel)) {
+      inconclusive.push('ctrl-insert-copies-real-selection')
+      console.error(`INCONCLUSIVE ctrl-insert-copies-real-selection: the pre-copy clipboard held ${JSON.stringify(stagedBeforeCopy.stdout)} (exit ${stagedBeforeCopy.code}) instead of the staged sentinel`)
+    } else {
     await composer.press('ctrl-insert')
     await Bun.sleep(1_200)
     const read = await run(['wl-paste', '--no-newline', '--type', 'text'], env, { completion: 'stdout-end' })
-    // Exact equality: a clipboard that merely contains the selection is not the selection.
-    if (read.stdout === selectedText) pass('ctrl-insert-copies-real-selection', `this session's clipboard holds exactly the dragged selection: ${JSON.stringify(read.stdout)}`)
-    else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) instead of the dragged selection ${JSON.stringify(selectedText)}`)
+    // Exact equality against a clipboard whose previous content was proven different: the sentinel had to go.
+    if (read.stdout === selectedText) pass('ctrl-insert-copies-real-selection', `with ${JSON.stringify(sentinel)} on the clipboard, Ctrl+Insert left exactly the dragged selection: ${JSON.stringify(read.stdout)}`)
+    else if (read.stdout === sentinel) {
+      // The gesture changed nothing, and this harness cannot make it change anything: the pinned runtime
+      // only records a Wayland selection serial from a real key or pointer press event (SerialTracker::update
+      // is called with SerialKind::KeyPress from the keyboard handler), and a press delivered through the
+      // automation surface never produces one. `write_to_clipboard` then logs "Skipping Wayland clipboard
+      // ownership request ..." and returns, so no synthetic press can prove native copy. A physical
+      // Ctrl+Insert on a real session is the only stimulus that can, which makes this a manual check.
+      skip('ctrl-insert-copies-real-selection', 'the clipboard still held the staged sentinel after the gesture; a synthetic press carries no Wayland selection serial, so native copy needs a physical key press')
+    } else fail('ctrl-insert-copies-real-selection', `wl-paste returned ${JSON.stringify(read.stdout)} (exit ${read.code}) instead of the dragged selection ${JSON.stringify(selectedText)} or the sentinel staged before the gesture`) 
+    }
     }
   }
 
@@ -275,4 +300,5 @@ if (inconclusive.length > 0) {
   console.error(`live clipboard probe inconclusive: ${inconclusive.join(', ')}`)
   process.exit(2)
 }
-console.error('live clipboard probe complete: 4 checks passed on a real compositor session')
+const manualSuffix = manual.length === 0 ? '' : `, ${String(manual.length)} manual (${manual.join(', ')})`
+console.error(`live clipboard probe complete: ${String(passed)} checks passed${manualSuffix} on a real compositor session`)

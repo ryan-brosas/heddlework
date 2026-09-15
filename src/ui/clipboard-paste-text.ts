@@ -86,6 +86,17 @@ export async function attachClipboardImage(options: {
   return 'attached'
 }
 
+/**
+ * Whether the composer holds anything a submit could send.
+ *
+ * Callers that decide about a submit read the live draft and the live attachments, never the render-time
+ * props: a submit that waited for a pending paste continues in the closure of the render that started it, so
+ * an image that paste attached during the wait would be missing and an image-only paste would submit nothing.
+ */
+export function hasSubmittableDraft(text: string, images: readonly ComposerImage[]): boolean {
+  return text.trim().length > 0 || images.length > 0
+}
+
 export function draftBeforeNativePaste(report: { contentBefore?: unknown }, currentDraft: string): string {
   return typeof report.contentBefore === 'string' ? report.contentBefore : currentDraft
 }

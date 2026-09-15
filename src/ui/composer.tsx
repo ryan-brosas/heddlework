@@ -8,7 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
-import { attachClipboardImage, draftBeforeNativePaste, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
+import { attachClipboardImage, draftBeforeNativePaste, hasSubmittableDraft, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
 import { nativeClipboardEditing } from './clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { notifyFailure } from './failure-notice.ts'
@@ -113,7 +113,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const above = Object.values(state.widgets).filter((widget) => widget.placement === 'aboveEditor')
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
   const contextPercent = state.stats?.contextUsage?.percent
-  const hasComposerInput = Boolean(state.editorText.trim() || state.editorImages.length > 0)
+  const hasComposerInput = hasSubmittableDraft(state.editorText, state.editorImages)
   const canResumeQueue = !state.session.isStreaming && state.queue.paused && state.queue.items.length > 0 && !hasComposerInput
   const queueHintOpen = queueHintVisible && connected && !state.session.isStreaming
   const primaryActionWidth = queueHintOpen ? queueHintExpandedWidth() : PRIMARY_ACTION_SIZE
@@ -131,7 +131,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const send = (value: string, queue = false, startedSessionFile = currentSessionFile()) => {
     if (!pasteTargetsSameSession(startedSessionFile, currentSessionFile())) return
     clearQueueHint()
-    if (!value.trim() && state.editorImages.length === 0) {
+    // The attachments are read live: this closure can run after a paste attached an image to the draft.
+    if (!hasSubmittableDraft(value, controller.getSnapshot().editorImages)) {
       if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
       return
     }

@@ -135,6 +135,17 @@ describe('runtime source patches', () => {
     expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('patched\nand something else\n')
   })
 
+  it('rolls back a patch this run applied when the declared-source check refuses the checkout', () => {
+    const directory = scratchRepository()
+    // The patch itself fits, so it is applied before the final check runs - and the final check refuses the
+    // checkout because of a file no patch declares. That refusal is part of applying the set, so the patch
+    // this run applied is reversed rather than left behind in a half-patched checkout.
+    writeFileSync(resolve(directory, 'src/extra.rs'), 'undeclared\n')
+    const message = refusalMessage(directory, [declaredPatch(directory, 'patched')])
+    expect(message).toContain('Undeclared runtime source changes')
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('initial\n')
+  })
+
   it('leaves the checkout unchanged when a later patch of the set refuses', () => {
     const directory = scratchRepository()
     writeFileSync(resolve(directory, 'src/other.rs'), 'initial\n')

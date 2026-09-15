@@ -154,9 +154,20 @@ the clipboard helper received exactly that selection. The pinned Linux automatio
 the lane checks submitted user-message rows instead. Byte-level proof of the native path needs a real
 compositor: `HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live` starts a disposable nested Hyprland
 with the real helpers and asserts that `Shift+Insert` pasted the staged text into a submitted message, that
-`Ctrl+Insert` left exactly the dragged selection on the session clipboard, and that a `Shift+Insert` against
-a clipboard holding only a PNG added exactly one composer attachment and submitted nothing - the screenshot
-half a text input cannot hold. In the fallback mode, positive paste checks wait for the stub to log a
+the application submitted a typed control message, and that a `Shift+Insert` against a clipboard holding
+only a PNG added exactly one composer attachment and submitted nothing - the screenshot half a text input
+cannot hold.
+
+**Native copy stays manual, and the lane says so.** The copy check stages a sentinel on the clipboard and
+proves it is there before the gesture, because the text it drags over is the message the paste step
+submitted, so an untouched clipboard would otherwise satisfy an equality check on its own. Running that
+check showed the sentinel surviving the gesture, and the reason is in the pinned runtime rather than in the
+application: `SerialTracker::update` records a Wayland selection serial only from a real key or pointer
+press event (`crates/gpui_linux/src/linux/wayland/client.rs` keyboard handler), and `write_to_clipboard`
+returns early with "Skipping Wayland clipboard ownership request ..." when there is none. A press delivered
+through the automation surface never produces one, so no automated lane can prove native copy; the probe
+reports the check as a named skip and a physical `Ctrl+Insert` on a real session is the acceptance step. A
+copy that lands but puts the wrong bytes on the clipboard still fails the lane. In the fallback mode, positive paste checks wait for the stub to log a
 text-read attempt before Enter, then allow two polling intervals for the asynchronous paste to settle. The logged
 75 ms in a local run included that deliberate wait; it is **not** a measured paste-latency guarantee.
 
