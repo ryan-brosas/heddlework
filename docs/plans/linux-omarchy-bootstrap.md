@@ -34,11 +34,23 @@ blocked**; a row without a hash is not evidence. Automated results never close t
 | `Ctrl+V` -> `Shift+Insert` paste | composer | text lands at the caret exactly once, undo restores the previous draft |
 | Image-only clipboard paste | composer | exactly one attachment, draft preserved |
 | `Super+C` -> `Ctrl+Insert` copy | dragged transcript selection | `wl-paste --no-newline --type text` returns exactly the dragged text |
-| `Ctrl+Insert` copy | terminal selection | same, and zero PTY bytes are written |
+| `Ctrl+Insert` copy | terminal viewport | zero PTY bytes are written, and the clipboard holds the visible viewport with trailing padding and unused blank rows trimmed; for an empty or all-blank viewport the app copies nothing, so pre-existing clipboard contents stay as they were - that is a pass, not a failure |
 | Plain `Ctrl+C` | terminal | foreground process is interrupted, nothing is copied |
 | Move between 150% and 100% monitors | window | caret and selection still line up, no clipped chrome |
 | IME composition | composer | commit, cancel and no premature submit |
 | Session close | terminal | no child process survives the session |
+
+Which owner should handle each gesture, so a row is not failed for doing what the design intends:
+
+- The **composer** is a native text element, so `Ctrl+V`/`Shift+Insert` and `Ctrl+Insert` belong to the pinned runtime's caret-aware actions. The composer only attaches the clipboard *image* half, once per runtime `paste` event (`nativeClipboardEditing()` in `src/ui/clipboard-ownership.ts`).
+- The **terminal** paints through `setTerminalFrame`, so the application dispatches its keys itself: `TerminalView.onKeyDown` sends every key to `dispatchTerminalKey` (`src/terminal/keys.ts`) with no runtime-capability check. Its copy exports the visible viewport, not a modeled selection - terminal drag-selection is separate follow-up work (`docs/terminal.md`), so composing that row against a drag selection would test a feature the plan does not claim. No automated lane establishes what the runtime does with `Ctrl+Insert` while a terminal has focus, which is why the row asks the helper log to show exactly one clipboard write and zero PTY bytes rather than assuming the app path handled it.
+- Every copy row is read back with `wl-paste --no-newline --type text` and recorded against the artifact hash from `bun scripts/linux-artifact-check.ts`. Clipboard bytes that do not match the source are a failure; an unchanged clipboard is only a pass when the surface that handled the gesture is the one that owns it above.
+
+Status vocabulary, so implemented work is not re-planned as absent:
+
+- **Implemented**: the runtime capability APIs (`getWindowState`, `minimizeWindow`, `toggleMaximizeWindow`, `closeWindow` in `src/native-runtime.ts`, declared by `patches/gpuix/0001-linux-native-runtime.patch`), the capability-driven client chrome and drag/resize regions (`src/ui/linux-window-chrome.tsx`, `src/ui/window-controls.ts`), and the portal-first project picker (`src/ui/portal-file-chooser.ts`).
+- **Automatically verified**: `tests/window-controls.test.ts`, `tests/linux-window-chrome.test.tsx`, `tests/window-options.test.ts`, `tests/native-window-lifecycle.test.ts`, `tests/portal-file-chooser.test.ts`, plus the headless PTY and nested-compositor clipboard lanes.
+- **Physically verified**: nothing in this table yet. The window chrome above is implemented and unit-tested but never confirmed on this box's own Hyprland session; decorations, fractional scaling, multi-monitor moves and fullscreen stay unverified until the rows below are filled in.
 
 Scope: browser-free Omarchy daily use. Linux CEF, OS notifications and appearance/picker polish are
 separate follow-ups.

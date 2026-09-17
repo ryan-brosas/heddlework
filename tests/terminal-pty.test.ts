@@ -229,6 +229,7 @@ describePty('Bun.Terminal PTY', () => {
       // Ctrl+Shift+C copies the visible viewport and must send zero PTY bytes.
       dispatchTerminalKey({ key: 'c', modifiers: { ctrl: true, shift: true } }, effects())
       expect(copied).toContain(TERMINAL_COPY_SOURCE)
+      expect(copied.endsWith('\n')).toBe(false)
       expect(viewport()).not.toContain(TERMINAL_PASTE_ECHO)
 
       // Ctrl+V returns the clipboard text to the PTY, and the child echoes the matching line back,
@@ -236,7 +237,7 @@ describePty('Bun.Terminal PTY', () => {
       dispatchTerminalKey({ key: 'v', modifiers: { ctrl: true } }, effects({ readPaste: async () => copied }))
       await waitFor('the paste echo', () => viewport().includes(TERMINAL_PASTE_ECHO + TERMINAL_COPY_SOURCE))
 
-      // Plain Ctrl+C stays an interrupt: the child traps SIGINT and exits cleanly.
+      // Plain Ctrl+C writes ETX: this raw-mode child observes the byte, not kernel SIGINT delivery.
       dispatchTerminalKey({ key: 'c', modifiers: { ctrl: true } }, effects())
       await waitFor('the interrupt marker', () => viewport().includes(TERMINAL_INTERRUPT_MARKER))
       await waitFor('the session exit', () => sessionStatus()?.kind === 'exited')

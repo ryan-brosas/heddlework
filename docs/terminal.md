@@ -32,7 +32,7 @@ Bun stops reading the PTY when the spawned process exits. `tests/terminal-pty.te
 deterministically through `BunPtyBackend`'s injected PTY lifecycle.
 - **Direct events**: `textInput` and `paste` events carry their own text and bypass keyboard encoding.
 
-Copy currently exports the **visible terminal viewport**, not a modeled selection. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
+Copy currently exports the **visible terminal viewport**, not a modeled selection. Rows are padded to the terminal width, so the copied text trims each line's trailing padding and drops the unused blank rows below the last line while keeping leading indentation and interior blank lines; an empty or all-blank viewport copies nothing and reports no failure, because a no-op is not a failed write. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
 
 A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount, on a session change, or on writer replacement. One view instance serves every session, so the action is scoped to the session and a copy still in flight for a session that was left cannot report over its successor. Published feedback never contains the clipboard payload or an exception detail.
 
