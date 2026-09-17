@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { portalResponseMatchesToken, portalSignalForToken, requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
+import { portalResponseMatchesToken, portalResponseRecordIsComplete, portalSignalForToken, requestPortalDirectory, runPortalMonitor } from '../src/ui/portal-file-chooser.ts'
 import type { PortalPickerProbe } from '../src/ui/portal-file-chooser.ts'
 
 function handleFor(token: string): string {
@@ -167,4 +167,61 @@ describe('portal response ownership', () => {
     expect(portalSignalForToken(capture, 'heddlework_mine')).not.toContain('OTHER-APP-PICK')
     expect(portalSignalForToken(capture, 'heddlework_missing')).toBeUndefined()
   })
+})
+
+describe('portal response completeness', () => {
+  it('holds a success record back until its body closes, and accepts a code-only dismissal', () => {
+    const header = signalHeader('heddlework_complete')
+    // A success carries the selection in its body, so the code line alone is balanced but empty.
+    expect(portalResponseRecordIsComplete([header, '   uint32 0'].join('\n'), 0)).toBe(false)
+    expect(portalResponseRecordIsComplete([header, '   uint32 0', '   array [', '      dict entry('].join('\n'), 0)).toBe(false)
+    expect(portalResponseRecordIsComplete([header, '   uint32 1'].join('\n'), 1)).toBe(true)
+    expect(portalResponseRecordIsComplete([
+      header,
+      '   uint32 0',
+      '   array [',
+      '      dict entry(',
+      '         string "uris"',
+      '         variant             array [',
+      '               string "file:///tmp/project [bracketed]"',
+      '            ]',
+      '      )',
+      '   ]',
+    ].join('\n'), 0)).toBe(true)
+  })
+
+  it('waits for a body that arrives after the response code', async () => {
+    // One stdout write per element, with the handle token expanded from $1.
+    const writes = [
+      ['"signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/$1; interface=org.freedesktop.portal.Request; member=Response"', "'   uint32 0'"],
+      ["'   array ['", "''", "'      dict entry('", "''", "'         string \"uris\"'", "''", "'         variant             array ['", "''", "'               string \"file:///tmp/split-project\"'", "''", "'            ]'", "''", "'      )'", "''", "'   ]'"],
+    ]
+    const script = writes
+      .map((args, index) => "printf '%s\\n' " + args.join(' ') + (index < writes.length - 1 ? '\nsleep 0.4' : ''))
+      .join('\n')
+    const token = 'heddlework_split_body'
+    const capture = await runPortalMonitor('/bin/sh', ['-c', script, 'heddlework-probe', token], 5_000, token, new AbortController().signal)
+    // Settling on the first write would return a record with no URI at all.
+    expect(capture ?? '').toContain('file:///tmp/split-project')
+  }, 10_000)
+
+  it('reports the selection through requestPortalDirectory when the URI trails the code', async () => {
+    const writes = [
+      ['"signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/$1; interface=org.freedesktop.portal.Request; member=Response"', "'   uint32 0'"],
+      ["'   array ['", "''", "'      dict entry('", "''", "'         string \"uris\"'", "''", "'         variant             array ['", "''", "'               string \"file:///tmp/split-project\"'", "''", "'            ]'", "''", "'      )'", "''", "'   ]'"],
+    ]
+    const script = writes
+      .map((args, index) => "printf '%s\\n' " + args.join(' ') + (index < writes.length - 1 ? '\nsleep 0.4' : ''))
+      .join('\n')
+    const result = await requestPortalDirectory({
+      run: async (_command, args) => {
+        const opened = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]
+        return opened ? "(objectpath '" + handleFor(opened) + "',)" : undefined
+      },
+      monitor: (_command, _args, timeoutMs, token, signal) =>
+        runPortalMonitor('/bin/sh', ['-c', script, 'heddlework-probe', token], timeoutMs, token, signal),
+    })
+    expect(result.status).toBe('selected')
+    expect(result.path).toBe('/tmp/split-project')
+  }, 10_000)
 })

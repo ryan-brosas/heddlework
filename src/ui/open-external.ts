@@ -1,7 +1,24 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-import { requestPortalDirectory, SESSION_TIMEOUT_MS, type PortalPickResult } from './portal-file-chooser.ts'
+
+/**
+ * How long a folder dialog may stay open. Browsing a filesystem takes minutes, so this bounds only a
+ * picker that never comes back at all.
+ */
+export const PICKER_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * The portal path used to run FileChooser.OpenFile through gdbus and watch for the answer with
+ * dbus-monitor. That transport cannot receive the answer: the portal sends Request.Response to the
+ * calling connection, and gdbus call exits as soon as it prints the request handle, so the response is
+ * dropped and the picker waited out its whole session budget. Measured 2026-09-17 on Omarchy: the portal
+ * dialog opens, and a session-wide line-buffered monitor sees no Response signal at all - neither while
+ * the dialog is up nor after the compositor dismisses it. portal-file-chooser.ts keeps that
+ * request/response contract for the day the native runtime owns the connection (the installed addon
+ * already exposes openDirectoryDialog); until then the CLI pickers below are the transport that answers.
+ */
+
 
 export interface DirectoryPickerCommand {
   command: string
@@ -62,31 +79,23 @@ export function directoryPickerCommands(platform: NodeJS.Platform = process.plat
 
 export async function pickWorkspaceDirectory(
   platform: NodeJS.Platform = process.platform,
-  options: {
-    requestPortal?(): Promise<PortalPickResult>
-    capture?(command: string, args: string[]): Promise<string | undefined>
-  } = {},
+  options: { runPicker?(picker: DirectoryPickerCommand): Promise<DirectoryPickOutcome> } = {},
 ): Promise<WorkspaceDirectoryPick> {
-  const requestPortal = options.requestPortal ?? requestPortalDirectory
-  const capture = options.capture ?? captureProcessOutput
-  if (platform === 'linux') {
-    const portal = await requestPortal()
-    if (portal.status === 'cancelled' || portal.status === 'selected') {
-      return portal.path ? { path: portal.path } : {}
-    }
-  }
+  const runPicker = options.runPicker ?? ((picker: DirectoryPickerCommand) => runPickerCommand(picker))
   const pickers = directoryPickerCommands(platform)
   if (pickers.length === 0) return { error: 'No folder picker is available on this system' }
-  const failures: string[] = []
+  const unavailable: string[] = []
   for (const picker of pickers) {
-    const selected = await capture(picker.command, picker.args)
-    if (selected !== undefined) {
-      return selected.trim() ? { path: resolve(selected.trim()) } : {}
-    }
-    failures.push(picker.command)
+    const outcome = await runPicker(picker)
+    if (outcome.kind === 'selected') return { path: outcome.path }
+    // A dismissal is a decision, not a failure: stop here instead of opening a second dialog. Only a
+    // picker that could not run at all is worth retrying with the next command.
+    if (outcome.kind === 'cancelled') return {}
+    unavailable.push(picker.command)
   }
-  return { error: `Could not open a folder picker (${failures.join(', ')} not available)` }
+  return { error: `Could not open a folder picker (${unavailable.join(', ')} not available)` }
 }
+
 
 export function systemTargetCommand(target: string, platform: NodeJS.Platform = process.platform): DirectoryPickerCommand {
   if (platform === 'darwin') return { command: '/usr/bin/open', args: [target] }
@@ -112,16 +121,25 @@ const TERMINATION_GRACE_MS = 250
  * Run one CLI picker and report its output. The bound is injectable so the timeout itself is
  * regression-tested instead of waiting out the real session budget.
  *
- * kdialog and zenity are only reached when the portal is unavailable, and a stale or absent KDE/Qt
+ * A stale or absent KDE/Qt
+
  * D-Bus service can leave them blocked at startup. Unbounded, that leaves the "Open project" promise
  * pending forever, with the sidebar waiting on it.
  */
-export function captureProcessOutput(
-  command: string,
-  args: string[],
-  timeoutMs: number = SESSION_TIMEOUT_MS,
-): Promise<string | undefined> {
-  return new Promise((resolveOutput) => {
+interface BoundedCommandResult {
+  /** undefined when the command never ran to the end: it could not be spawned, or it overran its bound. */
+  readonly exitCode: number | undefined
+  readonly stdout: string
+}
+
+/**
+ * Run one picker process under a bound and report how it ended.
+ *
+ * A stale or absent KDE/Qt D-Bus service can leave a picker blocked at startup. Unbounded, that leaves
+ * the Open project promise pending forever, with the sidebar waiting on it.
+ */
+function runBoundedCommand(command: string, args: string[], timeoutMs: number): Promise<BoundedCommandResult> {
+  return new Promise((resolveResult) => {
     let settled = false
     let child: ChildProcess | undefined
     let killTimer: ReturnType<typeof setTimeout> | undefined
@@ -130,31 +148,63 @@ export function captureProcessOutput(
       // The escalation is cleared by the child's own exit, never by the settled result.
       try { child?.kill('SIGTERM') } catch { /* already gone */ }
       killTimer = setTimeout(() => { try { child?.kill('SIGKILL') } catch { /* already gone */ } }, TERMINATION_GRACE_MS)
-      finish()
+      finish(undefined, '')
     }, timeoutMs)
-    const finish = (value?: string) => {
+    const finish = (exitCode: number | undefined, stdout: string) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolveOutput(value)
+      resolveResult({ exitCode, stdout })
     }
     try {
       child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
     } catch {
-      finish()
+      finish(undefined, '')
       return
     }
     const stdout = child.stdout
     if (!stdout) {
-      finish()
+      finish(undefined, '')
       return
     }
     const chunks: Buffer[] = []
     stdout.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)))
-    child.on('error', () => { if (killTimer) clearTimeout(killTimer); finish() })
+    child.on('error', () => { if (killTimer) clearTimeout(killTimer); finish(undefined, '') })
     child.on('close', (code) => {
       if (killTimer) clearTimeout(killTimer)
-      finish(code === 0 ? Buffer.concat(chunks).toString('utf8') : undefined)
+      finish(code === null ? undefined : code, Buffer.concat(chunks).toString('utf8'))
     })
   })
 }
+
+/** A completed picker output; undefined when it never ended inside its bound. */
+export async function captureProcessOutput(
+  command: string,
+  args: string[],
+  timeoutMs: number = PICKER_TIMEOUT_MS,
+): Promise<string | undefined> {
+  const result = await runBoundedCommand(command, args, timeoutMs)
+  return result.exitCode === 0 && result.stdout ? result.stdout : undefined
+}
+
+/** What one picker process decided. */
+export type DirectoryPickOutcome =
+  | { kind: 'selected'; path: string }
+  | { kind: 'cancelled' }
+  | { kind: 'unavailable' }
+
+/**
+ * Classify one picker run. A picker that ran to the end and printed nothing dismissed the dialog -
+ * kdialog exits 1 on cancel - which is a decision, not a failure. Only a picker that could not run at
+ * all is unavailable, and that is the single case worth retrying with the next command.
+ */
+export async function runPickerCommand(
+  picker: DirectoryPickerCommand,
+  timeoutMs: number = PICKER_TIMEOUT_MS,
+): Promise<DirectoryPickOutcome> {
+  const result = await runBoundedCommand(picker.command, picker.args, timeoutMs)
+  if (result.exitCode === undefined) return { kind: 'unavailable' }
+  const selected = result.stdout.trim()
+  return selected ? { kind: 'selected', path: resolve(selected) } : { kind: 'cancelled' }
+}
+

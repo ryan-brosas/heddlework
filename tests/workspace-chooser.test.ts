@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { resolve } from 'node:path'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
-import { workspaceChoices } from '../src/ui/workspace-chooser.tsx'
+import { workspaceChoices } from '../src/ui/workspace-choices.ts'
 
 function session(id: string, cwd: string): PiSessionSummary {
   return { id, path: `/sessions/${id}.jsonl`, cwd, title: id, firstMessage: '', messageCount: 1, createdAt: 1, modifiedAt: 1 }

@@ -349,9 +349,17 @@ keys before any window sees them.
 - Idle session harnesses are capped (`SESSION_IDLE_POOL_LIMIT`) so All-projects browsing cannot leave a Pi
   process per click. Streaming harnesses are never stopped. The Linux launcher remembers the last project in
   XDG state. The running `.desktop` process still keeps the previous image until restart.
-- **Open project** on Linux talks to `org.freedesktop.portal.FileChooser` first (listen for Response before
-  OpenFile). kdialog then zenity are fallbacks only when the portal is unavailable. This is a TypeScript
-  gdbus/dbus-monitor seam, not a GPUIX pin or Omarchy palette change.
+- **Open project** on Linux used to talk to `org.freedesktop.portal.FileChooser` first through a TypeScript
+  gdbus/dbus-monitor seam (2026-09-16). That transport cannot receive the portal's answer: the portal sends
+  `Request.Response` to the *requesting* connection, and `gdbus call` exits as soon as it prints the request
+  handle, so the response is dropped and the picker waited out `SESSION_TIMEOUT_MS` (5 minutes) before it
+  reached the CLI pickers at all. Measured 2026-09-17 on this box: the portal dialog opens and a session-wide,
+  line-buffered monitor sees no `Response` signal - neither while the dialog is up nor after the compositor
+  dismisses it; a live app instance held an orphaned `dbus-monitor` for 257 s. The picker therefore runs
+  `kdialog` then `zenity` directly, and a dismissal (kdialog exits 1) is reported as *no selection* rather
+  than an error. Restoring the portal needs the native transport, which the installed addon already exposes
+  (`openDirectoryDialog`) but whose declared patch calls `OpenFile` with 2 of the 3 required arguments: fix
+  that patch, re-run `bun run setup:native`, then prefer the native dialog before these CLI pickers.
 - Native-renderer suites are a structural Linux skip, not a failure: the pinned gpuix test renderer is built
   for macOS and Windows only, so ~97 `bun test` skips per run are expected. `tests/helpers/native-renderer.ts`
   owns the gate and prints the reason once per run; do not read those skips as coverage.

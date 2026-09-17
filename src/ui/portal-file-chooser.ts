@@ -2,7 +2,20 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 
+/**
+ * The XDG Desktop Portal `FileChooser` request contract.
+ *
+ * This module is not on the live picker path. The portal sends `Request.Response` to the *requesting*
+ * D-Bus connection, and the CLI transport here - `gdbus call` for the request, `dbus-monitor` for the
+ * answer - abandons that connection as soon as the request handle is printed, so the answer is never
+ * delivered and the picker waited out its whole session budget. Measured 2026-09-17 on Omarchy: the
+ * dialog opens, and a session-wide, line-buffered monitor sees no `Response` signal at all, neither
+ * while the dialog is up nor after the compositor dismisses it. What remains here is the token-keyed,
+ * ownership-checked, completeness-gated contract that the native transport (`openDirectoryDialog`,
+ * already exported by the installed addon) needs when it owns the connection instead.
+ */
 export type PortalPickStatus = 'selected' | 'cancelled' | 'unavailable'
+
 
 export interface PortalPickResult {
   status: PortalPickStatus
@@ -173,12 +186,65 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
   })
 }
 
+/**
+ * Whether a Response record has arrived in full.
+ *
+ * dbus-monitor streams a signal body in whatever chunks its stdout flushes, so a record can arrive in
+ * pieces, and a success response carries its selection in the body: a record that ends right after
+ * `uint32 0` is balanced but empty, and settling there reported "no selection" for a folder the user had
+ * just picked. A dismissal (code 1) or any other non-success code carries no body, so its code line is
+ * the whole record. A body is complete once its bracketed structure closes; quoted strings are skipped
+ * because a folder name may contain brackets.
+ */
+export function portalResponseRecordIsComplete(record: string, responseCode: number): boolean {
+  // Only the body counts. The signal header carries `dest=(unset)`, which is not structure, so scanning
+  // the whole record made the code line look like a closed body and let the monitor settle early again.
+  const bodyStart = record.indexOf('\n')
+  const body = bodyStart === -1 ? '' : record.slice(bodyStart + 1)
+  let depth = 0
+  let bodyOpened = false
+  let quote: string | undefined
+  let escaped = false
+  for (const character of body) {
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quote !== undefined) {
+      if (character === '\\') escaped = true
+      else if (character === quote) quote = undefined
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      continue
+    }
+    if (character === '[' || character === '(') {
+      bodyOpened = true
+      depth += 1
+    } else if (character === ']' || character === ')') depth -= 1
+  }
+  // An unbalanced close is a malformed record, not a reason to keep waiting: call it complete and let
+  // the caller's own validation reject it, instead of holding a dialog open to the session timeout.
+  if (depth > 0 || quote !== undefined) return false
+  // A success carries its selection in the body, so its code line alone is not a complete record; a
+  // dismissal (or any other code) carries no body at all.
+  return responseCode !== 0 || bodyOpened
+}
+
 // dbus-monitor is a long-lived stream: it never exits on its own, so we read
 // stdout incrementally and resolve as soon as a Response signal whose request
-// path carries our handle token has been captured, then terminate the child.
-// This bounds the dialog wait instead of stalling to the full timeout.
-function runPortalMonitor(command: string, args: string[], timeoutMs: number, token: string, signal: AbortSignal): Promise<string | undefined> {
+// path carries our handle token has been captured in full, then terminate the
+// child. This bounds the dialog wait instead of stalling to the full timeout.
+export function runPortalMonitor(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  token: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
   return new Promise((finish) => {
+
     let settled = false
     let child: ReturnType<typeof spawn> | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -214,8 +280,12 @@ function runPortalMonitor(command: string, args: string[], timeoutMs: number, to
       chunks.push(Buffer.from(c))
       const output = Buffer.concat(chunks).toString('utf8')
       const record = portalSignalForToken(output, token)
-      if (record !== undefined && extractResponseCode(record) !== undefined) done(record)
+      if (record === undefined) return
+      const code = extractResponseCode(record)
+      // Settle only on a complete record: a success code can be flushed before the selection it carries.
+      if (code !== undefined && portalResponseRecordIsComplete(record, code)) done(record)
     })
+
     stderr.on('data', () => {})
     child.on('error', () => done(undefined))
     child.on('close', () => done(portalSignalForToken(Buffer.concat(chunks).toString('utf8'), token)))

@@ -12,19 +12,13 @@ import { pickWorkspaceDirectory } from './open-external.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
+import { ALL_PROJECTS_SCOPE, projectChoices, resolveProjectScope } from './workspace-choices.ts'
 
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 
 const SIDEBAR_WIDTH = 256
-export const ALL_PROJECTS_SCOPE = '__all-projects__'
 
-/**
- * The folder filter is user-owned: browsing starts on every project and only a pick moves it.
- * Opening a session from another folder changes the workspace, never this selection.
- */
-export function resolveProjectScope(selected: string, options: readonly { value: string }[]): string {
-  return options.some((option) => option.value === selected) ? selected : ALL_PROJECTS_SCOPE
-}
+
 
 export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   width = SIDEBAR_WIDTH,
@@ -72,17 +66,11 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     [activePath, persistedSessions, state],
   )
   const normalizedSearch = search.trim().toLowerCase()
-  const projectOptions = useMemo(() => {
-    const projects = new Map<string, string>()
-    for (const session of [activeSummary, ...persistedSessions]) {
-      if (!session) continue
-      projects.set(resolve(session.cwd), sessionProjectName(session))
-    }
-    return [
-      { value: ALL_PROJECTS_SCOPE, label: 'All projects' },
-      ...[...projects].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label)),
-    ]
-  }, [activeSummary, persistedSessions])
+  // The current workspace is a project even before it has any session, so this list cannot come from
+  // messages alone: a folder that "New project" had just opened produced no option at all, which made a
+  // successful pick look like it did nothing. `projectChoices` owns that projection for both pickers.
+  const projectOptions = useMemo(() => projectChoices(state), [state.sessions, state.workspacePath])
+
   useEffect(() => {
     setProjectScope((selected) => resolveProjectScope(selected, projectOptions))
   }, [projectOptions])

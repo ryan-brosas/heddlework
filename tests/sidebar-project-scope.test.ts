@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { ALL_PROJECTS_SCOPE, resolveProjectScope } from '../src/ui/sidebar.tsx'
+import { ALL_PROJECTS_SCOPE, resolveProjectScope } from '../src/ui/workspace-choices.ts'
 
 const projects = [
   { value: ALL_PROJECTS_SCOPE },
@@ -24,9 +24,11 @@ describe('sidebar project scope', () => {
     expect(sidebar).toContain('onChange={setProjectScope}')
     // Choosing a session changes state.workspacePath. The only thing allowed to write the
     // filter is a missing option, so an active session can never move it.
-    const scopeWrites = sidebar.slice(sidebar.indexOf('setProjectScope'), sidebar.indexOf('const visibleSessions'))
-    expect(scopeWrites).toContain('resolveProjectScope')
-    expect(scopeWrites).not.toContain('workspacePath')
+    // Only a vanished option may move the filter. The workspace is an *option* (the current folder is a
+    // project before it has any session), but it must never be an input to the write itself.
+    const filterWrites = sidebar.split('\n').filter((line) => line.includes('setProjectScope') && !line.includes('useState'))
+    expect(filterWrites.some((line) => line.includes('resolveProjectScope(selected, projectOptions)'))).toBe(true)
+    expect(filterWrites.join('\n')).not.toContain('workspacePath')
     expect(sidebar).not.toContain('useState(() => resolve(state.workspacePath))')
     expect(sidebar).not.toContain('projectScopePinned')
     expect(sidebar).not.toContain('onChange={selectProjectScope}')

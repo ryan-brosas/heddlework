@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { basename, resolve } from 'node:path'
 import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
+
 import { Composer } from './composer.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { matchSelectOptions, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
@@ -10,27 +10,10 @@ import { pickWorkspaceDirectory } from './open-external.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
-
-interface WorkspaceChoice {
-  path: string
-  name: string
-  current: boolean
-}
-
-export function workspaceChoices(state: Pick<WorkbenchState, 'workspacePath' | 'sessions'>): WorkspaceChoice[] {
-  const currentPath = resolve(state.workspacePath)
-  const paths = new Map<string, string>([[currentPath, basename(currentPath) || currentPath]])
-  for (const session of state.sessions) {
-    const path = resolve(session.cwd)
-    if (!paths.has(path)) paths.set(path, basename(path) || path)
-  }
-  return [...paths].map(([path, name]) => ({ path, name, current: path === currentPath })).sort((left, right) => {
-    if (left.current !== right.current) return left.current ? -1 : 1
-    return left.name.localeCompare(right.name)
-  })
-}
+import { workspaceChoices } from './workspace-choices.ts'
 
 export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
+
   const layout = useResponsiveLayout()
   const dropdown = useDropdownState()
   const [picking, setPicking] = useState(false)
@@ -49,14 +32,17 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
   const chooseNewProject = () => {
     if (picking) return
     setPicking(true)
-    void pickWorkspaceDirectory().then((pick) => {
+    // Stay busy until the switch settles, not just until a path came back: releasing the picker on
+    // selection let a second click start an overlapping switch to a different folder.
+    void pickWorkspaceDirectory().then(async (pick) => {
       if (pick.error) controller.notify('error', pick.error)
-      else if (pick.path) void controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+      else if (pick.path) await controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
     }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => {
       setPicking(false)
       closeMenu()
     })
   }
+
   return (
     <div testId="draft-workspace" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter, paddingBottom: layout.mobile ? 42 : 74, ...(layout.mobile ? { overflow: 'scroll' } : {}) }}>
       <div testId="draft-workspace-stack" style={{ position: 'relative', width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: layout.mobile ? 18 : 25, overflow: 'visible' }}>
