@@ -29,6 +29,15 @@ describe('encodeTerminalKey', () => {
     expect(encodeTerminalKey({ key: 'v', modifiers: { cmd: true } })).toBeUndefined()
   })
 
+  it('keeps literal separator characters encodable', () => {
+    // A key string of "+" or "-" is a keypress, not a chord: the shared parser reads those characters
+    // as modifiers inside a chord, so a lone one must not be swallowed into an empty key.
+    expect(encodeTerminalKey({ key: '+' })).toBe('+')
+    expect(encodeTerminalKey({ key: '-' })).toBe('-')
+    expect(encodeTerminalKey({ key: '-', modifiers: { alt: true } })).toBe(ESC + '-')
+    expect(encodeTerminalKey({ key: '+' })).toBe(encodeTerminalKey({ key: '+', keyChar: '+' }))
+  })
+
   it('wraps bracketed paste when the emulator enabled it', () => {
     expect(wrapBracketedPaste('hi', false)).toBe('hi')
     expect(wrapBracketedPaste('hi', true)).toBe(ESC + '[200~hi' + ESC + '[201~')
