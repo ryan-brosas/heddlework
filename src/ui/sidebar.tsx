@@ -258,6 +258,9 @@ export function sidebarPropsEqual(previous: WorkbenchSidebarProps, next: Workben
   && previous.state.sessionsHasMore === next.state.sessionsHasMore
   && previous.state.session === next.state.session
   && previous.state.messages === next.state.messages
+  // Session activity is a per-session record the controller replaces wholesale, and a row's running
+  // badge reads it, so a skipped render would leave that badge stale.
+  && previous.state.sessionActivity === next.state.sessionActivity
   && previous.state.connection === next.state.connection
   && previous.state.threadLifecycle === next.state.threadLifecycle
   && previous.state.workspacePath === next.state.workspacePath

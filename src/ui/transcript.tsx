@@ -616,7 +616,7 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
         source={item.text || '…'}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
-        onLinkClick={(event) => link.open(String(event.value ?? ''))}
+        onLinkClick={(event) => link.launch(String(event.value ?? ''))}
       />
       {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
       {!item.streaming && <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
@@ -833,13 +833,21 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
           testId={`${testId}-markdown`}
           source={text}
           theme={traceMarkdownTheme()}
-          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'text', pointerEvents: 'none' }}
-          onLinkClick={(event) => link.open(String(event.value ?? ''))}
+          style={traceBodyStyle()}
+          onLinkClick={(event) => link.launch(String(event.value ?? ''))}
         />
       )}
       {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
     </div>
   )
+}
+
+/**
+ * Expanded trace bodies stay interactive: their links open externally and their text selects.
+ * `pointerEvents: 'none'` here made every link in a disclosure inert.
+ */
+export function traceBodyStyle() {
+  return { width: '100%', minWidth: 0, overflow: 'visible' as const, userSelect: 'text' as const }
 }
 
 function TracePreview({ item }: { item: TracePreviewItem }) {

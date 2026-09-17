@@ -155,7 +155,12 @@ function declaredSetIsApplied(directory: string, patches: readonly RuntimeSource
  * before the refusal propagates, so the refusal is the only trace of the attempt.
  */
 export function applyRuntimePatches(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
-  if (patches.length === 0) return
+  // An empty declared set is a declared set. Returning here accepted a checkout whose build inputs
+  // came from anywhere, which is the state `assertDeclaredSource` exists to refuse.
+  if (patches.length === 0) {
+    assertDeclaredSource(directory, patches, paths)
+    return
+  }
   // Idempotence is a property of the set, not of one patch: once two patches touch one file, testing a
   // patch alone against the checkout reads the later patch's change as a mismatch, so the installer
   // refused a checkout it had patched itself. The whole set is checked as a unit instead.

@@ -423,6 +423,19 @@ describe('patch inventory', () => {
   })
 })
 
+/**
+ * An empty declared set still declares something: nothing. The installer must not accept a checkout
+ * whose build inputs it cannot explain just because the repository has no patches.
+ */
+describe('empty declared patch set', () => {
+  it('accepts a clean checkout and refuses an unexplained edit', () => {
+    const source = scratchRepository()
+    expect(() => applyRuntimePatches(source, [], ['src'])).not.toThrow()
+    writeFileSync(resolve(source, 'src/input.rs'), 'hand edited\n')
+    expect(() => applyRuntimePatches(source, [], ['src'])).toThrow(/Undeclared runtime source changes/)
+  })
+})
+
 /** The pinned checkout, when this machine has the runtime cache; CI skips the integration check. */
 function pinnedSourceDirectory(): string {
   const pin = JSON.parse(readFileSync(resolve(import.meta.dir, '../gpuix-runtime.json'), 'utf8')) as { gpuixRevision: string }

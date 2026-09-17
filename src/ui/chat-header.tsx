@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
@@ -7,30 +8,19 @@ import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
-import { createLatestAttempt } from './attempt-feedback.ts'
+import { useExternalLaunch } from './external-launch.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
-/**
- * Hand a path to the system file manager, reporting a launch that never started.
- *
- * A folder that never reached the file manager used to look like a dead button; the browser panel
- * reports the same failure the same way.
- */
-function openExternally(controller: WorkbenchService, path: string, failure: string): void {
-  void createLatestAttempt<string>({
-    run: openPath,
-    // A refusal and a rejection report the same way; the notice stream owns the text.
-    onFailure: (message) => { if (message !== undefined) controller.notify('error', message) },
-    message: failure,
-  }).run(path)
-}
+/** Launch failures for the header's own controls; the notice stream renders the text. */
+const FOLDER_FAILURE = 'Could not open this folder in your file manager'
+const EXPORT_OPEN_FAILURE = 'Could not open the exported transcript'
 
-async function exportTranscript(controller: WorkbenchService): Promise<void> {
+async function exportTranscript(controller: WorkbenchService, open: (path: string) => void): Promise<void> {
   const path = await controller.exportSession()
-  if (path) openExternally(controller, path, 'Could not open the exported transcript')
+  if (path) open(path)
 }
 
 export function ChatHeader({
@@ -50,6 +40,15 @@ export function ChatHeader({
   onToggleDiff(): void
   onToggleTerminal?(): void
 }) {
+  // One tracker per action, not per call: two quick clicks must resolve through one rule, or the
+  // first launch's slow failure would report after the second already succeeded.
+  const notice = useCallback((message: string) => controller.notify('error', message), [controller])
+  const openFolder = useExternalLaunch({ run: openPath, message: FOLDER_FAILURE, notify: notice })
+  const openExport = useExternalLaunch({ run: openPath, message: EXPORT_OPEN_FAILURE, notify: notice })
+  const exportThread = useCallback(() => {
+    void exportTranscript(controller, openExport.launch).catch(notifyFailure(controller, 'Could not export the transcript'))
+  }, [controller, openExport.launch])
+  const openProject = useCallback(() => openFolder.launch(state.workspacePath), [openFolder.launch, state.workspacePath])
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
@@ -72,16 +71,16 @@ export function ChatHeader({
         <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 3 : 7, flexShrink: 0 }}>
-        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} />
+        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} onOpenProject={openProject} onExportTranscript={exportThread} />
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
-            <IconButton testId="header-open" icon="box" label="Open" onClick={() => openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')} />
-            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
+            <IconButton testId="header-open" icon="box" label="Open" onClick={openProject} />
+            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={exportThread} />
           </>
         ) : (
           <>
-            <Button testId="header-open" label="Open" icon="box" compact onClick={() => openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')} />
-            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
+            <Button testId="header-open" label="Open" icon="box" compact onClick={openProject} />
+            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={exportThread} />
           </>
         ))}
         {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
@@ -91,7 +90,7 @@ export function ChatHeader({
   )
 }
 
-function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchService; compact: boolean }) {
+function ActionMenu({ state, controller, compact, onOpenProject, onExportTranscript }: { state: WorkbenchState; controller: WorkbenchService; compact: boolean; onOpenProject(): void; onExportTranscript(): void }) {
   const dropdown = useDropdownState()
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
@@ -108,11 +107,11 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
         if (value === 'new') void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread'))
-        if (value === 'open') openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')
+        if (value === 'open') onOpenProject()
         if (value === 'clone') void controller.cloneSession().catch(notifyFailure(controller, 'Could not clone the thread'))
         if (value === 'compact') void controller.compact().catch(notifyFailure(controller, 'Could not compact the session'))
         if (value === 'refresh') void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))
-        if (value === 'export') void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))
+        if (value === 'export') onExportTranscript()
       }}
     >
       <SelectTrigger

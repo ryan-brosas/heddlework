@@ -38,6 +38,14 @@ describe('sidebar memo', () => {
     expect(sidebarPropsEqual(props(state), props({ ...state }))).toBe(true)
   })
 
+  it('re-renders when only session activity changed', () => {
+    // A row's running badge reads `sessionActivity`, which the controller replaces wholesale.
+    const before = createInitialState('/tmp/project')
+    const after = { ...before, sessionActivity: { '/tmp/project/session-1.jsonl': true } }
+    expect(after.session).toBe(before.session)
+    expect(sidebarPropsEqual(props(before), props(after))).toBe(false)
+  })
+
   it('re-renders when the persisted session list is replaced', () => {
     const before = createInitialState('/tmp/project')
     const after = { ...before, sessions: [...before.sessions] }

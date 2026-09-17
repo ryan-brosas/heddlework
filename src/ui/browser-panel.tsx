@@ -69,7 +69,7 @@ export function BrowserPanel({
           service={service}
           tab={activeTab}
           profile={profile}
-          onOpenExternal={systemBrowser.open}
+          onOpenExternal={systemBrowser.launch}
           profileMenuOpen={profileMenuOpen}
           onToggleProfileMenu={() => {
             if (profileMenuOpen && activeId) service.command(activeId, 'focus')
@@ -90,7 +90,7 @@ export function BrowserPanel({
           <BrowserUnavailable
             message={snapshot.engine.message}
             {...(activeTab?.url ? { url: activeTab.url } : {})}
-            onOpenExternal={systemBrowser.open}
+            onOpenExternal={systemBrowser.launch}
           />
         ) : null}
         {/* Last, so the opaque unavailable surface cannot paint over a launch failure. */}

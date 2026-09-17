@@ -207,7 +207,7 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
         <div testId="ask-user-preview" style={{ minWidth: 0, minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: mobile ? 14 : 20, backgroundColor: colors.card, overflow: 'scroll' }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>PREVIEW</text>
           {preview
-            ? <markdown source={preview} theme={questionnaireMarkdownTheme()} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => link.open(String(event.value ?? ''))} />
+            ? <markdown source={preview} theme={questionnaireMarkdownTheme()} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => link.launch(String(event.value ?? ''))} />
             : <text style={{ color: colors.textFaint, fontSize: 11 }}>This option has no preview.</text>}
           {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
         </div>
