@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { captureProcessOutput, directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, runPickerCommand, systemTargetCommand } from '../src/ui/open-external.ts'
+import { captureProcessOutput, classifyPickerExit, directoryPickerCommand, directoryPickerCommands, openExternal, openPath, pickWorkspaceDirectory, runPickerCommand, systemTargetCommand } from '../src/ui/open-external.ts'
 
 describe('external targets', () => {
   it('passes Windows URLs as one argument without invoking a command shell', () => {
@@ -10,6 +10,21 @@ describe('external targets', () => {
     expect(systemTargetCommand(target, 'win32')).toEqual({ command: 'explorer.exe', args: [target] })
     expect(systemTargetCommand(target, 'darwin')).toEqual({ command: '/usr/bin/open', args: [target] })
   })
+})
+
+describe('external launch reporting', () => {
+  it('refuses a scheme it must not hand to the system opener', async () => {
+    expect(await openExternal('file:///etc/passwd')).toBe(false)
+    expect(await openExternal('javascript:alert(1)')).toBe(false)
+    expect(await openExternal('not a url at all')).toBe(false)
+  })
+
+  it('reports whether the launcher started, without starting one', async () => {
+    // The launcher is injectable so this stays a real spawn without opening a browser here.
+    expect(await openExternal('https://example.com', { command: { command: '/bin/true', args: [] } })).toBe(true)
+    expect(await openExternal('https://example.com', { command: { command: '/dev/null/heddlework-opener', args: [] } })).toBe(false)
+    expect(await openPath('/tmp/project', { command: { command: '/dev/null/heddlework-opener', args: [] } })).toBe(false)
+  }, 10_000)
 })
 
 describe('bounded CLI picker fallback', () => {
@@ -117,6 +132,12 @@ describe('picker outcome classification', () => {
     expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/chosen'] })).toEqual({ kind: 'selected', path: '/tmp/chosen' })
   })
 
+  it('ignores output from a picker that exited with a failure status', async () => {
+    // kdialog prints diagnostics before failing; that text must not become the chosen folder.
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/not-chosen; exit 2'] })).toEqual({ kind: 'unavailable' })
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/chosen; exit 0'] })).toEqual({ kind: 'selected', path: '/tmp/chosen' })
+  })
+
   it('reads a dismissal from a picker that was dismissed without output', async () => {
     // kdialog exits 1 with no output when its dialog is dismissed: a decision, not a failure.
     expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 1'] })).toEqual({ kind: 'cancelled' })
@@ -125,5 +146,18 @@ describe('picker outcome classification', () => {
 
   it('reports a picker that cannot be spawned as unavailable', async () => {
     expect(await runPickerCommand({ command: '/dev/null/heddlework-picker', args: [] })).toEqual({ kind: 'unavailable' })
+  })
+
+  it('separates a dismissal from a picker that ran and failed', async () => {
+    // kdialog exits 1 when its dialog is dismissed; any other status is the picker failing, and
+    // reading it as a dismissal swallowed the failure and made Open project look like a no-op.
+    expect(classifyPickerExit(0)).toEqual({ kind: 'cancelled' })
+    expect(classifyPickerExit(1)).toEqual({ kind: 'cancelled' })
+    expect(classifyPickerExit(2)).toEqual({ kind: 'unavailable' })
+    expect(classifyPickerExit(undefined)).toEqual({ kind: 'unavailable' })
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 1'] })).toEqual({ kind: 'cancelled' })
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 2'] })).toEqual({ kind: 'unavailable' })
+    // A picker that failed and printed nothing must not be read as a dismissal either.
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 3'] })).toEqual({ kind: 'unavailable' })
   })
 })

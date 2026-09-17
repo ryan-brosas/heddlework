@@ -126,6 +126,28 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
 }
 
 /**
+ * Whether the whole declared set is already applied to this checkout.
+ *
+ * Reverse-applying the set in reverse order against a temporary index is the only check that stays
+ * correct once two patches touch one file, and it leaves the working tree and the user's index untouched.
+ */
+function declaredSetIsApplied(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[]): boolean {
+  const scratch = mkdtempSync(join(tmpdir(), 'heddlework-applied-index-'))
+  const environment = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') }
+  try {
+    git(directory, ['read-tree', 'HEAD'], environment)
+    const existingPaths = paths.filter((path) => existsSync(resolve(directory, path)) || git(directory, ['ls-files', '--', path]).length > 0)
+    if (existingPaths.length > 0) git(directory, ['add', '-A', '--', ...existingPaths], environment)
+    for (const patch of [...patches].reverse()) git(directory, ['apply', '--cached', '--reverse', patch.path], environment)
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
+/**
  * Apply every declared patch, or leave the checkout exactly as it was found.
  *
  * A patch set is applied as one unit: a set that stops halfway would leave a cached checkout carrying part
@@ -133,11 +155,22 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
  * before the refusal propagates, so the refusal is the only trace of the attempt.
  */
 export function applyRuntimePatches(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
+  // An empty declared set is a declared set. Returning here accepted a checkout whose build inputs
+  // came from anywhere, which is the state `assertDeclaredSource` exists to refuse.
+  if (patches.length === 0) {
+    assertDeclaredSource(directory, patches, paths)
+    return
+  }
+  // Idempotence is a property of the set, not of one patch: once two patches touch one file, testing a
+  // patch alone against the checkout reads the later patch's change as a mismatch, so the installer
+  // refused a checkout it had patched itself. The whole set is checked as a unit instead.
+  if (declaredSetIsApplied(directory, patches, paths)) {
+    assertDeclaredSource(directory, patches, paths)
+    return
+  }
   const appliedHere: RuntimeSourcePatch[] = []
   try {
     for (const patch of patches) {
-      const alreadyApplied = Bun.spawnSync(['git', 'apply', '--reverse', '--check', patch.path], { cwd: directory, stdout: 'ignore', stderr: 'ignore' })
-      if (alreadyApplied.exitCode === 0) continue
       try {
         git(directory, ['apply', patch.path])
       } catch (error) {

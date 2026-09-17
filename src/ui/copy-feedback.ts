@@ -1,18 +1,18 @@
 /**
  * Clipboard copy feedback shared by every explicit copy control in the UI.
  *
- * A copy control must report a failed clipboard write instead of failing silently, and a later
- * attempt must win over an earlier one still in flight. This module owns both rules: it is
- * renderer-free, so the message, tool, and diff controls plus the terminal copy shortcut cannot
- * drift apart. Callers read the outcome instead of re-deriving the ordering themselves.
+ * The ordering and reporting rules live in `attempt-feedback.ts`; this module keeps the clipboard's
+ * public shape and message so the message, tool, diff, and terminal copy controls cannot drift.
  */
+
+import { createLatestAttempt, type AttemptFailureSink } from './attempt-feedback.ts'
 
 export const COPY_FAILED_MESSAGE = "Couldn't copy to the clipboard. Try again."
 
 /** Clipboard writer contract; declared here so this module stays renderer-free. */
 export type ClipboardWriter = (text: string) => void | boolean | Promise<unknown>
 
-export type CopyFailureSink = (failure: string | undefined) => void
+export type CopyFailureSink = AttemptFailureSink
 
 /**
  * Result of one copy attempt.
@@ -41,30 +41,16 @@ export function createCopyAction(options: {
   readonly onFailure: CopyFailureSink
   readonly message?: string
 }): CopyAction {
-  const { writer, onFailure, message = COPY_FAILED_MESSAGE } = options
-  let attempts = 0
-  let disposed = false
-  const copy = async (text: string): Promise<CopyOutcome> => {
-    if (disposed) return 'stale'
-    const attempt = ++attempts
-    // Repeating the copy is the local retry path, so a new attempt clears the old failure.
-    onFailure(undefined)
-    try {
-      const written = await writer(text)
-      if (disposed || attempt !== attempts) return 'stale'
-      if (written === false) {
-        onFailure(message)
-        return 'failed'
-      }
-      return 'copied'
-    } catch {
-      if (disposed || attempt !== attempts) return 'stale'
-      onFailure(message)
-      return 'failed'
-    }
+  const attempt = createLatestAttempt<string>({
+    run: options.writer,
+    onFailure: options.onFailure,
+    message: options.message ?? COPY_FAILED_MESSAGE,
+  })
+  return {
+    copy: async (text) => {
+      const outcome = await attempt.run(text)
+      return outcome === 'done' ? 'copied' : outcome
+    },
+    dispose: attempt.dispose,
   }
-  const dispose = () => {
-    disposed = true
-  }
-  return { copy, dispose }
 }

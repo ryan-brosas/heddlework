@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { transcriptRowShellStyle } from '../src/ui/transcript.tsx'
+import { traceBodyStyle, transcriptRowShellStyle } from '../src/ui/transcript.tsx'
 import { codeSurfaceStyle, toolRowHeaderStyle } from '../src/ui/transcript-tools.tsx'
 
 /**
@@ -20,6 +20,14 @@ describe('transcript selection policy', () => {
     const content = transcriptRowShellStyle({ user: false, compact: false, noSelect: false, contentGutter: 24 })
     expect(compact.userSelect).toBe('text')
     expect(content.userSelect).toBe('text')
+  })
+
+  it('keeps an expanded trace body interactive so its links are clickable', () => {
+    // A `pointerEvents: 'none'` here left every link in a disclosure inert while still rendering
+    // it as a link, so a click opened nothing and said nothing.
+    const body: { pointerEvents?: unknown; userSelect: string } = traceBodyStyle()
+    expect(body.pointerEvents).toBeUndefined()
+    expect(body.userSelect).toBe('text')
   })
 
   it('keeps the clickable tool header row non-selectable', () => {

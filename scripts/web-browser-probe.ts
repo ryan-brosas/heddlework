@@ -127,6 +127,14 @@ async function desktopSmoke(browser: Awaited<ReturnType<typeof chromium.launch>>
     await page.getByTestId('thinking-picker-content').waitFor({ state: 'visible' })
     await page.keyboard.press('Escape')
     await page.getByTestId('thinking-picker-content').waitFor({ state: 'hidden' })
+    // The web companion has no embedded browser host, so the Browser surface must say that instead
+    // of showing an address bar and an empty page that together promise browsing.
+    await page.getByTestId('toggle-diff').click()
+    await page.getByTestId('right-panel-new-tab').click()
+    await page.getByTestId('surface-option-browser').click()
+    await page.getByTestId('browser-surface-unavailable').waitFor({ state: 'visible' })
+    assert((await page.getByTestId('browser-empty').count()) === 0, 'A host-less build rendered the embedded-browser empty state')
+    assert((await page.getByTestId('browser-address').count()) === 0, 'A host-less build offered an address bar for a browser it cannot run')
     assert(evidence.errors.length === 0, 'Shared GPUix picker failed through the DOM renderer')
   } finally {
     await closeContext(context, host)

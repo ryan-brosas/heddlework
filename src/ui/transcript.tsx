@@ -5,7 +5,7 @@ import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
 import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
 import { hydrateMessageImages } from './clipboard-media.ts'
@@ -608,6 +608,7 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
 }
 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
+  const link = useExternalLink()
   return (
     <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
       <MathMarkdown
@@ -615,8 +616,9 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
         source={item.text || '…'}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
-        onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+        onLinkClick={(event) => link.launch(String(event.value ?? ''))}
       />
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
       {!item.streaming && <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
     </div>
   )
@@ -817,6 +819,7 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
 }
 
 function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
+  const link = useExternalLink()
   return (
     <div testId={testId} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div testId={`${testId}-toggle`} tabIndex={0} style={{ position: 'relative', minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none', backgroundColor: colors.background }} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
@@ -830,12 +833,21 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
           testId={`${testId}-markdown`}
           source={text}
           theme={traceMarkdownTheme()}
-          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'text', pointerEvents: 'none' }}
-          onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+          style={traceBodyStyle()}
+          onLinkClick={(event) => link.launch(String(event.value ?? ''))}
         />
       )}
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
     </div>
   )
+}
+
+/**
+ * Expanded trace bodies stay interactive: their links open externally and their text selects.
+ * `pointerEvents: 'none'` here made every link in a disclosure inert.
+ */
+export function traceBodyStyle() {
+  return { width: '100%', minWidth: 0, overflow: 'visible' as const, userSelect: 'text' as const }
 }
 
 function TracePreview({ item }: { item: TracePreviewItem }) {

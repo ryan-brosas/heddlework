@@ -8,11 +8,12 @@ fails on anything they do not explain.
 | --- | --- | --- |
 | `gpuix/0001-linux-native-runtime.patch` | the GPUix runtime | Desktop clipboard editing (`Ctrl+Insert` copy, `Ctrl+V`/`Cmd+V`/`Shift+Insert` paste through the caret-aware action, plus a `paste` event the host uses to attach clipboard images) and the XDG portal parent-window plus system-appearance primitives. |
 | `zed/0001-portal-parent-and-appearance.patch` | the nested GPUI checkout | The GPUI side of those primitives (`parent_window_identifier`, portal file chooser, system appearance). |
+| `zed/0002-portal-open-file-signature.patch` | the nested GPUI checkout | Corrects `FileChooser.OpenFile` to send the parent window, title and options as three D-Bus arguments, with a serialization regression test. |
 
 ## The contract
 
-- A patch is applied once: a patch that is already applied reverse-applies cleanly, so re-running
-  `setup:native` on a cache is idempotent.
+- Each repository's ordered patch set is applied once. The complete set reverse-applies cleanly in
+  reverse order, even when later patches modify earlier ones, so re-running `setup:native` is idempotent.
 - A cached checkout that no longer matches the patch set is **reported, not rewritten**. Editing a patch
   leaves a cache patched from its previous revision, and its files are derived copies of the pin - but a hand
   edit in a file a patch happens to touch is indistinguishable from an older revision of the same patch, so

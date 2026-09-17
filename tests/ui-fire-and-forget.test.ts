@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { RemoteWorkbenchController } from '../src/dom/remote-controller.ts'
+import { createLatestAttempt } from '../src/ui/attempt-feedback.ts'
 import { notifyFailure } from '../src/ui/failure-notice.ts'
 import type { NoticeKind } from '../src/workbench/state.ts'
 import type { WorkspaceClient } from '../src/web/client.ts'
@@ -38,6 +39,20 @@ describe('fire-and-forget UI failures', () => {
     try {
       void Promise.reject(new Error('clipboard unavailable'))
         .catch(notifyFailure(recordingController([]), 'Could not copy to clipboard'))
+      await Bun.sleep(0)
+      await Bun.sleep(0)
+    } finally {
+      process.off('unhandledRejection', onEscape)
+    }
+    expect(escaped).toBe(0)
+  })
+
+  it('keeps a rejected external launch away from the process-level net that shuts the host down', async () => {
+    let escaped = 0
+    const onEscape = (): void => { escaped += 1 }
+    process.on('unhandledRejection', onEscape)
+    try {
+      await createLatestAttempt<string>({ run: async () => { throw new Error('opener missing') }, onFailure: () => undefined, message: 'ignored' }).run('/tmp/project')
       await Bun.sleep(0)
       await Bun.sleep(0)
     } finally {

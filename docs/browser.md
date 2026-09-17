@@ -191,6 +191,19 @@ with the normal Developer ID, hardened-runtime, and notarization flow while
 preserving the inside-out order and bundle names. `dist/heddlework` is a
 compatibility symlink to the app executable when Chromium is bundled.
 
+## Linux
+
+Linux builds ship no embedded browser. The pinned GPUix backend is macOS-gated (its CEF backend is
+Objective-C/CoreFoundation), so `supportsNativeBrowser()` answers false and the service reports the
+`unavailable` engine. The right-panel Browser surface says so immediately rather than offering an address
+bar for a browser it cannot run. Embedded navigation and profile controls stay hidden; the unavailable
+surface keeps **Open in system browser** for an existing tab URL, which launches the user's own browser through `xdg-open` (macOS `open`, Windows `explorer.exe`) and reports a launch that never
+started. That action uses the user's own profile: Heddlework profiles, isolation and agent policies do not
+apply to it.
+
+An embedded Linux browser needs a native CEF surface in GPUix plus packaged helpers and a sandbox path. It
+is a separate milestone, not a configuration change.
+
 ## Web and mobile
 
 CEF is intentionally not compiled into the WASM client. The browser domain and

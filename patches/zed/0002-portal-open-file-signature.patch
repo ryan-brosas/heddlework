@@ -1,0 +1,72 @@
+diff --git a/crates/gpui_linux/src/portal_file_chooser.rs b/crates/gpui_linux/src/portal_file_chooser.rs
+--- a/crates/gpui_linux/src/portal_file_chooser.rs
++++ b/crates/gpui_linux/src/portal_file_chooser.rs
+@@ -156,15 +156,7 @@
+     }
+   });
+ 
+-  let mut options: HashMap<&str, Value> = HashMap::new();
+-  options.insert("handle_token", Value::from(token.clone()));
+-  options.insert("modal", Value::from(true));
+-  options.insert("multiple", Value::from(false));
+-  options.insert("directory", Value::from(true));
+-  if let Some(title) = title.clone() {
+-    options.insert("title", Value::from(title));
+-  }
+-  let parent_window = parent_window.unwrap_or_default();
++  let args = open_file_args(parent_window.unwrap_or_default(), title, token);
+   let call = smol::spawn({
+     let connection = connection.clone();
+     async move {
+@@ -174,7 +166,7 @@
+           PORTAL_PATH,
+           Some(FILE_CHOOSER),
+           "OpenFile",
+-          &(&parent_window, &options),
++          &args,
+         )
+         .await
+     }
+@@ -244,6 +236,22 @@
+   }
+ }
+ 
++/// `org.freedesktop.portal.FileChooser.OpenFile` takes `(parent_window, title,
++/// options)`. Sending the title inside `options` left the portal reading the
++/// options dictionary as the title and the call without its third argument.
++fn open_file_args(
++  parent: String,
++  title: Option<String>,
++  token: String,
++) -> (String, String, HashMap<&'static str, Value<'static>>) {
++  let mut options = HashMap::new();
++  options.insert("handle_token", Value::from(token));
++  options.insert("modal", Value::from(true));
++  options.insert("multiple", Value::from(false));
++  options.insert("directory", Value::from(true));
++  (parent, title.unwrap_or_else(|| "Open folder".into()), options)
++}
++
+ enum Opened {
+   Reply(ashpd::zbus::Result<Message>),
+   Cancelled,
+@@ -678,6 +686,19 @@
+   use super::*;
+ 
+   #[test]
++  fn open_file_arguments_match_the_portal_signature() {
++    let (parent, title, options) = open_file_args("wayland:parent".into(), Some("Pick project".into()), "tok".into());
++    assert_eq!(parent, "wayland:parent");
++    assert_eq!(title, "Pick project");
++    assert!(!options.contains_key("title"));
++    assert_eq!(options.len(), 4);
++    let directory = options.get("directory").and_then(|value| value.downcast_ref::<bool>().ok());
++    assert_eq!(directory, Some(true));
++    assert_eq!(open_file_args(String::new(), None, "tok".into()).1, "Open folder");
++  }
++
++
++  #[test]
+   fn request_path_embeds_sender_and_token() {
+     assert_eq!(
+       expected_request_path(Some(":1.42".into()), "tok"),

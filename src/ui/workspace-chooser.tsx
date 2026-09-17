@@ -6,7 +6,8 @@ import { Composer } from './composer.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { matchSelectOptions, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { Icon } from './icons.tsx'
-import { pickWorkspaceDirectory } from './open-external.ts'
+import { useGpuixRequired } from '@gpuix/react'
+import { pickProjectDirectory } from './native-directory-picker.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -15,6 +16,7 @@ import { workspaceChoices } from './workspace-choices.ts'
 export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
 
   const layout = useResponsiveLayout()
+  const renderer = useGpuixRequired()
   const dropdown = useDropdownState()
   const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
@@ -34,7 +36,7 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
     setPicking(true)
     // Stay busy until the switch settles, not just until a path came back: releasing the picker on
     // selection let a second click start an overlapping switch to a different folder.
-    void pickWorkspaceDirectory().then(async (pick) => {
+    void pickProjectDirectory(renderer).then(async (pick) => {
       if (pick.error) controller.notify('error', pick.error)
       else if (pick.path) await controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
     }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => {

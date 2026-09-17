@@ -360,6 +360,38 @@ keys before any window sees them.
   than an error. Restoring the portal needs the native transport, which the installed addon already exposes
   (`openDirectoryDialog`) but whose declared patch calls `OpenFile` with 2 of the 3 required arguments: fix
   that patch, re-run `bun run setup:native`, then prefer the native dialog before these CLI pickers.
+## Project picker transport and Browser availability (2026-09-17)
+
+- **The runtime's portal call is corrected, not just declared.** `patches/zed/0002-portal-open-file-signature.patch`
+  fixes `FileChooser.OpenFile`, which `0001` called with two of its three arguments: the title sat inside
+  `options`, so the portal read that dictionary as the title and never received the options argument. Proven
+  against the pinned checkout, not inferred: `cargo check -p gpui_linux` compiles and
+  `cargo test -p gpui_linux --lib -- portal_file_chooser` reports 6 passed, with the new
+  `open_file_arguments_match_the_portal_signature` failing when the old option shape is restored.
+- **One picker transport for both entry points.** `src/ui/native-directory-picker.ts` prefers the runtime's
+  window-parented `openDirectoryDialog` and reaches the CLI pickers only when the runtime reports that no
+  dialog was opened (`safeToFallback`); a dismissal is a decision and never opens a second dialog. The web
+  build aliases the module to a shim. `sidebar.tsx` and `workspace-chooser.tsx` both call it, so a picker fix
+  lands in one place. Until `bun run setup:native` rebuilds the runtime, the CLI pickers are what run.
+- **CLI picker failures are visible.** `classifyPickerExit` reads exit 0/1 as a dismissal (kdialog's cancel)
+  and any other status as unavailable, so a picker that ran and failed is reported instead of silently
+  reading as a cancelled dialog.
+- **Browser is honest on Linux.** No embedded engine exists (macOS-gated backend), so the panel shows the
+  unavailable state instead of an empty address surface that looked like a broken browser, and a system-browser
+  launch that never started is reported. The web companion says "No embedded browser in this build" rather
+  than showing a placeholder that read as a ready host; `scripts/web-browser-probe.ts` asserts both.
+- **The TypeScript portal transport is gone.** `src/ui/portal-file-chooser.ts` and its 13 tests were the
+  gdbus/dbus-monitor seam that could not receive a portal response, and its request/response contract now
+  lives where the connection does (`crates/gpui_linux/src/portal_file_chooser.rs`, covered by the six
+  `cargo test -p gpui_linux` cases). Only `src/ui/open-external.ts` still reaches the CLI pickers.
+- **The web shim keeps the same contract.** `tests/web-open-external-shim.test.ts` pins
+  `openExternal`'s new boolean result (including a blocked popup) and host-only path picking, and
+  `tests/browser-panel-body.test.ts` pins the unavailable-precedence decision that the Linux desktop panel
+  depends on.
+- **A blank current thread is listed.** `syntheticActiveSession` shows the thread Pi is holding before it has
+  a message, so a freshly started thread no longer vanishes from the sidebar. With no session file and no
+  session id there is nothing to show and no row is added.
+
 - Native-renderer suites are a structural Linux skip, not a failure: the pinned gpuix test renderer is built
   for macOS and Windows only, so ~97 `bun test` skips per run are expected. `tests/helpers/native-renderer.ts`
   owns the gate and prints the reason once per run; do not read those skips as coverage.
