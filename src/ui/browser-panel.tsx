@@ -81,7 +81,6 @@ export function BrowserPanel({
           <BrowserEmptyState service={service} tab={activeTab} />
         ) : null}
         {!unavailable && activeTab?.error ? <BrowserError message={activeTab.error} onRetry={() => service.command(activeTab.id, 'reload')} /> : null}
-        {systemBrowser.failure ? <BrowserError testId="browser-external-error" message={systemBrowser.failure} /> : null}
         {/* Without an engine this is the whole surface: an address bar and a Loading tab
             promised browsing that could never start. */}
         {unavailable ? (
@@ -91,6 +90,8 @@ export function BrowserPanel({
             onOpenExternal={systemBrowser.open}
           />
         ) : null}
+        {/* Last, so the opaque unavailable surface cannot paint over a launch failure. */}
+        {systemBrowser.failure ? <BrowserError testId="browser-external-error" message={systemBrowser.failure} /> : null}
         {profileMenuOpen && activeTab ? (
           <ProfileMenu
             service={service}

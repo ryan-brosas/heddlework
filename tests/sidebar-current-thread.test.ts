@@ -23,6 +23,16 @@ describe('sidebar current thread', () => {
     expect(row).toMatchObject({ title: 'New thread', firstMessage: '(no messages)', messageCount: 0 })
   })
 
+  it('shows a thread identified only by its session id', () => {
+    const state = createInitialState('/tmp/project')
+    const row = syntheticActiveSession({
+      ...state,
+      messages: [],
+      session: { ...state.session, sessionId: 'session-3' },
+    })
+    expect(row).toMatchObject({ path: 'current:session-3', title: 'New thread', messageCount: 0 })
+  })
+
   it('shows nothing while Pi holds no thread and no message exists', () => {
     // The initial state is exactly that: no session file, no session id.
     expect(syntheticActiveSession(createInitialState('/tmp/project'))).toBeNull()

@@ -9,6 +9,14 @@ describe('browser panel body', () => {
     expect(browserPanelBody({ available: false, hasTab: false, hasUrl: false })).toBe('unavailable')
   })
 
+  it('renders a launch failure after the opaque unavailable surface', async () => {
+    // The unavailable surface covers the body, so an earlier sibling notice is painted over. Paint
+    // order cannot be observed without a native renderer, so the source order is the assertion.
+    const source = await Bun.file(new URL('../src/ui/browser-panel.tsx', import.meta.url)).text()
+    const body = source.slice(source.indexOf('testId="browser-panel-body"'))
+    expect(body.indexOf('browser-external-error')).toBeGreaterThan(body.indexOf('<BrowserUnavailable'))
+  })
+
   it('shows the surface, the empty state, or nothing once an engine is available', () => {
     expect(browserPanelBody({ available: true, hasTab: true, hasUrl: true })).toBe('surface')
     expect(browserPanelBody({ available: true, hasTab: true, hasUrl: false })).toBe('empty')

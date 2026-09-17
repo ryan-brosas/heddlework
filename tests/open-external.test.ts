@@ -132,6 +132,12 @@ describe('picker outcome classification', () => {
     expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/chosen'] })).toEqual({ kind: 'selected', path: '/tmp/chosen' })
   })
 
+  it('ignores output from a picker that exited with a failure status', async () => {
+    // kdialog prints diagnostics before failing; that text must not become the chosen folder.
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/not-chosen; exit 2'] })).toEqual({ kind: 'unavailable' })
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/chosen; exit 0'] })).toEqual({ kind: 'selected', path: '/tmp/chosen' })
+  })
+
   it('reads a dismissal from a picker that was dismissed without output', async () => {
     // kdialog exits 1 with no output when its dialog is dismissed: a decision, not a failure.
     expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 1'] })).toEqual({ kind: 'cancelled' })

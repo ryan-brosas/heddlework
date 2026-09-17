@@ -236,7 +236,9 @@ export async function runPickerCommand(
 ): Promise<DirectoryPickOutcome> {
   const result = await runBoundedCommand(picker.command, picker.args, timeoutMs)
   const selected = result.stdout.trim()
-  if (selected) return { kind: 'selected', path: resolve(selected) }
+  // Only a successful exit carries a selection. Output printed by a picker that then failed is not a
+  // chosen folder, and accepting it let a failing picker bypass its own exit status.
+  if (result.exitCode === 0 && selected) return { kind: 'selected', path: resolve(selected) }
   return classifyPickerExit(result.exitCode)
 }
 
