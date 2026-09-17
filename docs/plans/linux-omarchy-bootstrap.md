@@ -14,10 +14,31 @@
 - [x] `bun run check` green (517 passed, 0 failed; 101 structural native-renderer skips); `bun run build`
   matches the installed executable; the stubbed lane passes on the installed build with named skips; the
   live nested-Hyprland lane passes paste byte-for-byte and reports native copy as manual.
+- [x] Lane evidence re-measured after the merge (`af72318`, installed artifact `sha256=41f3f8b9…`): the live
+  nested-Hyprland lane reports 4 checks passed and 1 named manual skip, and the stub lane 4 passed with 10
+  named skips. The copy skip now says the runtime's missing-serial diagnostic is not observable on this
+  build; the copy verdict, and both clipboard stages, are decided by `scripts/linux-clipboard-live-evidence.ts`
+  so a failed or timed-out helper can no longer count as evidence.
 - [ ] Device-level acceptance on this machine's own Hyprland session: physical `Ctrl+V`/`Super+C` (including
   the `Ctrl+Insert` copy half, which no automated lane can stimulate) through the
   desktop launcher, the 150%/100% monitor pair, IME/accessibility, real Pi work, and PTY
   interruption/cleanup. Automated results do not check this box.
+
+### Physical acceptance record (operator, own session)
+
+Run `bun scripts/linux-artifact-check.ts` first and record its hash with every row below as **pass / fail /
+blocked**; a row without a hash is not evidence. Automated results never close these rows.
+
+| Gesture or check | Where | What counts as pass |
+| --- | --- | --- |
+| `Ctrl+V` -> `Shift+Insert` paste | composer | text lands at the caret exactly once, undo restores the previous draft |
+| Image-only clipboard paste | composer | exactly one attachment, draft preserved |
+| `Super+C` -> `Ctrl+Insert` copy | dragged transcript selection | `wl-paste --no-newline --type text` returns exactly the dragged text |
+| `Ctrl+Insert` copy | terminal selection | same, and zero PTY bytes are written |
+| Plain `Ctrl+C` | terminal | foreground process is interrupted, nothing is copied |
+| Move between 150% and 100% monitors | window | caret and selection still line up, no clipped chrome |
+| IME composition | composer | commit, cancel and no premature submit |
+| Session close | terminal | no child process survives the session |
 
 Scope: browser-free Omarchy daily use. Linux CEF, OS notifications and appearance/picker polish are
 separate follow-ups.
@@ -279,9 +300,11 @@ runtime's own paste action with `Ctrl+A`, `Ctrl+C`, `Ctrl+V`. The live lane on a
 passed with real helpers: `Shift+Insert` submitted exactly the text staged by `wl-copy`, a typed control
 message submitted exactly, and the recorded helper calls show the app reading only the image half.
 
-Its copy check is manual by necessity, and it now proves that instead of hiding it: the check stages a
-sentinel and proves the clipboard is not already the selection before pressing `Ctrl+Insert`, and the
-sentinel survived the gesture. The reason is in the pinned runtime, not in the application:
+Its copy check is manual by necessity, and it says which reason it can support: the check stages a sentinel
+and proves the clipboard is not already the selection before pressing `Ctrl+Insert`, and the sentinel
+survived the gesture. The reason is in the pinned runtime, not in the application - and the runtime's own
+warning is not visible in the application's stderr (no logger is wired to it), so the lane reports the
+reason as source-documented rather than measured:
 `SerialTracker::update` records a Wayland selection serial only from a real key or pointer press event
 (`crates/gpui_linux/src/linux/wayland/client.rs`), and `write_to_clipboard` returns early with "Skipping
 Wayland clipboard ownership request ..." when there is none, so a press delivered through the automation
