@@ -14,7 +14,10 @@ export class SingleFlight<T> {
     if (this.#current) return this.#current
     const attempt = start().catch((error: unknown) => {
       // A failed attempt must not be reused: the next caller retries instead of inheriting the failure.
-      this.#current = undefined
+      // Only this attempt is cleared (and only if it is still the current one): after `clear()` a newer
+      // attempt may already be running, and discarding it here would let a third one start alongside it,
+      // which is the double launch this class exists to prevent.
+      if (this.#current === attempt) this.#current = undefined
       throw error
     })
     this.#current = attempt

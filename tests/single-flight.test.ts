@@ -40,6 +40,22 @@ describe('single flight', () => {
     expect(attempts).toBe(1)
   })
 
+  it('does not discard a newer attempt when an older one fails', async () => {
+    const flight = new SingleFlight<string>()
+    let failFirst: (error: Error) => void = () => {}
+    const first = flight.run(() => new Promise<string>((_resolve, reject) => { failFirst = reject }))
+    const observed = first.catch(() => undefined)
+
+    // The owner gave up on the first attempt and a newer one is now running.
+    flight.clear()
+    const second = flight.run(() => new Promise<string>(() => {}))
+
+    failFirst(new Error('the first attempt failed'))
+    await observed
+    expect(flight.pending).toBe(true)
+    expect(flight.run(() => Promise.resolve('third'))).toBe(second)
+  })
+
   it('starts again once the attempt is cleared', async () => {
     const flight = new SingleFlight<number>()
     let starts = 0
