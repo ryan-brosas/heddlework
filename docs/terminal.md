@@ -118,6 +118,45 @@ The desktop runtime is provisioned with `bun run setup:native` from the immutabl
 
 The renderer still feature-detects `supportsNativeTerminal()` to choose the native painter or the portable grid fallback. This painter fallback does not substitute for installing a compatible desktop runtime.
 
+## Keyboard clipboard shortcuts
+
+The terminal keeps clipboard commands separate from PTY input:
+
+- **Copy:** `Ctrl+Shift+C` (Linux/Windows), `Command+C` (macOS), or `Ctrl+Insert`. Copy
+  writes zero PTY bytes, including when the clipboard write fails.
+- **Paste:** `Ctrl+V`, `Command+V`, or `Shift+Insert`. Paste reads the clipboard once and
+  preserves bracketed-paste wrapping when the terminal enabled DEC mode 2004.
+- **Interrupt:** plain `Ctrl+C` writes exactly one ETX byte and never copies. Whether that
+  byte becomes `SIGINT` depends on the PTY slave's foreground process group (`tpgid`), which
+  requires the child to own the controlling terminal.
+
+Copy is resolved before the interrupt branch: an unqualified `ctrl+c` test would otherwise
+swallow `Ctrl+Shift+C` and write ETX instead of copying. A failed copy reports one generic
+local message instead of failing silently, the next attempt clears it, and a stale or
+disposed completion cannot overwrite newer feedback. Neither the clipboard payload nor an
+exception detail is ever published.
+
+`src/terminal/keys.ts` owns the dispatch (`resolveTerminalCommand` and
+`dispatchTerminalKey`), which `TerminalView` calls directly. Clipboard I/O stays injectable
+through the view's `copy` and `readPaste` props, and the same dispatch runs over a real PTY
+in `tests/terminal-clipboard-pty.test.ts`, so the shortcut contract is verifiable without a
+compositor or a native renderer.
+
+### Clipboard helper completion
+
+On Linux `wl-copy` and `xclip` can fork a selection owner that inherits the helper's stdio,
+so waiting for every pipe to close leaves a successful write pending forever - which made
+terminal copy silently do nothing. `runClipboardProcess` therefore completes writers on the
+helper's own exit after a short bounded drain, while readers require both a successful exit
+and stdout end so a large payload cannot be truncated to what arrived inside the writer's
+drain window. Both directions are bounded in time and bytes, a failure returns no partial
+payload, and a helper that ignores `SIGTERM` is killed after a grace period. Wayland text
+reads request `--type text --no-newline`; X11 reads request `UTF8_STRING`.
+
+This section covers shortcut dispatch and the process runner only. Native caret-aware
+editing, clipboard-image attachment, and physical compositor acceptance are separate
+workstreams; the browser companion uses its clipboard shim instead of helper processes.
+
 ## Native frame pipeline
 
 The desktop renderer keeps framebuffer backgrounds and block graphics in one stable nearest-sampled atlas image. After the first paint, GPUIX prepares the newest packed frame at the NAPI boundary and compares only primitives that remain in the GPUI scene: shaped text, visible cursor, dimensions, and text geometry. Box-drawing backgrounds are excluded because the updated image already owns those pixels; foreground and glyph changes are not.

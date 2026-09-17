@@ -1,9 +1,10 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
-import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
+import { dispatchTerminalKey, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
-import { copyTextToClipboard } from './clipboard-media.ts'
+import { copyTextToClipboard, readClipboardText } from './clipboard-media.ts'
+import { createTerminalCopyAction, type TerminalCopy } from './terminal-copy-feedback.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
 import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
@@ -24,6 +25,8 @@ export const TerminalView = memo(function TerminalView({
   height,
   appearance,
   focusSerial = 1,
+  copy = copyTextToClipboard,
+  readPaste = readClipboardText,
 }: {
   service: TerminalSessionService
   sessionId: TerminalSessionId | undefined
@@ -32,6 +35,12 @@ export const TerminalView = memo(function TerminalView({
   height: number
   appearance: ResolvedTheme
   focusSerial?: number
+  copy?: TerminalCopy
+  /**
+   * Clipboard reader used by the paste shortcut. Injectable like `copy` so the paste half of the
+   * dispatch seam is regression-tested without a compositor or an OS clipboard.
+   */
+  readPaste?: (() => Promise<string | undefined>) | undefined
 }) {
   const projectionSuspensionRequested = useTerminalProjectionSuspended()
   const projectionSuspended = placement === 'right' && projectionSuspensionRequested
@@ -48,6 +57,22 @@ export const TerminalView = memo(function TerminalView({
   const sizeRef = useRef(size)
   sizeRef.current = size
   const inputId = useRef<number | undefined>(undefined)
+  // Terminal-local copy failure feedback. The action consumes the clipboard
+  // writer's outcome, publishes one generic local error on definite failure
+  // (never falling through to the PTY), and is withdrawn when the view, its session,
+  // or the injected writer changes so stale completions cannot publish state. One
+  // component instance serves every session, so the action is scoped to the session:
+  // a copy still in flight for the previous session cannot report over the new one,
+  // and the previous failure is not carried into the session that replaces it.
+  const [copyFailure, setCopyFailure] = useState<string | undefined>(undefined)
+  const copyAction = useMemo(
+    () => createTerminalCopyAction({ writer: copy, onFailure: setCopyFailure }),
+    [copy, sessionId],
+  )
+  useEffect(() => {
+    setCopyFailure(undefined)
+    return () => copyAction.dispose()
+  }, [copyAction])
 
   useEffect(() => {
     if (projectionSuspended || !sessionId || !sessionReady) return
@@ -71,34 +96,17 @@ export const TerminalView = memo(function TerminalView({
 
   const onKeyDown = useCallback((event: TerminalKeyEvent) => {
     if (!sessionId) return
-    const grid = service.grid(sessionId)
-    if (event.eventType === 'textInput' || event.eventType === 'paste') {
-      const text = event.keyChar ?? ''
-      if (text) service.write(sessionId, event.eventType === 'paste' ? wrapBracketedPaste(text, Boolean(grid?.bracketedPaste)) : text)
-      return
-    }
-    const key = (event.key ?? '').toLowerCase()
-    const mods = event.modifiers as { ctrl?: boolean; control?: boolean; alt?: boolean; cmd?: boolean; shift?: boolean } | undefined
-    const ctrl = Boolean(mods?.ctrl || mods?.control)
-    if (ctrl && !mods?.alt && (key === 'c' || key === 'ctrl-c' || key.endsWith('-c'))) {
-      service.write(sessionId, String.fromCharCode(3))
-      return
-    }
-    if (key === 'c' && (mods?.cmd || ctrl) && mods?.shift) {
-      void copyTextToClipboard(grid?.viewport.map((row) => row.text).join('\n') ?? '')
-      return
-    }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) {
-      void pasteClipboardText().then((text) => {
-        if (!text) return
-        service.write(sessionId, wrapBracketedPaste(text, Boolean(grid?.bracketedPaste)))
-      })
-      return
-    }
-    const encoded = encodeTerminalKey(event, grid?.applicationCursor)
-    if (!encoded) return
-    service.write(sessionId, encoded)
-  }, [service, sessionId])
+    // Shared production dispatch seam: resolves copy/paste/interrupt before
+    // terminal encoding so the exact handler body is regression-testable
+    // without a native GPUI renderer.
+    dispatchTerminalKey(event, {
+      platform: process.platform,
+      grid: service.grid(sessionId),
+      write: (data) => service.write(sessionId, data),
+      copy: copyAction.copy,
+      readPaste,
+    })
+  }, [copyAction, readPaste, service, sessionId])
 
   const onScroll = useCallback((event: { deltaY?: number }) => {
     if (!sessionId) return
@@ -163,6 +171,21 @@ export const TerminalView = memo(function TerminalView({
         onKeyDown={onKeyDown}
         onScroll={onScroll}
       />
+      {copyFailure ? (
+        <text
+          testId={'terminal-copy-failure-' + placement}
+          style={{
+            position: 'absolute',
+            left: TERMINAL_PADDING_X,
+            bottom: TERMINAL_PADDING_Y,
+            color: colors.diffDel,
+            fontSize: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          {copyFailure}
+        </text>
+      ) : null}
     </div>
   )
 })
@@ -281,29 +304,3 @@ const TerminalCursor = memo(function TerminalCursor({ x, y, color }: { x: number
     />
   )
 })
-
-async function pasteClipboardText(): Promise<string | undefined> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) return (await navigator.clipboard.readText()) || undefined
-    if (process.platform === 'darwin') {
-      const proc = Bun.spawn(['/usr/bin/pbpaste'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    if (process.platform === 'win32') {
-      const proc = Bun.spawn(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], { stdout: 'pipe' })
-      return (await new Response(proc.stdout).text()) || undefined
-    }
-    for (const command of [['wl-paste'], ['xclip', '-selection', 'clipboard', '-o']] as const) {
-      try {
-        const proc = Bun.spawn(command as unknown as string[], { stdout: 'pipe' })
-        const text = await new Response(proc.stdout).text()
-        if (text) return text
-      } catch {
-        continue
-      }
-    }
-  } catch {
-    return undefined
-  }
-  return undefined
-}
