@@ -29,6 +29,14 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
+export async function readClipboardText(): Promise<string | undefined> {
+  try {
+    return (await navigator.clipboard.readText()) || undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function editorTextAfterImagePaste(previous: string, current: string): string {
   if (previous === current) return current
   let prefix = 0
