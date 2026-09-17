@@ -16,9 +16,12 @@ export interface ParsedKeyChord {
 }
 
 export function parseKeyChord(chord: string | undefined): ParsedKeyChord {
-  const tokens = (chord ?? '').toLowerCase().split(/[+-]/).filter(Boolean)
+  const text = (chord ?? '').toLowerCase()
+  const tokens = text.split(/[+-]/).filter(Boolean)
   const modifiers = { ctrl: false, alt: false, cmd: false, shift: false }
-  if (tokens.length <= 1) return { key: tokens[0] ?? '', modifiers }
+  // With nothing to split there is no chord: the original text is the key. Falling back to the empty
+  // token would drop a lone separator character, so a plain "+" or "-" must survive as itself.
+  if (tokens.length <= 1) return { key: tokens[0] ?? text, modifiers }
   for (const token of tokens.slice(0, -1)) {
     if (token === 'ctrl' || token === 'control') modifiers.ctrl = true
     else if (token === 'alt' || token === 'option') modifiers.alt = true

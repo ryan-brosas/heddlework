@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { VtEmulator } from '../src/terminal/vt.ts'
 import { dispatchTerminalKey, encodeTerminalKey, resolveTerminalCommand, wrapBracketedPaste, type TerminalKeyEffects, type TerminalKeyEvent } from '../src/terminal/keys.ts'
 import { createTerminalCopyAction, TERMINAL_COPY_FAILED_MESSAGE } from '../src/ui/terminal-copy-feedback.ts'
 
@@ -21,6 +22,15 @@ describe('encodeTerminalKey', () => {
   it('lets the view handle copy and paste shortcuts', () => {
     expect(encodeTerminalKey({ key: 'c', modifiers: { cmd: true } })).toBeUndefined()
     expect(encodeTerminalKey({ key: 'v', modifiers: { cmd: true } })).toBeUndefined()
+  })
+
+  it('encodes literal separator keys with or without keyChar', () => {
+    for (const key of ['+', '-']) {
+      expect(encodeTerminalKey({ key })).toBe(key)
+      expect(encodeTerminalKey({ key, keyChar: key })).toBe(key)
+      expect(encodeTerminalKey({ key, modifiers: { alt: true } })).toBe(ESC + key)
+      expect(encodeTerminalKey({ key, modifiers: { shift: true } })).toBe(key)
+    }
   })
 
   it('wraps bracketed paste when the emulator enabled it', () => {
@@ -89,6 +99,26 @@ describe('dispatchTerminalKey (shared production seam)', () => {
     expect(writes).toEqual([])
   })
 
+  it('copies viewport content without trailing blank rows, preserving indentation and interior blanks', () => {
+    const vt = new VtEmulator(24, 8)
+    vt.write('\r\n  alpha  \r\n\r\n    beta\r\n')
+    for (const event of [{ key: 'ctrl-shift-c' }, { key: 'ctrl-insert' }]) {
+      const { writes, copies } = run(event, { grid: vt.snapshot() })
+      expect(copies).toEqual(['\n  alpha\n\n    beta'])
+      expect(writes).toEqual([])
+    }
+  })
+
+  it('leaves the clipboard untouched for missing or empty viewports', () => {
+    for (const grid of [undefined, { viewport: [] }, new VtEmulator(24, 8).snapshot()]) {
+      for (const event of [{ key: 'ctrl-shift-c' }, { key: 'ctrl-insert' }]) {
+        const { writes, copies } = run(event, { grid })
+        expect(copies).toEqual([])
+        expect(writes).toEqual([])
+      }
+    }
+  })
+
   it('plain Ctrl+C writes exactly one ETX and never copies', () => {
     const { writes, copies } = run({ key: 'c', modifiers: { ctrl: true } })
     expect(writes).toEqual([String.fromCharCode(3)])
@@ -96,8 +126,11 @@ describe('dispatchTerminalKey (shared production seam)', () => {
   })
 
   it('ordinary keys fall through to encoding unchanged', () => {
-    const { writes } = run({ key: 'x' })
-    expect(writes).toEqual(['x'])
+    for (const key of ['x', '+', '-']) {
+      const { writes, copies } = run({ key })
+      expect(writes).toEqual([key])
+      expect(copies).toEqual([])
+    }
   })
 
   it('keeps application-cursor mode intact', () => {
