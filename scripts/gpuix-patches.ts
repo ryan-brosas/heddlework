@@ -107,22 +107,35 @@ export function runtimeSourceFingerprint(directory: string, paths: readonly stri
 }
 
 /**
- * Reverse declared patches in a temporary index of the actual build inputs. Any remaining delta is
- * unexplained, even if it shares a file with a legitimate patch. The user's index/files are untouched.
+ * Run `body` against a temporary Git index seeded with this checkout's build inputs.
+ *
+ * Every patch-set question here needs the same view - `read-tree HEAD` plus the working-tree state
+ * of the declared paths - and the same guarantee that the user's own index and files stay untouched.
+ * Building it once keeps the two checks from drifting apart.
  */
-export function assertDeclaredSource(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
-  const scratch = mkdtempSync(join(tmpdir(), 'heddlework-source-index-'))
+function withScratchIndex<T>(directory: string, paths: readonly string[], body: (environment: NodeJS.ProcessEnv) => T): T {
+  const scratch = mkdtempSync(join(tmpdir(), 'heddlework-patch-index-'))
   const environment = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') }
   try {
     git(directory, ['read-tree', 'HEAD'], environment)
     const existingPaths = paths.filter((path) => existsSync(resolve(directory, path)) || git(directory, ['ls-files', '--', path]).length > 0)
     if (existingPaths.length > 0) git(directory, ['add', '-A', '--', ...existingPaths], environment)
-    for (const patch of [...patches].reverse()) git(directory, ['apply', '--cached', '--reverse', patch.path], environment)
-    const changed = git(directory, ['diff', '--cached', '--name-only', 'HEAD', '--', ...paths], environment).toString().trim()
-    if (changed) throw new Error(`Undeclared runtime source changes in ${directory}:\n${changed}\nPreserve these changes and declare a patch, or use a separate clean source checkout.`)
+    return body(environment)
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
+}
+
+/**
+ * Reverse declared patches in a temporary index of the actual build inputs. Any remaining delta is
+ * unexplained, even if it shares a file with a legitimate patch. The user's index/files are untouched.
+ */
+export function assertDeclaredSource(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[] = RUNTIME_SOURCE_PATHS): void {
+  withScratchIndex(directory, paths, (environment) => {
+    for (const patch of [...patches].reverse()) git(directory, ['apply', '--cached', '--reverse', patch.path], environment)
+    const changed = git(directory, ['diff', '--cached', '--name-only', 'HEAD', '--', ...paths], environment).toString().trim()
+    if (changed) throw new Error(`Undeclared runtime source changes in ${directory}:\n${changed}\nPreserve these changes and declare a patch, or use a separate clean source checkout.`)
+  })
 }
 
 /**
@@ -132,18 +145,13 @@ export function assertDeclaredSource(directory: string, patches: readonly Runtim
  * correct once two patches touch one file, and it leaves the working tree and the user's index untouched.
  */
 function declaredSetIsApplied(directory: string, patches: readonly RuntimeSourcePatch[], paths: readonly string[]): boolean {
-  const scratch = mkdtempSync(join(tmpdir(), 'heddlework-applied-index-'))
-  const environment = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') }
   try {
-    git(directory, ['read-tree', 'HEAD'], environment)
-    const existingPaths = paths.filter((path) => existsSync(resolve(directory, path)) || git(directory, ['ls-files', '--', path]).length > 0)
-    if (existingPaths.length > 0) git(directory, ['add', '-A', '--', ...existingPaths], environment)
-    for (const patch of [...patches].reverse()) git(directory, ['apply', '--cached', '--reverse', patch.path], environment)
-    return true
+    return withScratchIndex(directory, paths, (environment) => {
+      for (const patch of [...patches].reverse()) git(directory, ['apply', '--cached', '--reverse', patch.path], environment)
+      return true
+    })
   } catch {
     return false
-  } finally {
-    rmSync(scratch, { recursive: true, force: true })
   }
 }
 
