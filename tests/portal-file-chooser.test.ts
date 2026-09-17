@@ -170,10 +170,12 @@ describe('portal response ownership', () => {
 })
 
 describe('portal response completeness', () => {
-  it('holds an unterminated body back and reads a closed one, ignoring brackets inside a quoted name', () => {
+  it('holds a success record back until its body closes, and accepts a code-only dismissal', () => {
     const header = signalHeader('heddlework_complete')
-    expect(portalResponseRecordIsComplete([header, '   uint32 0', '   array [', '      dict entry('].join('\n'))).toBe(false)
-    expect(portalResponseRecordIsComplete([header, '   uint32 1'].join('\n'))).toBe(true)
+    // A success carries the selection in its body, so the code line alone is balanced but empty.
+    expect(portalResponseRecordIsComplete([header, '   uint32 0'].join('\n'), 0)).toBe(false)
+    expect(portalResponseRecordIsComplete([header, '   uint32 0', '   array [', '      dict entry('].join('\n'), 0)).toBe(false)
+    expect(portalResponseRecordIsComplete([header, '   uint32 1'].join('\n'), 1)).toBe(true)
     expect(portalResponseRecordIsComplete([
       header,
       '   uint32 0',
@@ -185,18 +187,32 @@ describe('portal response completeness', () => {
       '            ]',
       '      )',
       '   ]',
-    ].join('\n'))).toBe(true)
+    ].join('\n'), 0)).toBe(true)
   })
 
-  it('reports the selection when the URI arrives in a chunk after the response code', async () => {
-    // dbus-monitor flushes a record in pieces; the code and the selection can land in separate writes,
-    // which is exactly what a repo dialog does under load. Settling on the code alone lost the folder.
-    const script = [
-      `printf '%s\\n' "signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/\$1; interface=org.freedesktop.portal.Request; member=Response"`,
-      `printf '%s\\n' '   uint32 0' '' '   array [' '' '      dict entry(' '' '         string "uris"'`,
-      `sleep 0.4`,
-      `printf '%s\\n' '         variant             array [' '' '               string "file:///tmp/split-project"' '' '            ]' '' '      )' '' '   ]'`,
-    ].join('\n')
+  it('waits for a body that arrives after the response code', async () => {
+    // One stdout write per element, with the handle token expanded from $1.
+    const writes = [
+      ['"signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/$1; interface=org.freedesktop.portal.Request; member=Response"', "'   uint32 0'"],
+      ["'   array ['", "''", "'      dict entry('", "''", "'         string \"uris\"'", "''", "'         variant             array ['", "''", "'               string \"file:///tmp/split-project\"'", "''", "'            ]'", "''", "'      )'", "''", "'   ]'"],
+    ]
+    const script = writes
+      .map((args, index) => "printf '%s\\n' " + args.join(' ') + (index < writes.length - 1 ? '\nsleep 0.4' : ''))
+      .join('\n')
+    const token = 'heddlework_split_body'
+    const capture = await runPortalMonitor('/bin/sh', ['-c', script, 'heddlework-probe', token], 5_000, token, new AbortController().signal)
+    // Settling on the first write would return a record with no URI at all.
+    expect(capture ?? '').toContain('file:///tmp/split-project')
+  }, 10_000)
+
+  it('reports the selection through requestPortalDirectory when the URI trails the code', async () => {
+    const writes = [
+      ['"signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/$1; interface=org.freedesktop.portal.Request; member=Response"', "'   uint32 0'"],
+      ["'   array ['", "''", "'      dict entry('", "''", "'         string \"uris\"'", "''", "'         variant             array ['", "''", "'               string \"file:///tmp/split-project\"'", "''", "'            ]'", "''", "'      )'", "''", "'   ]'"],
+    ]
+    const script = writes
+      .map((args, index) => "printf '%s\\n' " + args.join(' ') + (index < writes.length - 1 ? '\nsleep 0.4' : ''))
+      .join('\n')
     const result = await requestPortalDirectory({
       run: async (_command, args) => {
         const opened = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]

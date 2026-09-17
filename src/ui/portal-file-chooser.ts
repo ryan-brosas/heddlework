@@ -189,17 +189,23 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
 /**
  * Whether a Response record has arrived in full.
  *
- * dbus-monitor streams a signal body in whatever chunks its stdout flushes, so the response code
- * (uint32 0) routinely arrives in an earlier chunk than the file URI carrying the selection.
- * Settling on the code alone returned a record with no URI, which the picker reported as "returned
- * no selection" and then papered over with a second, CLI dialog. A body is complete once its
- * bracketed structure closes; quoted strings are skipped because a folder name may contain brackets.
+ * dbus-monitor streams a signal body in whatever chunks its stdout flushes, so a record can arrive in
+ * pieces, and a success response carries its selection in the body: a record that ends right after
+ * `uint32 0` is balanced but empty, and settling there reported "no selection" for a folder the user had
+ * just picked. A dismissal (code 1) or any other non-success code carries no body, so its code line is
+ * the whole record. A body is complete once its bracketed structure closes; quoted strings are skipped
+ * because a folder name may contain brackets.
  */
-export function portalResponseRecordIsComplete(record: string): boolean {
+export function portalResponseRecordIsComplete(record: string, responseCode: number): boolean {
+  // Only the body counts. The signal header carries `dest=(unset)`, which is not structure, so scanning
+  // the whole record made the code line look like a closed body and let the monitor settle early again.
+  const bodyStart = record.indexOf('\n')
+  const body = bodyStart === -1 ? '' : record.slice(bodyStart + 1)
   let depth = 0
+  let bodyOpened = false
   let quote: string | undefined
   let escaped = false
-  for (const character of record) {
+  for (const character of body) {
     if (escaped) {
       escaped = false
       continue
@@ -213,12 +219,17 @@ export function portalResponseRecordIsComplete(record: string): boolean {
       quote = character
       continue
     }
-    if (character === '[' || character === '(') depth += 1
-    else if (character === ']' || character === ')') depth -= 1
+    if (character === '[' || character === '(') {
+      bodyOpened = true
+      depth += 1
+    } else if (character === ']' || character === ')') depth -= 1
   }
   // An unbalanced close is a malformed record, not a reason to keep waiting: call it complete and let
   // the caller's own validation reject it, instead of holding a dialog open to the session timeout.
-  return depth <= 0 && quote === undefined
+  if (depth > 0 || quote !== undefined) return false
+  // A success carries its selection in the body, so its code line alone is not a complete record; a
+  // dismissal (or any other code) carries no body at all.
+  return responseCode !== 0 || bodyOpened
 }
 
 // dbus-monitor is a long-lived stream: it never exits on its own, so we read
@@ -269,7 +280,10 @@ export function runPortalMonitor(
       chunks.push(Buffer.from(c))
       const output = Buffer.concat(chunks).toString('utf8')
       const record = portalSignalForToken(output, token)
-      if (record !== undefined && extractResponseCode(record) !== undefined && portalResponseRecordIsComplete(record)) done(record)
+      if (record === undefined) return
+      const code = extractResponseCode(record)
+      // Settle only on a complete record: a success code can be flushed before the selection it carries.
+      if (code !== undefined && portalResponseRecordIsComplete(record, code)) done(record)
     })
 
     stderr.on('data', () => {})
