@@ -1,8 +1,3 @@
-/**
- * Parse a keystroke that may carry its modifiers inside the key string (`shift-insert`) or
- * separately (see `InsertKeyEvent.modifiers`). One owner for that split: the terminal encoder and the
- * insert-key clipboard policy both depend on the same reading.
- */
 export interface KeyChordModifiers {
   readonly ctrl: boolean
   readonly alt: boolean
@@ -15,6 +10,11 @@ export interface ParsedKeyChord {
   readonly modifiers: KeyChordModifiers
 }
 
+/**
+ * Parse case-insensitive modifier names separated by `+` or `-` from a key string.
+ * Lone `+` and `-` keys stay literal; absent input produces an empty key.
+ * The terminal encoder and insert-key policy combine these modifiers with explicit event modifiers.
+ */
 export function parseKeyChord(chord: string | undefined): ParsedKeyChord {
   const text = (chord ?? '').toLowerCase()
   const tokens = text.split(/[+-]/).filter(Boolean)
