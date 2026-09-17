@@ -5,7 +5,7 @@ import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { DiffPanel } from './diff-panel.tsx'
 import { notifyFailure } from './failure-notice.ts'
 import { useOptionalBrowserService } from './browser-context.tsx'
-import { BrowserPanel } from './browser-panel.tsx'
+import { BrowserHostUnavailableSurface, BrowserPanel } from './browser-panel.tsx'
 import {
   workbenchUiRegistryToken,
   type WorkbenchSurfaceContribution,
@@ -50,7 +50,9 @@ const terminalDescriptor: SurfaceDescriptor = { id: 'terminal', title: 'Terminal
 
 function BrowserSurface(props: WorkbenchSurfaceProps) {
   const service = useOptionalBrowserService()
-  if (!service) return <SurfaceFallback {...props} descriptor={browserDescriptor} />
+  // No browser host in this build (the web companion): say so rather than showing a placeholder
+  // that reads as a ready host.
+  if (!service) return <BrowserHostUnavailableSurface {...props} />
   return <BrowserPanel service={service} {...surfaceChrome(props)} onNewSurface={props.onNewSurface} />
 }
 

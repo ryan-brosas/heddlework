@@ -8,7 +8,7 @@ import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
-import { pickWorkspaceDirectory } from './open-external.ts'
+import { pickProjectDirectory } from './native-directory-picker.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
@@ -191,7 +191,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
             disabled={pickingProject}
             onClick={() => {
               setPickingProject(true)
-              void pickWorkspaceDirectory().then((pick) => {
+              void pickProjectDirectory(renderer).then((pick) => {
                 if (pick.error) controller.notify('error', pick.error)
                 else if (pick.path) void controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
               }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => setPickingProject(false))
@@ -320,8 +320,16 @@ function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expa
   )
 }
 
-function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
-  if (state.messages.length === 0) return null
+/**
+ * The thread Pi is actually holding, even before it has a message.
+ *
+ * A session's file is absent only while nothing has been persisted, which is the one case with
+ * nothing to show. Once Pi holds an open thread, hiding it left a freshly started thread
+ * invisible in the sidebar.
+ */
+export function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
+  const identity = state.session.sessionFile ?? state.session.sessionId
+  if (state.messages.length === 0 && !identity) return null
   const firstUser = state.messages.find((message) => message.role === 'user')
   const firstMessage = firstUser ? contentText(firstUser.content).trim() : ''
   return {

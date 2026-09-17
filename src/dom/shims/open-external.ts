@@ -3,18 +3,19 @@
 export interface DirectoryPickerCommand { command: string; args: string[] }
 export interface WorkspaceDirectoryPick { path?: string; error?: string }
 
-export function openExternal(url: string): void {
+export function openExternal(url: string): Promise<boolean> {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    return
+    return Promise.resolve(false)
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
-  window.open(parsed.href, '_blank', 'noopener,noreferrer')
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return Promise.resolve(false)
+  // A blocked popup is a real failure the caller may report.
+  return Promise.resolve(window.open(parsed.href, '_blank', 'noopener,noreferrer') !== null)
 }
 
-export function openPath(_path: string): void {}
+export function openPath(_path: string): Promise<boolean> { return Promise.resolve(false) }
 
 export function directoryPickerCommand(): DirectoryPickerCommand | undefined { return undefined }
 export function directoryPickerCommands(): DirectoryPickerCommand[] { return [] }

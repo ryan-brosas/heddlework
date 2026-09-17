@@ -32,6 +32,9 @@ export function BrowserPanel({
   const activeTab = snapshot.tabs.find((tab) => tab.id === activeId)
   const profile = snapshot.profiles.find((candidate) => candidate.id === activeTab?.profileId)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const systemBrowser = useSystemBrowser()
+  const unavailable = !snapshot.engine.available
+  const body = browserPanelBody({ available: !unavailable, hasTab: Boolean(activeTab), hasUrl: Boolean(activeTab?.url) })
 
   useEffect(() => { service.ensureTab() }, [service])
 
@@ -64,6 +67,7 @@ export function BrowserPanel({
         service={service}
         tab={activeTab}
         profile={profile}
+        onOpenExternal={systemBrowser.open}
         profileMenuOpen={profileMenuOpen}
         onToggleProfileMenu={() => {
           if (profileMenuOpen && activeId) service.command(activeId, 'focus')
@@ -71,14 +75,21 @@ export function BrowserPanel({
         }}
       />
       <div testId="browser-panel-body" style={{ position: 'relative', flexGrow: 1, minHeight: 0, overflow: 'hidden', backgroundColor: colors.card }}>
-        {activeTab && activeTab.url ? (
+        {body === 'surface' && activeTab ? (
           <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
-        ) : (
+        ) : body === 'empty' && activeTab ? (
           <BrowserEmptyState service={service} tab={activeTab} />
-        )}
-        {activeTab?.error ? <BrowserError message={activeTab.error} onRetry={() => service.command(activeTab.id, 'reload')} /> : null}
-        {!snapshot.engine.available && activeTab?.url ? (
-          <BrowserUnavailable message={snapshot.engine.message} url={activeTab.url} />
+        ) : null}
+        {!unavailable && activeTab?.error ? <BrowserError message={activeTab.error} onRetry={() => service.command(activeTab.id, 'reload')} /> : null}
+        {systemBrowser.failure ? <BrowserError testId="browser-external-error" message={systemBrowser.failure} /> : null}
+        {/* Without an engine this is the whole surface: an address bar and a Loading tab
+            promised browsing that could never start. */}
+        {unavailable ? (
+          <BrowserUnavailable
+            message={snapshot.engine.message}
+            {...(activeTab?.url ? { url: activeTab.url } : {})}
+            onOpenExternal={systemBrowser.open}
+          />
         ) : null}
         {profileMenuOpen && activeTab ? (
           <ProfileMenu
@@ -95,16 +106,77 @@ export function BrowserPanel({
   )
 }
 
+/**
+ * What the panel body shows. Unavailable wins outright: an empty address surface and a "Loading…" tab
+ * both promised browsing that could never start.
+ */
+export function browserPanelBody(options: { available: boolean; hasTab: boolean; hasUrl: boolean }): 'unavailable' | 'surface' | 'empty' | 'none' {
+  if (!options.available) return 'unavailable'
+  if (!options.hasTab) return 'none'
+  return options.hasUrl ? 'surface' : 'empty'
+}
+
+/** The system browser is the user's own profile: Heddlework's browser is not involved. */
+const SYSTEM_BROWSER_CAVEAT = "Opens in your own browser, not Heddlework's sandboxed profiles."
+
+/**
+ * One shared external-browser action for the toolbar and the unavailable panel.
+ *
+ * A launch that never started used to be invisible: the click did nothing and the surface looked
+ * broken rather than unsupported.
+ */
+function useSystemBrowser(): { failure: string | undefined; open(url: string): void } {
+  const [failure, setFailure] = useState<string | undefined>(undefined)
+  const open = useCallback((url: string) => {
+    setFailure(undefined)
+    void openExternal(url).then((launched) => {
+      if (!launched) setFailure(`Could not open ${browserDisplayAddress(url) || url} in your system browser`)
+    })
+  }, [])
+  return { failure, open }
+}
+
+/**
+ * The Browser surface for a build with no native browser host at all (the web companion).
+ *
+ * It replaces a placeholder that read as "the host is ready", which promised embedded browsing in a
+ * client that has none.
+ */
+export function BrowserHostUnavailableSurface(props: WorkbenchSurfaceProps) {
+  return (
+    <div testId="browser-surface-unavailable" style={rightPanelStyle(props.fullscreen, props.panelWidth)}>
+      <RightPanelHeader
+        icon="globe"
+        title="Browser"
+        compact
+        fullscreen={props.fullscreen}
+        {...(props.fullscreenProgress === undefined ? {} : { fullscreenProgress: props.fullscreenProgress })}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+        onNew={props.onNewSurface}
+        onToggleFullscreen={props.onToggleFullscreen}
+        onClose={props.onClose}
+      />
+      <div style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, backgroundColor: colors.card }}>
+        <Icon name="globe" size={26} color={colors.textFaint} />
+        <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>No embedded browser in this build</text>
+        <text style={{ maxWidth: 330, color: colors.textMuted, fontSize: 10, lineHeight: 16, textAlign: 'center' }}>Browsing inside Heddlework needs the desktop app's native browser host. Open the address in your own browser instead.</text>
+      </div>
+    </div>
+  )
+}
+
 function BrowserToolbar({
   service,
-  tab,
   profile,
+  tab,
+  onOpenExternal,
   profileMenuOpen,
   onToggleProfileMenu,
 }: {
   service: BrowserSessionService
   tab?: BrowserTab | undefined
   profile?: BrowserProfile | undefined
+  onOpenExternal(url: string): void
   profileMenuOpen: boolean
   onToggleProfileMenu(): void
 }) {
@@ -140,7 +212,7 @@ function BrowserToolbar({
         <Icon name={profile?.kind === 'private' ? 'lock' : 'circle'} size={10} color={profile?.kind === 'workspace' ? colors.primary : colors.textFaint} />
         <text style={{ minWidth: 0, color: colors.textMuted, fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{profile?.name ?? 'Profile'}</text>
       </div>
-      <IconButton icon="globe" label="Open in system browser" testId="browser-open-external" disabled={!tab?.url} onClick={() => tab?.url && openExternal(tab.url)} />
+      <IconButton icon="globe" label="Open in system browser" testId="browser-open-external" disabled={!tab?.url} onClick={() => tab?.url && onOpenExternal(tab.url)} />
     </div>
   )
 }
@@ -187,23 +259,24 @@ function BrowserEmptyState({ service, tab }: { service: BrowserSessionService; t
   )
 }
 
-function BrowserError({ message, onRetry }: { message: string; onRetry(): void }) {
+function BrowserError({ message, onRetry, testId = 'browser-error' }: { message: string; onRetry?(): void; testId?: string }) {
   return (
-    <div testId="browser-error" style={{ position: 'absolute', left: 18, right: 18, bottom: 18, minHeight: 44, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.popover }}>
+    <div testId={testId} style={{ position: 'absolute', left: 18, right: 18, bottom: 18, minHeight: 44, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.popover }}>
       <Icon name="circle" size={12} color={colors.error} />
       <text style={{ minWidth: 0, flexGrow: 1, color: colors.textMuted, fontSize: 10, lineHeight: 15 }}>{message}</text>
-      <Button label="Retry" compact onClick={onRetry} />
+      {onRetry ? <Button label="Retry" compact onClick={onRetry} /> : null}
     </div>
   )
 }
 
-function BrowserUnavailable({ message, url }: { message: string; url: string }) {
+function BrowserUnavailable({ message, url, onOpenExternal }: { message: string; url?: string | undefined; onOpenExternal(url: string): void }) {
   return (
     <div testId="browser-unavailable" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, backgroundColor: colors.card }}>
       <Icon name="globe" size={26} color={colors.textFaint} />
       <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Native browser unavailable</text>
       <text style={{ maxWidth: 330, color: colors.textMuted, fontSize: 10, lineHeight: 16, textAlign: 'center' }}>{message}</text>
-      <Button label="Open in system browser" compact icon="globe" onClick={() => openExternal(url)} />
+      <text style={{ maxWidth: 330, color: colors.textFaint, fontSize: 9, lineHeight: 15, textAlign: 'center' }}>{SYSTEM_BROWSER_CAVEAT}</text>
+      {url ? <Button label="Open in system browser" compact icon="globe" onClick={() => onOpenExternal(url)} /> : null}
     </div>
   )
 }

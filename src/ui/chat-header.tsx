@@ -12,9 +12,21 @@ import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
+/**
+ * Hand a path to the system file manager, reporting a launch that never started.
+ *
+ * A folder that never reached the file manager used to look like a dead button; the browser panel
+ * reports the same failure the same way.
+ */
+function openExternally(controller: WorkbenchService, path: string, failure: string): void {
+  void openPath(path).then((opened) => {
+    if (!opened) controller.notify('error', failure)
+  })
+}
+
 async function exportTranscript(controller: WorkbenchService): Promise<void> {
   const path = await controller.exportSession()
-  if (path) openPath(path)
+  if (path) openExternally(controller, path, 'Could not open the exported transcript')
 }
 
 export function ChatHeader({
@@ -59,12 +71,12 @@ export function ChatHeader({
         <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} />
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
-            <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
+            <IconButton testId="header-open" icon="box" label="Open" onClick={() => openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')} />
             <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
           </>
         ) : (
           <>
-            <Button testId="header-open" label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
+            <Button testId="header-open" label="Open" icon="box" compact onClick={() => openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')} />
             <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller).catch(notifyFailure(controller, 'Could not export the transcript'))} />
           </>
         ))}
@@ -92,7 +104,7 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
         if (value === 'new') void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread'))
-        if (value === 'open') openPath(state.workspacePath)
+        if (value === 'open') openExternally(controller, state.workspacePath, 'Could not open this folder in your file manager')
         if (value === 'clone') void controller.cloneSession().catch(notifyFailure(controller, 'Could not clone the thread'))
         if (value === 'compact') void controller.compact().catch(notifyFailure(controller, 'Could not compact the session'))
         if (value === 'refresh') void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))

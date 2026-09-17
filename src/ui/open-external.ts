@@ -14,9 +14,11 @@ export const PICKER_TIMEOUT_MS = 5 * 60_000
  * calling connection, and gdbus call exits as soon as it prints the request handle, so the response is
  * dropped and the picker waited out its whole session budget. Measured 2026-09-17 on Omarchy: the portal
  * dialog opens, and a session-wide line-buffered monitor sees no Response signal at all - neither while
- * the dialog is up nor after the compositor dismisses it. portal-file-chooser.ts keeps that
- * request/response contract for the day the native runtime owns the connection (the installed addon
- * already exposes openDirectoryDialog); until then the CLI pickers below are the transport that answers.
+ * the dialog is up nor after the compositor dismisses it. The request/response contract now lives with
+ * the connection that owns it: `crates/gpui_linux/src/portal_file_chooser.rs` (declared by
+ * `patches/zed/0002-portal-open-file-signature.patch`) issues the portal call, and
+ * `src/ui/native-directory-picker.ts` is what reaches it. The CLI pickers below answer only when the
+ * runtime reported that no dialog was opened.
  */
 
 
@@ -25,19 +27,26 @@ export interface DirectoryPickerCommand {
   args: string[]
 }
 
-export function openExternal(url: string): void {
+/** The launcher a call may override; tests use it to prove the reporting without starting a browser. */
+export interface OpenTargetOptions {
+  command?: DirectoryPickerCommand
+}
+
+/** Whether a target reached the system opener. Resolves false when it never started, so the
+ *  surface that offered the action can say so instead of leaving a click with no effect. */
+export async function openExternal(url: string, options: OpenTargetOptions = {}): Promise<boolean> {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    return
+    return false
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
-  openSystemTarget(parsed.href)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  return openSystemTarget(parsed.href, options)
 }
 
-export function openPath(path: string): void {
-  openSystemTarget(resolve(path))
+export function openPath(path: string, options: OpenTargetOptions = {}): Promise<boolean> {
+  return openSystemTarget(resolve(path), options)
 }
 
 export function directoryPickerCommand(platform: NodeJS.Platform = process.platform): DirectoryPickerCommand | undefined {
@@ -103,15 +112,25 @@ export function systemTargetCommand(target: string, platform: NodeJS.Platform = 
   return { command: 'xdg-open', args: [target] }
 }
 
-function openSystemTarget(target: string): void {
-  const launch = systemTargetCommand(target)
-  try {
-    const child = spawn(launch.command, launch.args, { stdio: 'ignore', detached: true, windowsHide: true })
-    child.on('error', () => {})
-    child.unref()
-  } catch {
-    // External launch failures are non-fatal and leave the current surface open.
-  }
+function openSystemTarget(target: string, options: OpenTargetOptions = {}): Promise<boolean> {
+  const launch = options.command ?? systemTargetCommand(target)
+  return new Promise((resolveLaunched) => {
+    let settled = false
+    const finish = (launched: boolean) => {
+      if (settled) return
+      settled = true
+      resolveLaunched(launched)
+    }
+    try {
+      const child = spawn(launch.command, launch.args, { stdio: 'ignore', detached: true, windowsHide: true })
+      // A missing opener reports through 'error'; 'spawn' means the system took it.
+      child.on('error', () => finish(false))
+      child.on('spawn', () => { child.unref(); finish(true) })
+    } catch {
+      // External launch failures are non-fatal and leave the current surface open.
+      finish(false)
+    }
+  })
 }
 
 /** Grace between the soft and hard kill of a picker that overran its bound. */
@@ -177,6 +196,19 @@ function runBoundedCommand(command: string, args: string[], timeoutMs: number): 
   })
 }
 
+/**
+ * One picker's exit status, or undefined when it never ended inside its bound.
+ *
+ * kdialog reports a dismissal as exit 1, so 1 and 0 are decisions. Any other status is the picker
+ * failing to do its job - letting it read as a dismissal silently swallowed the failure and left
+ * `Open project` looking like it had done nothing.
+ */
+export function classifyPickerExit(exitCode: number | undefined): DirectoryPickOutcome {
+  if (exitCode === undefined) return { kind: 'unavailable' }
+  if (exitCode === 0 || exitCode === 1) return { kind: 'cancelled' }
+  return { kind: 'unavailable' }
+}
+
 /** A completed picker output; undefined when it never ended inside its bound. */
 export async function captureProcessOutput(
   command: string,
@@ -203,8 +235,8 @@ export async function runPickerCommand(
   timeoutMs: number = PICKER_TIMEOUT_MS,
 ): Promise<DirectoryPickOutcome> {
   const result = await runBoundedCommand(picker.command, picker.args, timeoutMs)
-  if (result.exitCode === undefined) return { kind: 'unavailable' }
   const selected = result.stdout.trim()
-  return selected ? { kind: 'selected', path: resolve(selected) } : { kind: 'cancelled' }
+  if (selected) return { kind: 'selected', path: resolve(selected) }
+  return classifyPickerExit(result.exitCode)
 }
 
