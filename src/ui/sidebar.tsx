@@ -20,6 +20,24 @@ const SIDEBAR_WIDTH = 256
 
 
 
+export interface WorkbenchSidebarProps {
+  width?: number
+  state: WorkbenchState
+  controller: WorkbenchServiceAlias
+  flowsAvailable?: boolean
+  flowsActive?: boolean
+  settingsActive: boolean
+  notificationsActive: boolean
+  unreadCount: number
+  appearance?: 'light' | 'dark'
+  onSelectSession(): void
+  onFlows?(): void
+  onSettings(): void
+  onNotifications(): void
+}
+
+type WorkbenchServiceAlias = WorkbenchService
+
 export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   width = SIDEBAR_WIDTH,
   state,
@@ -33,21 +51,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   onFlows = () => undefined,
   onSettings,
   onNotifications,
-}: {
-  width?: number
-  state: WorkbenchState
-  controller: WorkbenchService
-  flowsAvailable?: boolean
-  flowsActive?: boolean
-  settingsActive: boolean
-  notificationsActive: boolean
-  unreadCount: number
-  appearance?: 'light' | 'dark'
-  onSelectSession(): void
-  onFlows?(): void
-  onSettings(): void
-  onNotifications(): void
-}) {
+}: WorkbenchSidebarProps) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
   const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
@@ -231,7 +235,15 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       </div>
     </div>
   )
-}, (previous, next) => previous.controller === next.controller
+}, sidebarPropsEqual)
+
+/**
+ * Whether a sidebar render can be skipped. Exported so the rule is testable: a controller can
+ * publish a new `messages` array that changes a derived session title without a new `session`, and
+ * `syntheticActiveSession` reads it, so `messages` belongs in the comparison beside `session`.
+ */
+export function sidebarPropsEqual(previous: WorkbenchSidebarProps, next: WorkbenchSidebarProps): boolean {
+  return previous.controller === next.controller
   && previous.width === next.width
   && previous.flowsAvailable === next.flowsAvailable
   && previous.flowsActive === next.flowsActive
@@ -245,10 +257,12 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   && previous.state.sessionsLoading === next.state.sessionsLoading
   && previous.state.sessionsHasMore === next.state.sessionsHasMore
   && previous.state.session === next.state.session
+  && previous.state.messages === next.state.messages
   && previous.state.connection === next.state.connection
   && previous.state.threadLifecycle === next.state.threadLifecycle
   && previous.state.workspacePath === next.state.workspacePath
-  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch)
+  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch
+}
 
 function ProjectFilter({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
   const dropdown = useDropdownState()

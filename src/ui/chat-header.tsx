@@ -7,6 +7,7 @@ import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
+import { createLatestAttempt } from './attempt-feedback.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
@@ -19,9 +20,12 @@ import { useResponsiveLayout } from './responsive.tsx'
  * reports the same failure the same way.
  */
 function openExternally(controller: WorkbenchService, path: string, failure: string): void {
-  void openPath(path).then((opened) => {
-    if (!opened) controller.notify('error', failure)
-  })
+  void createLatestAttempt<string>({
+    run: openPath,
+    // A refusal and a rejection report the same way; the notice stream owns the text.
+    onFailure: (message) => { if (message !== undefined) controller.notify('error', message) },
+    message: failure,
+  }).run(path)
 }
 
 async function exportTranscript(controller: WorkbenchService): Promise<void> {

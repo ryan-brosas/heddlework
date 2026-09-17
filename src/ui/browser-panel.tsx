@@ -10,7 +10,7 @@ import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors } from './theme.ts'
 import { useBrowserSnapshot } from './browser-context.tsx'
 import { useWindowMetrics } from './window-metrics.tsx'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { sampleBrowserPlacement, type BrowserPlacementSample } from './browser-placement.ts'
 
 interface BoundsRenderer {
@@ -32,9 +32,10 @@ export function BrowserPanel({
   const activeTab = snapshot.tabs.find((tab) => tab.id === activeId)
   const profile = snapshot.profiles.find((candidate) => candidate.id === activeTab?.profileId)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
-  const systemBrowser = useSystemBrowser()
+  const systemBrowser = useExternalLink()
   const unavailable = !snapshot.engine.available
   const body = browserPanelBody({ available: !unavailable, hasTab: Boolean(activeTab), hasUrl: Boolean(activeTab?.url) })
+  const chrome = browserPanelChrome({ available: !unavailable, hasTab: Boolean(activeTab), profileMenuOpen })
 
   useEffect(() => { service.ensureTab() }, [service])
 
@@ -63,17 +64,19 @@ export function BrowserPanel({
         onToggleFullscreen={onToggleFullscreen}
         onClose={onClose}
       />
-      <BrowserToolbar
-        service={service}
-        tab={activeTab}
-        profile={profile}
-        onOpenExternal={systemBrowser.open}
-        profileMenuOpen={profileMenuOpen}
-        onToggleProfileMenu={() => {
-          if (profileMenuOpen && activeId) service.command(activeId, 'focus')
-          setProfileMenuOpen((value) => !value)
-        }}
-      />
+      {chrome.toolbar ? (
+        <BrowserToolbar
+          service={service}
+          tab={activeTab}
+          profile={profile}
+          onOpenExternal={systemBrowser.open}
+          profileMenuOpen={profileMenuOpen}
+          onToggleProfileMenu={() => {
+            if (profileMenuOpen && activeId) service.command(activeId, 'focus')
+            setProfileMenuOpen((value) => !value)
+          }}
+        />
+      ) : null}
       <div testId="browser-panel-body" style={{ position: 'relative', flexGrow: 1, minHeight: 0, overflow: 'hidden', backgroundColor: colors.card }}>
         {body === 'surface' && activeTab ? (
           <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
@@ -92,7 +95,7 @@ export function BrowserPanel({
         ) : null}
         {/* Last, so the opaque unavailable surface cannot paint over a launch failure. */}
         {systemBrowser.failure ? <BrowserError testId="browser-external-error" message={systemBrowser.failure} /> : null}
-        {profileMenuOpen && activeTab ? (
+        {chrome.profileMenu && activeTab ? (
           <ProfileMenu
             service={service}
             profiles={snapshot.profiles}
@@ -117,25 +120,18 @@ export function browserPanelBody(options: { available: boolean; hasTab: boolean;
   return options.hasUrl ? 'surface' : 'empty'
 }
 
+/**
+ * Which embedded-browser chrome a panel may show. Navigation and profile controls operate only the
+ * embedded engine, so a build with no browser host must not offer an address bar or profile menu -
+ * the unavailable surface carries the system-browser action instead.
+ */
+export function browserPanelChrome(options: { available: boolean; hasTab: boolean; profileMenuOpen: boolean }): { toolbar: boolean; profileMenu: boolean } {
+  if (!options.available) return { toolbar: false, profileMenu: false }
+  return { toolbar: true, profileMenu: options.hasTab && options.profileMenuOpen }
+}
+
 /** The system browser is the user's own profile: Heddlework's browser is not involved. */
 const SYSTEM_BROWSER_CAVEAT = "Opens in your own browser, not Heddlework's sandboxed profiles."
-
-/**
- * One shared external-browser action for the toolbar and the unavailable panel.
- *
- * A launch that never started used to be invisible: the click did nothing and the surface looked
- * broken rather than unsupported.
- */
-function useSystemBrowser(): { failure: string | undefined; open(url: string): void } {
-  const [failure, setFailure] = useState<string | undefined>(undefined)
-  const open = useCallback((url: string) => {
-    setFailure(undefined)
-    void openExternal(url).then((launched) => {
-      if (!launched) setFailure(`Could not open ${browserDisplayAddress(url) || url} in your system browser`)
-    })
-  }, [])
-  return { failure, open }
-}
 
 /**
  * The Browser surface for a build with no native browser host at all (the web companion).

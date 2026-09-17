@@ -408,6 +408,21 @@ describe('runtime source patches', () => {
   })
 })
 
+/**
+ * The inventory in `patches/README.md` is what a manual setup reads, and the installer applies
+ * every `.patch` file it finds. A patch that never reaches the table is applied but undocumented,
+ * which is exactly how the second Zed patch went missing.
+ */
+describe('patch inventory', () => {
+  it('documents every patch file the installer would apply', () => {
+    const patchesDirectory = resolve(import.meta.dir, '../patches')
+    const readme = readFileSync(resolve(patchesDirectory, 'README.md'), 'utf8')
+    const files = [...new Bun.Glob('*/*.patch').scanSync(patchesDirectory)].sort()
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.filter((file) => !readme.includes(file))).toEqual([])
+  })
+})
+
 /** The pinned checkout, when this machine has the runtime cache; CI skips the integration check. */
 function pinnedSourceDirectory(): string {
   const pin = JSON.parse(readFileSync(resolve(import.meta.dir, '../gpuix-runtime.json'), 'utf8')) as { gpuixRevision: string }

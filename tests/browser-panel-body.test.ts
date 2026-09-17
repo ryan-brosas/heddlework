@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { browserPanelBody } from '../src/ui/browser-panel.tsx'
+import { browserPanelBody, browserPanelChrome } from '../src/ui/browser-panel.tsx'
 
 describe('browser panel body', () => {
   it('shows the unavailable state instead of an address surface when no engine can run', () => {
@@ -7,6 +7,14 @@ describe('browser panel body', () => {
     expect(browserPanelBody({ available: false, hasTab: true, hasUrl: true })).toBe('unavailable')
     expect(browserPanelBody({ available: false, hasTab: true, hasUrl: false })).toBe('unavailable')
     expect(browserPanelBody({ available: false, hasTab: false, hasUrl: false })).toBe('unavailable')
+  })
+
+  it('offers no embedded navigation or profile chrome without an engine', () => {
+    // The Linux case: an address bar and a profile menu for a browser that cannot run. The
+    // unavailable surface owns the system-browser action instead.
+    expect(browserPanelChrome({ available: false, hasTab: true, profileMenuOpen: true })).toEqual({ toolbar: false, profileMenu: false })
+    expect(browserPanelChrome({ available: true, hasTab: true, profileMenuOpen: true })).toEqual({ toolbar: true, profileMenu: true })
+    expect(browserPanelChrome({ available: true, hasTab: false, profileMenuOpen: true })).toEqual({ toolbar: true, profileMenu: false })
   })
 
   it('renders a launch failure after the opaque unavailable surface', async () => {
