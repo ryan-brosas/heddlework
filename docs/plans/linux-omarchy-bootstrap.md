@@ -34,7 +34,7 @@ blocked**; a row without a hash is not evidence. Automated results never close t
 | `Ctrl+V` -> `Shift+Insert` paste | composer | text lands at the caret exactly once, undo restores the previous draft |
 | Image-only clipboard paste | composer | exactly one attachment, draft preserved |
 | `Super+C` -> `Ctrl+Insert` copy | dragged transcript selection | `wl-paste --no-newline --type text` returns exactly the dragged text |
-| `Ctrl+Insert` copy | terminal viewport | the clipboard holds the visible viewport with trailing padding and unused blank rows trimmed, and zero PTY bytes are written |
+| `Ctrl+Insert` copy | terminal viewport | zero PTY bytes are written, and the clipboard holds the visible viewport with trailing padding and unused blank rows trimmed; for an empty or all-blank viewport the app copies nothing, so pre-existing clipboard contents stay as they were - that is a pass, not a failure |
 | Plain `Ctrl+C` | terminal | foreground process is interrupted, nothing is copied |
 | Move between 150% and 100% monitors | window | caret and selection still line up, no clipped chrome |
 | IME composition | composer | commit, cancel and no premature submit |
