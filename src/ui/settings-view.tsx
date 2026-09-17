@@ -120,7 +120,7 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
   const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot, service.getSnapshot)
   return (
     <SettingsSection title="Browser" description="App-owned profiles keep browser identities separate. Personal profiles are never exposed to agents; workspace profiles require the policy shown below.">
-      <SettingsRow icon="globe" label="Native engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
+      <SettingsRow icon="globe" label="Engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
       {snapshot.profiles.map((profile) => (
         <SettingsControlRow key={profile.id} label={profile.name} description={`${profile.persistent ? 'Persistent' : 'Ephemeral'} · Agent access ${profile.agentAccess}`}>
           {profile.id === snapshot.defaultProfileId

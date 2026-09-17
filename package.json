@@ -41,6 +41,7 @@
     "dev:web": "bun scripts/dev-web.ts",
     "build": "bun scripts/build.ts",
     "smoke:browser": "bun scripts/smoke-browser.ts",
+    "probe:chrome": "bun scripts/chrome-sidebar-probe.ts",
     "smoke:selection": "bun scripts/linux-selection-smoke.ts",
     "smoke:workbench-keys": "bun scripts/linux-workbench-key-smoke.ts",
     "smoke:clipboard-live": "bash scripts/linux-clipboard-live.sh",

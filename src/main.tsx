@@ -22,7 +22,7 @@ import {
   workbenchControllerToken,
 } from './workbench/plugins.ts'
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
-import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
+import { browserSessionToken, chromeBrowserToken, createBrowserPlugin } from './browser/plugin.ts'
 import { assertNativeRuntime, runtimeOwnsNativeClipboardEditing } from './native-runtime.ts'
 import { setNativeClipboardEditing } from './ui/clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './ui/insert-key.ts'
@@ -100,6 +100,7 @@ const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 const terminals = kernel.get(terminalSessionToken)
 const browsers = kernel.get(browserSessionToken)
+const chromeBrowsers = kernel.get(chromeBrowserToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   shutdown(isGpuixWindowCloseRace(error) ? undefined : error)
@@ -145,6 +146,14 @@ function shutdown(initialError?: unknown): void {
       if (!nativeStopped) failures.push(error)
     }
 
+    // The managed Chrome process owns its profile directory, so it is stopped before that directory
+    // is touched. A failure here is reported like any other shutdown failure.
+    try {
+      await chromeBrowsers.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+
     if (nativeStopped) {
       try {
         browsers.flushRemovedProfileData()
@@ -184,7 +193,7 @@ const handleWindowKeyDown: WindowKeyEventHandler = (event, renderer) => {
 }
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} chrome={chromeBrowsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,

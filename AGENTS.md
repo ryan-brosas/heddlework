@@ -67,8 +67,9 @@ with their implementations.
   with a healthy `@gpuix/react` symlink - do not "fix" the symlink; the blocker is upstream gpuix.
 - `.pi/` is local agent-runtime state; `.pi/fabric/mesh/*` handoff files are session-local,
   never commit them.
-- `docs/browser.md` documents the native browser (macOS CEF today); read it before touching that
-  system. Linux browser-free builds are the default until a Linux CEF path exists.
+- `docs/browser.md` documents the browser engines: macOS embeds CEF; Linux runs the installed Chrome
+  as an app-owned headless process over the private debugging pipe and streams its frames into the panel
+  (`bun run probe:chrome` is the live check). Read it before touching that system.
 
 ## Sourcebot is the code-truth authority (standing explicit request)
 
