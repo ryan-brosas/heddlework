@@ -4,6 +4,12 @@ import { createTerminalCopyAction, TERMINAL_COPY_FAILED_MESSAGE } from '../src/u
 
 const ESC = String.fromCharCode(27)
 
+/**
+ * Drain pending promise chains instead of sleeping a fixed interval: the copy action publishes its
+ * feedback asynchronously, and a loaded machine and an idle one must observe the same ordering.
+ */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
 describe('encodeTerminalKey', () => {
   it('encodes printable, control, navigation, and editing keys', () => {
     expect(encodeTerminalKey({ key: 'a', keyChar: 'a' })).toBe('a')
@@ -100,6 +106,26 @@ describe('dispatchTerminalKey (shared production seam)', () => {
     expect(writes).toEqual(['x'])
   })
 
+  it('copies visible text without the grid padding and blank rows', () => {
+    const { copies } = run(
+      { key: 'c', modifiers: { ctrl: true, shift: true } },
+      { grid: { viewport: [{ text: 'alpha   ' }, { text: '  beta  ' }, { text: '   ' }] } },
+    )
+    // Trailing cell padding and the blank row are removed; leading indentation is not.
+    expect(copies).toEqual(['alpha\n  beta'])
+  })
+
+  it('asks for no copy and reports no failure when there is nothing to copy', async () => {
+    const failures: Array<string | undefined> = []
+    const action = createTerminalCopyAction({ writer: () => false, onFailure: (failure) => failures.push(failure) })
+    run({ key: 'c', modifiers: { ctrl: true, shift: true } }, { grid: { viewport: [{ text: '   ' }] }, copy: action.copy })
+    run({ key: 'c', modifiers: { ctrl: true, shift: true } }, { grid: undefined, copy: action.copy })
+    await flush()
+    // A blank viewport and a missing grid have nothing to copy, so a writer that would fail is never
+    // asked and copying an empty payload is not reported as a clipboard failure.
+    expect(failures).toEqual([])
+  })
+
   it('keeps application-cursor mode intact', () => {
     const { writes } = run({ key: 'up' }, { grid: { viewport: [{ text: '' }], applicationCursor: true } })
     expect(writes).toEqual([ESC + 'OA'])
@@ -120,7 +146,7 @@ describe('dispatchTerminalKey (shared production seam)', () => {
       copy: () => {},
       readPaste: () => Promise.resolve('hi'),
     })
-    await Bun.sleep(1)
+    await flush()
     expect(writes).toEqual([ESC + '[200~hi' + ESC + '[201~'])
   })
 
@@ -133,7 +159,7 @@ describe('dispatchTerminalKey (shared production seam)', () => {
       copy: () => {},
       readPaste: () => Promise.reject(new Error('clipboard read failed')),
     })
-    await Bun.sleep(1)
+    await flush()
     expect(writes).toEqual([])
   })
 })
@@ -169,7 +195,7 @@ describe('terminal copy feedback (production action)', () => {
   it('publishes one generic failure with zero PTY bytes when the writer resolves false', async () => {
     const { effects, failures, writes } = setup(() => false)
     dispatchTerminalKey(COPY_KEY, effects)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE])
     expect(writes).toEqual([])
   })
@@ -177,7 +203,7 @@ describe('terminal copy feedback (production action)', () => {
   it('treats rejection and synchronous throw as the same generic failure without PTY writes', async () => {
     const rejected = setup(() => Promise.reject(new Error('clipboard helper exploded')))
     dispatchTerminalKey(COPY_KEY, rejected.effects)
-    await Bun.sleep(1)
+    await flush()
     expect(rejected.failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE])
     expect(rejected.writes).toEqual([])
 
@@ -185,7 +211,7 @@ describe('terminal copy feedback (production action)', () => {
       throw new Error('boom before promise')
     })
     dispatchTerminalKey(COPY_KEY, thrown.effects)
-    await Bun.sleep(1)
+    await flush()
     expect(thrown.failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE])
     expect(thrown.writes).toEqual([])
   })
@@ -194,11 +220,11 @@ describe('terminal copy feedback (production action)', () => {
     let result = false
     const { effects, failures } = setup(() => result)
     dispatchTerminalKey(COPY_KEY, effects)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE])
     result = true
     dispatchTerminalKey(COPY_KEY, effects)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE, undefined])
   })
 
@@ -209,7 +235,7 @@ describe('terminal copy feedback (production action)', () => {
     dispatchTerminalKey(INTERRUPT_KEY, effects)
     expect(writes).toEqual([String.fromCharCode(3)])
     settle(false)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, TERMINAL_COPY_FAILED_MESSAGE])
     expect(writes).toEqual([String.fromCharCode(3)])
   })
@@ -220,17 +246,17 @@ describe('terminal copy feedback (production action)', () => {
     dispatchTerminalKey(COPY_KEY, effects)
     dispatchTerminalKey(COPY_KEY, effects)
     resolvers[1]!(false)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, undefined, TERMINAL_COPY_FAILED_MESSAGE])
     // The older attempt completing late cannot overwrite newer feedback.
     resolvers[0]!(false)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, undefined, TERMINAL_COPY_FAILED_MESSAGE])
 
     dispatchTerminalKey(COPY_KEY, effects)
     action.dispose()
     resolvers[2]!(false)
-    await Bun.sleep(1)
+    await flush()
     expect(failures).toEqual([undefined, undefined, TERMINAL_COPY_FAILED_MESSAGE, undefined])
     // A disposed action is inert and never reaches its writer again.
     await action.copy('after dispose')

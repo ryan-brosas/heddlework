@@ -151,6 +151,11 @@ describe('clipboard text readers', () => {
     expect(clipboardTextCommands('darwin')).toEqual([['/usr/bin/pbpaste']])
     const windows = clipboardTextCommands('win32')[0] ?? []
     expect(windows[0]).toBe('powershell')
-    expect(windows[3]).toBe('Get-Clipboard -Raw')
+    const script = windows.at(-1) ?? ''
+    // PowerShell writes the console's OEM code page unless the encoding is set, which mangles
+    // non-ASCII clipboard text; the explicit write avoids an added trailing newline. (Shape only:
+    // this assertion runs on every platform, and the Windows command itself is not exercised here.)
+    expect(script).toContain('[Console]::OutputEncoding = [Text.Encoding]::UTF8')
+    expect(script).toContain('Get-Clipboard -Raw')
   })
 })

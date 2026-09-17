@@ -123,7 +123,9 @@ The renderer still feature-detects `supportsNativeTerminal()` to choose the nati
 The terminal keeps clipboard commands separate from PTY input:
 
 - **Copy:** `Ctrl+Shift+C` (Linux/Windows), `Command+C` (macOS), or `Ctrl+Insert`. Copy
-  writes zero PTY bytes, including when the clipboard write fails.
+  writes zero PTY bytes, including when the clipboard write fails, and copies the visible text with
+  trailing cell padding and blank rows removed. An empty viewport has nothing to copy and is not
+  reported as a failure.
 - **Paste:** `Ctrl+V`, `Command+V`, or `Shift+Insert`. Paste reads the clipboard once and
   preserves bracketed-paste wrapping when the terminal enabled DEC mode 2004.
 - **Interrupt:** plain `Ctrl+C` writes exactly one ETX byte and never copies. Whether that

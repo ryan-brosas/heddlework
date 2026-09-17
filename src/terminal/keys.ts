@@ -145,6 +145,21 @@ export function resolveTerminalCommand(event: TerminalKeyEvent, platform: NodeJS
   return 'none'
 }
 
+/**
+ * The visible viewport as copied text.
+ *
+ * Grid rows are padded with spaces to the terminal width, so joining them verbatim copies a trailing
+ * run of spaces on every line. Only that padding and trailing blank rows are removed: leading
+ * indentation and interior blank lines are part of what the terminal is showing.
+ */
+export function copyableViewportText(grid: TerminalKeyGridLike | undefined): string {
+  if (!grid) return ''
+  return grid.viewport
+    .map((row) => row.text.replace(/[ \t]+$/, ''))
+    .join('\n')
+    .replace(/\n+$/, '')
+}
+
 export interface TerminalKeyGridLike {
   readonly viewport: readonly { readonly text: string }[]
   readonly bracketedPaste?: boolean
@@ -169,7 +184,9 @@ export function dispatchTerminalKey(event: TerminalKeyEvent, effects: TerminalKe
   }
   const command = resolveTerminalCommand(event, effects.platform)
   if (command === 'copy') {
-    void effects.copy(grid?.viewport.map((row) => row.text).join('\n') ?? '')
+    // Nothing to copy is not a copy failure: an empty or padding-only viewport must not report one.
+    const text = copyableViewportText(grid)
+    if (text) void effects.copy(text)
     return
   }
   if (command === 'interrupt') {

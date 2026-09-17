@@ -54,7 +54,12 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
  */
 export function clipboardTextCommands(platform: NodeJS.Platform): readonly (readonly string[])[] {
   if (platform === 'darwin') return [['/usr/bin/pbpaste']]
-  if (platform === 'win32') return [['powershell', '-NoProfile', '-Command', 'Get-Clipboard -Raw']]
+  // Windows PowerShell writes the console's OEM code page unless the encoding is set, which mangles
+  // non-ASCII clipboard text; writing through Console.Out also avoids appending a newline the
+  // clipboard never had.
+  if (platform === 'win32') {
+    return [['powershell', '-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Console]::Out.Write([string](Get-Clipboard -Raw))']]
+  }
   return [['wl-paste', '--no-newline', '--type', 'text'], ['xclip', '-selection', 'clipboard', '-target', 'UTF8_STRING', '-o']]
 }
 
