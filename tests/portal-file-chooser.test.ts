@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { portalResponseMatchesToken, portalSignalForToken, requestPortalDirectory } from '../src/ui/portal-file-chooser.ts'
+import { portalResponseMatchesToken, portalResponseRecordIsComplete, portalSignalForToken, requestPortalDirectory, runPortalMonitor } from '../src/ui/portal-file-chooser.ts'
 import type { PortalPickerProbe } from '../src/ui/portal-file-chooser.ts'
 
 function handleFor(token: string): string {
@@ -167,4 +167,45 @@ describe('portal response ownership', () => {
     expect(portalSignalForToken(capture, 'heddlework_mine')).not.toContain('OTHER-APP-PICK')
     expect(portalSignalForToken(capture, 'heddlework_missing')).toBeUndefined()
   })
+})
+
+describe('portal response completeness', () => {
+  it('holds an unterminated body back and reads a closed one, ignoring brackets inside a quoted name', () => {
+    const header = signalHeader('heddlework_complete')
+    expect(portalResponseRecordIsComplete([header, '   uint32 0', '   array [', '      dict entry('].join('\n'))).toBe(false)
+    expect(portalResponseRecordIsComplete([header, '   uint32 1'].join('\n'))).toBe(true)
+    expect(portalResponseRecordIsComplete([
+      header,
+      '   uint32 0',
+      '   array [',
+      '      dict entry(',
+      '         string "uris"',
+      '         variant             array [',
+      '               string "file:///tmp/project [bracketed]"',
+      '            ]',
+      '      )',
+      '   ]',
+    ].join('\n'))).toBe(true)
+  })
+
+  it('reports the selection when the URI arrives in a chunk after the response code', async () => {
+    // dbus-monitor flushes a record in pieces; the code and the selection can land in separate writes,
+    // which is exactly what a repo dialog does under load. Settling on the code alone lost the folder.
+    const script = [
+      `printf '%s\\n' "signal sender=:1.42 -> dest=(unset) serial=9 path=/org/freedesktop/portal/desktop/request/1_555/\$1; interface=org.freedesktop.portal.Request; member=Response"`,
+      `printf '%s\\n' '   uint32 0' '' '   array [' '' '      dict entry(' '' '         string "uris"'`,
+      `sleep 0.4`,
+      `printf '%s\\n' '         variant             array [' '' '               string "file:///tmp/split-project"' '' '            ]' '' '      )' '' '   ]'`,
+    ].join('\n')
+    const result = await requestPortalDirectory({
+      run: async (_command, args) => {
+        const opened = args.at(-1)?.match(/'handle_token': <'([^']+)'>/u)?.[1]
+        return opened ? "(objectpath '" + handleFor(opened) + "',)" : undefined
+      },
+      monitor: (_command, _args, timeoutMs, token, signal) =>
+        runPortalMonitor('/bin/sh', ['-c', script, 'heddlework-probe', token], timeoutMs, token, signal),
+    })
+    expect(result.status).toBe('selected')
+    expect(result.path).toBe('/tmp/split-project')
+  }, 10_000)
 })

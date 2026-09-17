@@ -2,7 +2,20 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 
+/**
+ * The XDG Desktop Portal `FileChooser` request contract.
+ *
+ * This module is not on the live picker path. The portal sends `Request.Response` to the *requesting*
+ * D-Bus connection, and the CLI transport here - `gdbus call` for the request, `dbus-monitor` for the
+ * answer - abandons that connection as soon as the request handle is printed, so the answer is never
+ * delivered and the picker waited out its whole session budget. Measured 2026-09-17 on Omarchy: the
+ * dialog opens, and a session-wide, line-buffered monitor sees no `Response` signal at all, neither
+ * while the dialog is up nor after the compositor dismisses it. What remains here is the token-keyed,
+ * ownership-checked, completeness-gated contract that the native transport (`openDirectoryDialog`,
+ * already exported by the installed addon) needs when it owns the connection instead.
+ */
 export type PortalPickStatus = 'selected' | 'cancelled' | 'unavailable'
+
 
 export interface PortalPickResult {
   status: PortalPickStatus
@@ -173,12 +186,54 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
   })
 }
 
+/**
+ * Whether a Response record has arrived in full.
+ *
+ * dbus-monitor streams a signal body in whatever chunks its stdout flushes, so the response code
+ * (uint32 0) routinely arrives in an earlier chunk than the file URI carrying the selection.
+ * Settling on the code alone returned a record with no URI, which the picker reported as "returned
+ * no selection" and then papered over with a second, CLI dialog. A body is complete once its
+ * bracketed structure closes; quoted strings are skipped because a folder name may contain brackets.
+ */
+export function portalResponseRecordIsComplete(record: string): boolean {
+  let depth = 0
+  let quote: string | undefined
+  let escaped = false
+  for (const character of record) {
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quote !== undefined) {
+      if (character === '\\') escaped = true
+      else if (character === quote) quote = undefined
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      continue
+    }
+    if (character === '[' || character === '(') depth += 1
+    else if (character === ']' || character === ')') depth -= 1
+  }
+  // An unbalanced close is a malformed record, not a reason to keep waiting: call it complete and let
+  // the caller's own validation reject it, instead of holding a dialog open to the session timeout.
+  return depth <= 0 && quote === undefined
+}
+
 // dbus-monitor is a long-lived stream: it never exits on its own, so we read
 // stdout incrementally and resolve as soon as a Response signal whose request
-// path carries our handle token has been captured, then terminate the child.
-// This bounds the dialog wait instead of stalling to the full timeout.
-function runPortalMonitor(command: string, args: string[], timeoutMs: number, token: string, signal: AbortSignal): Promise<string | undefined> {
+// path carries our handle token has been captured in full, then terminate the
+// child. This bounds the dialog wait instead of stalling to the full timeout.
+export function runPortalMonitor(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  token: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
   return new Promise((finish) => {
+
     let settled = false
     let child: ReturnType<typeof spawn> | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -214,8 +269,9 @@ function runPortalMonitor(command: string, args: string[], timeoutMs: number, to
       chunks.push(Buffer.from(c))
       const output = Buffer.concat(chunks).toString('utf8')
       const record = portalSignalForToken(output, token)
-      if (record !== undefined && extractResponseCode(record) !== undefined) done(record)
+      if (record !== undefined && extractResponseCode(record) !== undefined && portalResponseRecordIsComplete(record)) done(record)
     })
+
     stderr.on('data', () => {})
     child.on('error', () => done(undefined))
     child.on('close', () => done(portalSignalForToken(Buffer.concat(chunks).toString('utf8'), token)))

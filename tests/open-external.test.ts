@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { captureProcessOutput, directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, systemTargetCommand } from '../src/ui/open-external.ts'
+import { captureProcessOutput, directoryPickerCommand, directoryPickerCommands, pickWorkspaceDirectory, runPickerCommand, systemTargetCommand } from '../src/ui/open-external.ts'
 
 describe('external targets', () => {
   it('passes Windows URLs as one argument without invoking a command shell', () => {
@@ -58,7 +58,7 @@ describe('workspace directory picker', () => {
     expect(directoryPickerCommand('linux')?.args).toContain('--getexistingdirectory')
   })
 
-  it('falls back from kdialog to zenity on Linux after the portal is unavailable', () => {
+  it('falls back from kdialog to zenity on Linux when the first picker cannot run', () => {
     const pickers = directoryPickerCommands('linux')
     expect(pickers).toHaveLength(2)
     expect(pickers[0]).toMatchObject({ command: 'kdialog' })
@@ -66,41 +66,64 @@ describe('workspace directory picker', () => {
     expect(pickers[1]?.args).toContain('--file-selection')
   })
 
-  it('uses the portal selection on Linux and does not open a CLI fallback', async () => {
+  it('uses the first picker that selects a folder and never opens a second dialog', async () => {
+    const opened: string[] = []
     const result = await pickWorkspaceDirectory('linux', {
-      requestPortal: async () => ({ status: 'selected', path: '/tmp/heddlework-project' }),
-      capture: async () => {
-        throw new Error('CLI fallback must not run after a portal selection')
+      runPicker: async (picker) => {
+        opened.push(picker.command)
+        return { kind: 'selected', path: '/tmp/heddlework-project' }
       },
     })
     expect(result).toEqual({ path: '/tmp/heddlework-project' })
+    expect(opened).toEqual(['kdialog'])
   })
 
-  it('treats a portal cancel as a dismiss and does not open a CLI fallback', async () => {
+  it('treats a dismissal as no selection and reports no error', async () => {
+    const opened: string[] = []
     const result = await pickWorkspaceDirectory('linux', {
-      requestPortal: async () => ({ status: 'cancelled' }),
-      capture: async () => {
-        throw new Error('CLI fallback must not run after a portal cancel')
+      runPicker: async (picker) => {
+        opened.push(picker.command)
+        return { kind: 'cancelled' }
       },
     })
     expect(result).toEqual({})
+    expect(opened).toEqual(['kdialog'])
   })
 
-  it('degrades to kdialog when the portal is unavailable', async () => {
-    const commands: string[] = []
+  it('falls through to the next picker when the first one cannot run', async () => {
+    const opened: string[] = []
     const result = await pickWorkspaceDirectory('linux', {
-      requestPortal: async () => ({ status: 'unavailable', error: 'File dialog portal is not reachable' }),
-      capture: async (command) => {
-        commands.push(command)
-        return command === 'kdialog' ? '/tmp/from-kdialog\n' : undefined
+      runPicker: async (picker) => {
+        opened.push(picker.command)
+        return picker.command === 'kdialog' ? { kind: 'unavailable' } : { kind: 'selected', path: '/tmp/from-zenity' }
       },
     })
-    expect(commands[0]).toBe('kdialog')
-    expect(result.path).toBe('/tmp/from-kdialog')
+    expect(opened).toEqual(['kdialog', 'zenity'])
+    expect(result.path).toBe('/tmp/from-zenity')
+  })
+
+  it('reports an error only when no picker can run', async () => {
+    const result = await pickWorkspaceDirectory('linux', { runPicker: async () => ({ kind: 'unavailable' }) })
+    expect(result.error).toContain('kdialog')
   })
 
   it('offers a single picker on macOS and Windows', () => {
     expect(directoryPickerCommands('darwin')).toHaveLength(1)
     expect(directoryPickerCommands('win32')).toHaveLength(1)
+  })
+})
+describe('picker outcome classification', () => {
+  it('reads a selection from a picker that printed a path', async () => {
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'printf /tmp/chosen'] })).toEqual({ kind: 'selected', path: '/tmp/chosen' })
+  })
+
+  it('reads a dismissal from a picker that was dismissed without output', async () => {
+    // kdialog exits 1 with no output when its dialog is dismissed: a decision, not a failure.
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 1'] })).toEqual({ kind: 'cancelled' })
+    expect(await runPickerCommand({ command: '/bin/sh', args: ['-c', 'exit 0'] })).toEqual({ kind: 'cancelled' })
+  })
+
+  it('reports a picker that cannot be spawned as unavailable', async () => {
+    expect(await runPickerCommand({ command: '/dev/null/heddlework-picker', args: [] })).toEqual({ kind: 'unavailable' })
   })
 })
