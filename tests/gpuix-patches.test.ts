@@ -228,12 +228,47 @@ describe('runtime source patches', () => {
     expect(runtimeSourceFingerprint(directory, ['src'])).not.toBe(before)
   })
 
+  it('re-applies a two-patch set that touches one file without refusing the checkout', () => {
+    const directory = scratchRepository('initial\n')
+    const first = declaredPatch(directory, 'first\n')
+    // The second patch continues from the first one's result, so it cannot be checked against the pin
+    // on its own: only the set describes the checkout.
+    const second = patchLines('0002-second.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      '--- a/src/input.rs',
+      '+++ b/src/input.rs',
+      '@@ -1 +1 @@',
+      '-first',
+      '+second',
+    ])
+    const set = [first, second]
+    applyRuntimePatches(directory, set, ['src'])
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('second\n')
+    // A later run finds the set already applied: it must neither refuse nor apply it twice.
+    applyRuntimePatches(directory, set, ['src'])
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('second\n')
+  })
+
+  it('still refuses a checkout the set does not fit', () => {
+    const directory = scratchRepository('initial\n')
+    const set = [declaredPatch(directory, 'first\n'), patchLines('0002-second.patch', [
+      'diff --git a/src/input.rs b/src/input.rs',
+      '--- a/src/input.rs',
+      '+++ b/src/input.rs',
+      '@@ -1 +1 @@',
+      '-not-first',
+      '+second',
+    ])]
+    expect(refusalMessage(directory, set)).toContain('does not apply')
+    // The refusal leaves the checkout as it was found.
+    expect(readFileSync(resolve(directory, 'src/input.rs'), 'utf8')).toBe('initial\n')
+  })
+
   it('ships one declared patch set per repository of the pinned checkout', () => {
     const expected = [
       {
         directory: 'gpuix',
-        file: '0001-linux-native-runtime.patch',
-        targets: [
+        files: [{ name: '0001-linux-native-runtime.patch', targets: [
           'packages/native/src/custom_elements/input.rs',
           'packages/native/src/element_tree.rs',
           'packages/native/src/lib.rs',
@@ -243,12 +278,12 @@ describe('runtime source patches', () => {
           'packages/native/src/text/paint.rs',
           'packages/react/src/reconciler/host-config.ts',
           'packages/react/src/types/host.ts',
-        ],
+        ] }],
       },
       {
         directory: 'zed',
-        file: '0001-portal-parent-and-appearance.patch',
-        targets: [
+        files: [
+          { name: '0001-portal-parent-and-appearance.patch', targets: [
           'crates/gpui/src/platform.rs',
           'crates/gpui/src/window.rs',
           'crates/gpui_linux/src/gpui_linux.rs',
@@ -257,14 +292,21 @@ describe('runtime source patches', () => {
           'crates/gpui_linux/src/portal_file_chooser.rs',
           'crates/gpui_linux/src/system_appearance.rs',
           'crates/gpui_platform/src/gpui_platform.rs',
+          ] },
+          // The runtime's FileChooser call is corrected by its own patch, so re-importing the
+          // primitive cannot silently bring the two-argument call back.
+          { name: '0002-portal-open-file-signature.patch', targets: ['crates/gpui_linux/src/portal_file_chooser.rs'] },
         ],
       },
     ] as const
     for (const set of expected) {
       const patches = listRuntimePatches(resolve(import.meta.dir, '../patches', set.directory))
-      expect(patches.map((patch) => patch.name)).toEqual([set.file])
-      const text = readFileSync(patches[0]!.path, 'utf8')
-      for (const target of set.targets) expect(text).toContain(`+++ b/${target}`)
+      expect(patches.map((patch) => patch.name)).toEqual(set.files.map((file) => file.name))
+      for (const file of set.files) {
+        const patch = patches.find((candidate) => candidate.name === file.name)!
+        const text = readFileSync(patch.path, 'utf8')
+        for (const target of file.targets) expect(text).toContain(`+++ b/${target}`)
+      }
     }
   })
 
