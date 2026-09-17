@@ -12,6 +12,7 @@ import {
   planChromePointer,
   planChromeWindowOpen,
   planOrphanPopupTargets,
+  shouldClearChromeError,
   planChromeViewport,
   planChromeWheel,
   shouldPaintChromeFrame,
@@ -117,10 +118,13 @@ describe('chrome pointer planning', () => {
     expect(planChromePointer({ y: 80 }, bounds, 'mousePressed')).toBeUndefined()
   })
 
-  it('reports the button and the held-button mask', () => {
-    expect(planChromePointer({ x: 120, y: 80, button: 1 }, bounds, 'mousePressed')).toMatchObject({ button: 'middle', buttons: 1 })
-    expect(planChromePointer({ x: 120, y: 80, button: 2 }, bounds, 'mousePressed')).toMatchObject({ button: 'right' })
-    expect(planChromePointer({ x: 120, y: 80, pressedButton: 1 }, bounds, 'mouseMoved')).toMatchObject({ button: 'none', buttons: 2, clickCount: 0 })
+  it('reports the button and the held-button mask in CDP order', () => {
+    // CDP's bit field is Left=1, Right=2, Middle=4; the runtime indexes buttons as left=0, middle=1, right=2.
+    expect(planChromePointer({ x: 120, y: 80, button: 0 }, bounds, 'mousePressed')).toMatchObject({ button: 'left', buttons: 1 })
+    expect(planChromePointer({ x: 120, y: 80, button: 1 }, bounds, 'mousePressed')).toMatchObject({ button: 'middle', buttons: 4 })
+    expect(planChromePointer({ x: 120, y: 80, button: 2 }, bounds, 'mousePressed')).toMatchObject({ button: 'right', buttons: 2 })
+    expect(planChromePointer({ x: 120, y: 80, pressedButton: 1 }, bounds, 'mouseMoved')).toMatchObject({ button: 'none', buttons: 4, clickCount: 0 })
+    expect(planChromePointer({ x: 120, y: 80, pressedButton: 2 }, bounds, 'mouseMoved')).toMatchObject({ buttons: 2 })
     expect(planChromePointer({ x: 120, y: 80, pressedButton: 0 }, bounds, 'mouseMoved')).toMatchObject({ buttons: 1 })
   })
 
@@ -153,6 +157,14 @@ describe('chrome viewport planning', () => {
     expect(planChromeViewport(100, 100, 9).metrics).toMatchObject({ deviceScaleFactor: 2 })
     expect(planChromeViewport(100, 100, 0.1).metrics).toMatchObject({ deviceScaleFactor: 1 })
     expect(planChromeViewport(100, 100, Number.NaN).metrics).toMatchObject({ deviceScaleFactor: 1 })
+  })
+
+  it('clears a previous failure only when new work arrives', () => {
+    expect(shouldClearChromeError(1, true)).toBe(true)
+    expect(shouldClearChromeError(3, true)).toBe(true)
+    // Nothing pending means the user has not moved on, so the failure stays visible.
+    expect(shouldClearChromeError(0, true)).toBe(false)
+    expect(shouldClearChromeError(2, false)).toBe(false)
   })
 
   it('reads the frame scale from the environment, with a safe default', () => {

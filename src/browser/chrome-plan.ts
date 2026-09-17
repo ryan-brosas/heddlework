@@ -220,16 +220,23 @@ export function planChromePointer(event: ChromePointerEvent, bounds: ChromeBound
     modifiers: modifierBits(event),
     button: type === 'mouseMoved' ? 'none' : button,
     clickCount: type === 'mouseMoved' ? 0 : Math.max(1, event.clickCount ?? 1),
-    buttons: type === 'mousePressed' ? 1 : type === 'mouseMoved' ? buttonMask(event.pressedButton) : 0,
+    buttons: type === 'mousePressed' ? buttonMask(event.button ?? 0) : type === 'mouseMoved' ? buttonMask(event.pressedButton) : 0,
   }
   return params
 }
 
+/**
+ * CDP's held-button bit field: Left=1, Right=2, Middle=4.
+ *
+ * The order matters and is not the runtime's 0/1/2 index, where 1 is the middle button: using that order
+ * here reported a held middle button as "right" and a held right button as "middle", which is what a page
+ * sees during a drag with either button down.
+ */
 function buttonMask(button: number | undefined): number {
   switch (button) {
-    case 1: return 2
-    case 2: return 4
     case 0: return 1
+    case 2: return 2
+    case 1: return 4
     default: return 0
   }
 }
@@ -280,6 +287,16 @@ export function planChromeViewport(width: number, height: number, scale = 1): { 
       sendLastFrame: true,
     },
   }
+}
+
+/**
+ * Whether starting new work must clear a previous failure.
+ *
+ * A failure stays visible until the user moves on: the panel hides the page behind the error banner, so
+ * a stale error would keep a working page hidden after the user navigates or reloads again.
+ */
+export function shouldClearChromeError(pendingCommands: number, hasError: boolean): boolean {
+  return pendingCommands > 0 && hasError
 }
 
 /** The throttle that keeps frame decoding off the React commit path. */

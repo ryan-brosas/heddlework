@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import type { CdpEvent } from './cdp.ts'
 import { ManagedChrome, findChromeExecutable } from './chrome-process.ts'
+import { SingleFlight } from './single-flight.ts'
 import {
   planChromeCommand,
   planChromeEvent,
@@ -8,6 +9,7 @@ import {
   planOrphanPopupTargets,
   chromeFrameScale,
   pendingChromeCommands,
+  shouldClearChromeError,
   shouldPaintChromeFrame,
   historyTarget,
   originOf,
@@ -80,7 +82,7 @@ export class ChromeBrowserBackend {
   readonly #contextTabs = new Map<string, number>()
   readonly #viewports = new Map<string, { width: number; height: number }>()
   #chrome: ManagedChrome | undefined
-  #launch: Promise<ManagedChrome> | undefined
+  readonly #launchFlight = new SingleFlight<ManagedChrome>()
   #disposed = false
   #lastError: string | undefined
   #detachEvents: (() => void) | undefined
@@ -263,16 +265,22 @@ export class ChromeBrowserBackend {
     this.#listeners.clear()
     const chrome = this.#chrome
     this.#chrome = undefined
-    this.#launch = undefined
+    this.#launchFlight.clear()
     this.#detachEvents?.()
     this.#detachEvents = undefined
     if (chrome) await chrome.dispose().catch(() => undefined)
   }
 
+  /**
+   * One Chrome per app, even when several tabs open at once.
+   *
+   * Sessions reconcile concurrently, so two tabs can ask at the same instant. The in-flight launch is
+   * therefore shared: starting a second Chrome against the same app-owned profile directory would either
+   * fight the first over it or fail, and the loser's error would surface as a browser that cannot open.
+   */
   async #ensureChrome(): Promise<ManagedChrome> {
     if (this.#chrome && !this.#chrome.cdp.closed) return this.#chrome
-    const failed = this.#launch
-    this.#launch = (async () => {
+    return this.#launchFlight.run(async () => {
       const chrome = await ManagedChrome.launch(this.#dataDirectory)
       this.#detachEvents?.()
       this.#detachEvents = chrome.cdp.onEvent((event) => { void this.#onCdpEvent(event) })
@@ -280,12 +288,7 @@ export class ChromeBrowserBackend {
       await chrome.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => undefined)
       this.#chrome = chrome
       return chrome
-    })().catch((error: unknown) => {
-      this.#launch = undefined
-      throw error
     })
-    void failed
-    return this.#launch
   }
 
   async #applyViewport(chrome: ManagedChrome, session: ChromeSession): Promise<void> {
@@ -323,6 +326,12 @@ export class ChromeBrowserBackend {
     const chrome = this.#chrome
     if (!chrome || session.closed) return
     const pending = pendingChromeCommands({ commands, commandSerial }, session.acknowledged)
+    // New work supersedes the previous failure: without this the surface would keep hiding the page behind
+    // an error banner that describes a navigation the user already moved on from.
+    if (shouldClearChromeError(pending.length, session.error !== undefined)) {
+      session.error = undefined
+      this.#emitState(session, { error: undefined })
+    }
     for (const command of pending) {
       if (session.closed) return
       const planned = planChromeCommand(command)
@@ -437,7 +446,7 @@ export class ChromeBrowserBackend {
   #onChromeClosed(chrome: ManagedChrome): void {
     if (this.#chrome !== chrome) return
     this.#chrome = undefined
-    this.#launch = undefined
+    this.#launchFlight.clear()
     this.#lastError = 'Chrome exited. The next navigation starts it again.'
     for (const session of this.#sessions.values()) {
       session.error = this.#lastError

@@ -234,23 +234,27 @@ function processIsAlive(pid: number): boolean {
 /**
  * Reclaim a lock whose holder is gone, without ever unlinking a file that might belong to someone.
  *
- * The replacement is a rename of our own pid file over the leftover one, immediately re-read: only the
- * process whose pid survived is the owner, so the loser of a simultaneous takeover sees the winner and
- * reports contention rather than proceeding. The `wx` create that follows normal operation still refuses
- * an existing lock, so a live owner is never displaced by this path.
+ * The exclusive step is moving the leftover aside: `rename` succeeds for exactly one racer and fails with
+ * `ENOENT` for the rest, so two processes cannot both conclude they reclaimed the same lock. Replacing the
+ * file in place could not do this - both racers would take their own success as proof of ownership. After
+ * winning the move, the lock is created with the ordinary exclusive create, so a contender that claimed it
+ * in the meantime keeps it: this path fails closed rather than displacing a live owner.
  */
 function takeOverStaleLock(lockPath: string, holder: number): boolean {
   const entry = lstatSync(lockPath, { throwIfNoEntry: false })
   if (!entry || entry.isSymbolicLink()) return false
   if (Date.now() - entry.mtimeMs < STALE_LOCK_SETTLE_MS) return false
   if (readLockPid(lockPath) !== holder) return false
-  const temporary = `${lockPath}.takeover-${process.pid}`
+  const quarantine = `${lockPath}.stale-${process.pid}`
   try {
-    writeFileSync(temporary, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600 })
-    renameSync(temporary, lockPath)
+    renameSync(lockPath, quarantine)
   } catch {
-    rmSync(temporary, { force: true })
     return false
+  }
+  try {
+    if (!tryCreateLockFile(lockPath)) return false
+  } finally {
+    rmSync(quarantine, { force: true })
   }
   return readLockPid(lockPath) === process.pid
 }

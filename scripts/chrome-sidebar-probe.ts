@@ -45,7 +45,7 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>Heddlew
 <input id="text" style="position:absolute;left:24px;top:24px;width:220px;height:32px">
 <button id="go" style="position:absolute;left:24px;top:80px;width:180px;height:40px">Go</button>
 <button id="hist" style="position:absolute;" onclick="location.href='/second'">History</button>
-<button id="pop" style="position:absolute;left:24px;top:200px;width:180px;height:40px" onclick="window.open('/second','_blank')">Pop</button>
+<button id="pop" style="position:absolute;left:24px;top:200px;width:180px;height:40px" onclick="window.open('/popup','_blank')">Pop</button>
 <script>
   window.__clicked = false
   window.__keys = []
@@ -60,6 +60,14 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>Heddlew
 </body></html>`
 
 const second = '<!doctype html><html><head><title>Heddlework Second</title></head><body>second page</body></html>'
+const popup = '<!doctype html><html><head><title>Heddlework Popup</title></head><body>popup page</body></html>'
+
+// Checked before any probe resource exists: a host without Chrome should skip without leaving a temp root
+// behind, which is what the early exit used to do by bypassing the cleanup below.
+if (!findChromeExecutable()) {
+  console.log('SKIP  no Chrome or Chromium executable was found on this host')
+  process.exit(0)
+}
 
 let fixtureHits = 0
 const server = Bun.serve({
@@ -67,6 +75,7 @@ const server = Bun.serve({
   fetch(request) {
     const path = new URL(request.url).pathname
     if (path === '/second') return new Response(second, { headers: { 'content-type': 'text/html' } })
+    if (path === '/popup') return new Response(popup, { headers: { 'content-type': 'text/html' } })
     fixtureHits += 1
     return new Response(fixture, { headers: { 'content-type': 'text/html' } })
   },
@@ -103,6 +112,14 @@ async function reconcile(): Promise<void> {
   for (const tabId of backend.openTabIds) if (!live.has(tabId)) await backend.close(tabId)
 }
 
+/** The host's reconcile step without the serialization: every tab asks for its session at once. */
+async function reconcileConcurrently(): Promise<void> {
+  const tabs = service.getSnapshot().tabs.filter((tab) => tab.materialized && tab.url)
+  await Promise.all(tabs.map((tab) => backend.open({ tabId: tab.id, generation: tab.generation, profileId: tab.profileId, incognito: false, viewport: VIEWPORT })))
+  for (const tab of tabs) watch(tab.id, tab.generation)
+  await Promise.all(tabs.map((tab) => backend.applyCommands(tab.id, tab.generation, tab.commands, tab.commandSerial)))
+}
+
 /** Read page state back through the same session the surface uses. */
 async function evaluate(tabId: string, expression: string): Promise<unknown> {
   return backend.evaluate(tabId, expression)
@@ -110,22 +127,23 @@ async function evaluate(tabId: string, expression: string): Promise<unknown> {
 
 let exitCode = 0
 try {
-  if (!findChromeExecutable()) {
-    console.log('SKIP  no Chrome or Chromium executable was found on this host')
-    process.exit(0)
-  }
-
+  // Two tabs exist before Chrome does, and they are opened at the same instant: this is the race that must
+  // share one app-owned browser, because a second launch against the same profile directory fails.
   const tabId = service.createTab({ address: base })
+  const racingTabId = service.createTab({ address: `${base}second` })
+  await reconcileConcurrently()
   await reconcile()
   await backend.setViewport(tabId, VIEWPORT.width, VIEWPORT.height)
   await reconcile()
 
+  // The title is Chrome's, reported after the load event, so it is waited for rather than asserted early.
   const ready = await waitFor('the fixture to load', () => {
     const tab = service.getSnapshot().tabs.find((candidate) => candidate.id === tabId)
-    return tab && tab.status === 'ready' && tab.url === base ? tab : undefined
+    return tab && tab.status === 'ready' && tab.url === base && tab.title === 'Heddlework Chrome Fixture' ? tab : undefined
   })
   record('a tab navigates through the service command queue', ready.url === base && ready.title === 'Heddlework Chrome Fixture', `url=${ready.url} title=${ready.title}`)
   record('Chrome frames reach the surface', await waitFor('a jpeg frame', () => (frames.get(tabId) ?? 0) > 0 ? true : undefined).catch(() => false) === true, `${frames.get(tabId) ?? 0} frames`)
+  record('two tabs opened at once share one Chrome', await waitFor('the racing tab to stream too', () => (frames.get(racingTabId) ?? 0) > 0 ? true : undefined, 20_000).catch(() => false) === true, `${frames.get(racingTabId) ?? 0} frames on the second tab`)
 
   // Input lands where the planner says it does: measure the real element, plan a click, dispatch it.
   const box = await evaluate(tabId, "(() => { const rect = document.getElementById('go').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })()") as { x: number; y: number }
@@ -178,11 +196,11 @@ try {
   const popPressed = planChromePointer({ x: popBox.x, y: popBox.y, button: 0, clickCount: 1 }, bounds, 'mousePressed')
   const popReleased = planChromePointer({ x: popBox.x, y: popBox.y, button: 0, clickCount: 1 }, bounds, 'mouseReleased')
   if (popPressed && popReleased) await backend.input(tabId, [{ method: 'Input.dispatchMouseEvent', params: popPressed }, { method: 'Input.dispatchMouseEvent', params: popReleased }])
+  // Found by its own address: any-other-tab would be satisfied by the tab the race left open.
   const popupTab = await waitFor('the popup to become a tab', () => {
-    const tabs = service.getSnapshot().tabs
-    return tabs.length > 1 ? tabs.find((tab) => tab.id !== tabId) : undefined
-  }, 10_000).catch(() => undefined)
-  record('a page popup becomes an app-managed tab', popupTab?.url === `${base}second`, popupTab?.url ?? 'no popup tab')
+    return service.getSnapshot().tabs.find((tab) => tab.url === `${base}popup`)
+  }, 12_000).catch(() => undefined)
+  record('a page popup becomes an app-managed tab', popupTab !== undefined, popupTab ? `url=${popupTab.url}` : 'no popup tab')
 } catch (error) {
   record('probe completed without an unexpected failure', false, error instanceof Error ? error.message : String(error))
 } finally {

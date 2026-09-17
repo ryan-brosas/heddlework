@@ -109,6 +109,35 @@ describe('browser profile locks', () => {
     service.dispose()
   })
 
+  it('lets exactly one process reclaim the same stale lock', async () => {
+    const { dataRoot, canonical } = storage()
+    stubProfiles(canonical)
+    staleLock(`${canonical}.lock`, await deadPid())
+    staleLock(`${canonical}/profiles.lock`, await deadPid())
+
+    // Four processes race the same leftover lock; the winner holds it while the others try.
+    const script = join(canonical, 'claim-child.ts')
+    writeFileSync(script, [
+      `import { claimBrowserDataRoot } from ${JSON.stringify(new URL('../src/browser/persistence.ts', import.meta.url).pathname)}`,
+      `const claim = claimBrowserDataRoot(${JSON.stringify(dataRoot)}, false)`,
+      'console.log(claim.acquired ? "ACQUIRED" : "NO")',
+      'await Bun.sleep(2_500)',
+    ].join('\n'), 'utf8')
+
+    const children = Array.from({ length: 4 }, () => Bun.spawn(['bun', script], {
+      cwd: canonical,
+      stdout: 'pipe',
+      stderr: 'ignore',
+      stdin: 'ignore',
+    }))
+    const outputs = await Promise.all(children.map(async (child) => {
+      const text = await new Response(child.stdout).text()
+      await child.exited
+      return text
+    }))
+  expect(outputs.filter((text) => text.includes('ACQUIRED'))).toHaveLength(1)
+  }, 30_000)
+
   it('still reports contention when another process owns the storage', () => {
     const { dataRoot, canonical } = storage()
     staleLock(`${canonical}.lock`, process.pid)
