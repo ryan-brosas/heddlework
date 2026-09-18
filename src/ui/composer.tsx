@@ -11,6 +11,7 @@ import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from
 import { attachClipboardImage, draftBeforeNativePaste, hasSubmittableDraft, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
 import { nativeClipboardEditing } from './clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
+import { createPasteAction } from './paste-feedback.ts'
 import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -26,6 +27,21 @@ const PRIMARY_ACTION_SIZE = 34
 export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchService; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
+  /**
+   * The fallback paste's clipboard read. This path owns the whole gesture - the runtime does not bind the
+   * desktop clipboard keys - so a read that yields nothing is reported through the notice stream instead of
+   * looking like a dead key. The `Ctrl+V` half below only adds an image on top of the runtime's own text
+   * insertion, so it stays silent.
+   */
+  const pasteAction = useMemo(
+    () => createPasteAction({
+      read: readClipboardText,
+      onFailure: (failure) => { if (failure) controller.notify('error', failure) },
+    }),
+    [controller],
+  )
+  // Withdraw the action with the component, like every other registration the composer holds.
+  useEffect(() => () => pasteAction.dispose(), [pasteAction])
   /** The paste the keystroke started, so a submit that arrives first cannot send the pre-paste draft. */
   const pendingPaste = useRef<Promise<void> | null>(null)
   /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
@@ -187,7 +203,9 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         keepComposerFocus()
         return
       }
-      const text = await readClipboardText()
+      const text = await pasteAction.paste()
+      // The action has reported a clipboard that yielded nothing, and a superseded attempt inserts
+      // nothing either: the newer paste owns both the insertion and the notice.
       if (!text) return
       if (!pasteTargetsSameSession(startedSessionFile, currentSessionFile())) return
       const current = controller.getSnapshot().editorText

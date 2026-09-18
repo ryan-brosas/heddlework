@@ -116,6 +116,12 @@ this repository's fallback stands down - the copy listener in `src/main.tsx` and
 handler - so one keystroke never has two owners. A runtime that does not answer keeps the fallback, which is
 also what the web companion uses, and the chosen mode is logged at startup.
 
+That fallback owns the whole paste - `Shift+Insert` is what Omarchy sends for `Ctrl+V` - so a clipboard that
+yields no text is reported through the notice stream (`PASTE_FAILED_MESSAGE` in `src/ui/paste-feedback.ts`)
+instead of looking like a dead key; the `Ctrl+V` half of the fallback only adds an image on top of the
+runtime's own insertion, so it stays silent. `scripts/web-dom-probe.ts` drives that path in the DOM host,
+where the runtime never answers the capability.
+
 **Which thread it belongs to.** A clipboard read, an attached image, and a submit that waited for a paste
 all outlive a click on another thread, because the composer is not remounted on a switch. Each step
 re-checks the session file it started in (`pasteTargetsSameSession`) and drops a late result instead of
