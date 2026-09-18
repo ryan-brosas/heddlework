@@ -8,7 +8,8 @@ import { Icon } from './icons.tsx'
 import { IconButton, Button } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors } from './theme.ts'
-import { useBrowserSnapshot } from './browser-context.tsx'
+import { useBrowserSnapshot, useOptionalChromeBackend } from './browser-context.tsx'
+import { ChromeBrowserSurface } from './browser-chrome-surface.tsx'
 import { useWindowMetrics } from './window-metrics.tsx'
 import { useExternalLink } from './external-launch.ts'
 import { sampleBrowserPlacement, type BrowserPlacementSample } from './browser-placement.ts'
@@ -33,7 +34,11 @@ export function BrowserPanel({
   const profile = snapshot.profiles.find((candidate) => candidate.id === activeTab?.profileId)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const systemBrowser = useExternalLink()
+  const chromeBackend = useOptionalChromeBackend()
   const unavailable = !snapshot.engine.available
+  // Chrome renders through the frames it streams to the panel, so the measured native surface slot is
+  // not used: it would place an element that this build has no native browser for.
+  const chromeSurface = snapshot.engine.kind === 'chrome' ? chromeBackend : undefined
   const body = browserPanelBody({ available: !unavailable, hasTab: Boolean(activeTab), hasUrl: Boolean(activeTab?.url) })
   const chrome = browserPanelChrome({ available: !unavailable, hasTab: Boolean(activeTab), profileMenuOpen })
 
@@ -79,7 +84,11 @@ export function BrowserPanel({
       ) : null}
       <div testId="browser-panel-body" style={{ position: 'relative', flexGrow: 1, minHeight: 0, overflow: 'hidden', backgroundColor: colors.card }}>
         {body === 'surface' && activeTab ? (
-          <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
+          chromeSurface ? (
+            <ChromeBrowserSurface backend={chromeSurface} tabId={activeTab.id} generation={activeTab.generation} visible={!profileMenuOpen && !activeTab.error} />
+          ) : (
+            <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
+          )
         ) : body === 'empty' && activeTab ? (
           <BrowserEmptyState service={service} tab={activeTab} />
         ) : null}
@@ -313,7 +322,7 @@ function ProfileMenu({
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 5, paddingRight: 3 }}>
         <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <text style={{ color: colors.text, fontSize: 11, fontWeight: 650 }}>Browser profiles</text>
-          <text style={{ color: colors.textFaint, fontSize: 8 }}>{isolation === 'full' ? 'Isolated cookies, storage, cache, and logins' : 'System engine: profile isolation may be limited'}</text>
+          <text style={{ color: colors.textFaint, fontSize: 8 }}>{isolation === 'full' ? 'Isolated cookies, storage, cache, and logins' : 'Limited isolation: persistent profiles share this engine\u2019s browser data'}</text>
         </div>
         <IconButton icon="x" label="Close profiles" onClick={onClose} />
       </div>
