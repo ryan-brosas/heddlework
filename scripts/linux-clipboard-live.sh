@@ -34,8 +34,10 @@ chmod 700 "$root/runtime"
 # Logging shims: they delegate to the real tools, so the clipboard stays real while every call is
 # recorded for evidence (which arguments the app used, what its own read returned). The real paths are
 # resolved here and must not come from the shim directory, or the shim would call itself.
-real_paste=$(command -v wl-paste || true)
-real_copy=$(command -v wl-copy || true)
+# `type -P` reports only an executable found on PATH: `command -v` would return a bare name for a
+# shell function, which the generated wrapper would then resolve through the shim directory and call.
+real_paste=$(type -P wl-paste || true)
+real_copy=$(type -P wl-copy || true)
 for helper in "$real_paste" "$real_copy"; do
   case "$helper" in
     "" | "$root"/*) echo "wl-paste and wl-copy are required and must not resolve inside $root/bin" >&2; exit 1 ;;
