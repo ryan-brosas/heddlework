@@ -177,7 +177,7 @@ try {
   if (controlMarker === '') {
     inconclusive.push('composed-message-submits')
     console.error(`INCONCLUSIVE composed-message-submits: five typed probes did not submit; rows=${JSON.stringify(await rows())} send=${sendReady}${stderr === '' ? '' : ` stderr=${stderr.slice(-300)}`}`)
-  } else pass('composed-message-submits', `a typed message submitted as exactly ${JSON.stringify(controlMarker)} after ${await (async () => { return 'calibration' })()}`)
+  } else pass('composed-message-submits', `a typed message submitted as exactly ${JSON.stringify(controlMarker)} after calibration`)
 
   // Paste: the real clipboard text must arrive in the draft and submit byte for byte.
   const pasteMarker = `${marker}-paste`

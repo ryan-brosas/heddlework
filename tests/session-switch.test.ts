@@ -239,6 +239,18 @@ class NavigatingTransport implements AgentTransport {
   private emitStatus(status: TransportStatus): void { for (const listener of this.statuses) listener(status) }
 }
 
+/** Refuses session creation the way Pi's own before-switch hook can, once per request. */
+class RefusingNewSessionTransport extends SwitchingTransport {
+  override async request<T = unknown>(command: RpcCommand): Promise<T> {
+    if (command.type === 'new_session') {
+      // Record it the way the base transport does, so the test can prove where the request went.
+      this.requests.push(command)
+      return { cancelled: true } as T
+    }
+    return super.request<T>(command)
+  }
+}
+
 describe('clickable session switching', () => {
   it('switches to a dedicated harness and rehydrates the selected transcript', async () => {
     const transport = new SwitchingTransport()
@@ -261,6 +273,40 @@ describe('clickable session switching', () => {
       // The old harness was left untouched: no abort, no switch_session after the click.
       expect(transport.requests.slice(settledRequests)).toEqual([])
       expect(pool.spawned.has('/tmp/two.jsonl')).toBe(true)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('leaves the previous harness attached and stops the fresh one when Pi refuses', async () => {
+    const transport = new SwitchingTransport()
+    const pool = createTransportPool(transport)
+    const refusals: RefusingNewSessionTransport[] = []
+    const controller = new WorkbenchController(transport, '/tmp/project', {
+      ...pool.deps(),
+      createSessionTransport: (sessionPath: string) => {
+        if (sessionPath) return pool.factory(sessionPath)
+        const fresh = new RefusingNewSessionTransport()
+        refusals.push(fresh)
+        return fresh
+      },
+    })
+    try {
+      await controller.start()
+      const settledRequests = transport.requests.length
+      const before = controller.getSnapshot().session.sessionFile
+      await controller.newSession()
+      expect(refusals).toHaveLength(1)
+      const fresh = refusals[0]!
+      expect(fresh.requests.filter((command) => command.type === 'new_session')).toHaveLength(1)
+      // The harness that will not own a session is stopped instead of being left attached.
+      expect(fresh.stopCalls).toBe(1)
+      expect(controller.getSnapshot().session.sessionFile).toBe(before)
+      // The app stayed on the harness that owns the thread the state still names: the next prompt
+      // reaches it, and never the harness Pi refused to move.
+      await controller.submit('still the first thread')
+      expect(transport.requests.slice(settledRequests).some((command) => command.type === 'prompt')).toBe(true)
+      expect(fresh.requests.some((command) => command.type === 'prompt')).toBe(false)
     } finally {
       await controller.dispose()
     }
@@ -313,6 +359,9 @@ describe('clickable session switching', () => {
       await controller.start()
       transport.emitEvent({ type: 'agent_start' })
       transport.emitEvent({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: { command: 'sleep 30' } })
+      // Pi's showStatus line is part of the live overlay, so it has to come back with the thread rather
+      // than being cleared like a session-scoped transcript.
+      transport.emitEvent({ type: 'extension_ui_request', id: 'live-status', method: 'notify', notifyType: 'info', message: 'TPS 25.6 tok/s' })
       expect(controller.getSnapshot().session.isStreaming).toBe(true)
       expect(controller.getSnapshot().liveTools).toHaveLength(1)
       const settledRequests = transport.requests.length
@@ -320,10 +369,12 @@ describe('clickable session switching', () => {
       expect(transport.requests.slice(settledRequests)).toEqual([])
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().sessionActivity['/tmp/one.jsonl']).toBe(true)
+      expect(controller.getSnapshot().statusLines).toHaveLength(0)
       await controller.switchSession(sessions[0]!)
       expect(controller.getSnapshot().session.isStreaming).toBe(true)
       expect(controller.getSnapshot().activity).toBe('Working')
       expect(controller.getSnapshot().liveTools).toHaveLength(1)
+      expect(controller.getSnapshot().statusLines.map((line) => line.text)).toEqual(['TPS 25.6 tok/s'])
     } finally {
       await controller.dispose()
     }

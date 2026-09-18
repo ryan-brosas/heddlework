@@ -32,11 +32,19 @@ mkdir -p "$root/config" "$root/runtime" "$root/cache" "$root/data" "$root/home" 
 chmod 700 "$root/runtime"
 
 # Logging shims: they delegate to the real tools, so the clipboard stays real while every call is
-# recorded for evidence (which arguments the app used, what its own read returned).
+# recorded for evidence (which arguments the app used, what its own read returned). The real paths are
+# resolved here and must not come from the shim directory, or the shim would call itself.
+for helper in wl-paste wl-copy; do
+  resolved=$(command -v "$helper" || true)
+  case "$resolved" in
+    "" | "$root"/*) echo "$helper is required and must not resolve inside $root/bin" >&2; exit 1 ;;
+  esac
+  eval "real_${helper#wl-}=\$resolved"
+done
 cat > "$root/bin/wl-paste" <<EOF
 #!/bin/sh
 out=\$(mktemp)
-/usr/bin/wl-paste "\$@" > "\$out" 2>/dev/null
+$real_paste "\$@" > "\$out" 2>/dev/null
 code=\$?
 printf '%s wl-paste args=[%s] exit=%s bytes=%s head=%s\n' "\$(date +%H:%M:%S.%3N)" "\$*" "\$code" "\$(wc -c < "\$out")" "\$(head -c 40 "\$out")" >> "$root/helper.log"
 cat "\$out"
@@ -47,7 +55,7 @@ chmod 755 "$root/bin/wl-paste"
 cat > "$root/bin/wl-copy" <<EOF
 #!/bin/sh
 printf '%s wl-copy args=[%s]\n' "\$(date +%H:%M:%S.%3N)" "\$*" >> "$root/helper.log"
-exec /usr/bin/wl-copy "\$@"
+exec $real_copy "\$@"
 EOF
 chmod 755 "$root/bin/wl-copy"
 
@@ -60,7 +68,7 @@ env -u DISPLAY XDG_RUNTIME_DIR="$root/runtime" WAYLAND_DISPLAY="$parent_display"
   LIBSEAT_BACKEND=seatd SEATD_SOCK="$root/no-seat.sock" \
   Hyprland -c "$root/hyprland.conf" > "$root/compositor.log" 2>&1 &
 compositor_pid=$!
-cleanup() { kill "$compositor_pid" 2>/dev/null || true; }
+cleanup() { kill "$compositor_pid" 2>/dev/null || true; rm -rf "$root"; }
 trap cleanup EXIT
 
 for _ in $(seq 1 60); do

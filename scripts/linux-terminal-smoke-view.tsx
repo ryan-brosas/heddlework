@@ -28,7 +28,7 @@ export function TerminalSmokeView({
   const service = useMemo(() => new TerminalSessionService({ cwd: process.cwd() }), [])
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [evidence, setEvidence] = useState<string | undefined>(undefined)
-  // Clipbocord_FIX outcomes are recorded per mount: the lane asserts on one shortcut attempt at a time.
+  // Clipboard outcomes are recorded per mount: the lane asserts on one shortcut attempt at a time.
   const recorder = useMemo(() => createTerminalSmokeCopyRecorder(copy), [copy])
 
   useEffect(() => {

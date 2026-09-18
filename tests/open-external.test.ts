@@ -21,7 +21,8 @@ describe('external launch reporting', () => {
 
   it('reports whether the launcher started, without starting one', async () => {
     // The launcher is injectable so this stays a real spawn without opening a browser here.
-    expect(await openExternal('https://example.com', { command: { command: '/bin/true', args: [] } })).toBe(true)
+    // The launcher is portable: this asserts that a command was started, not that a POSIX tool exists.
+    expect(await openExternal('https://example.com', { command: { command: process.execPath, args: ['-e', '0'] } } as never)).toBe(true)
     expect(await openExternal('https://example.com', { command: { command: '/dev/null/heddlework-opener', args: [] } })).toBe(false)
     expect(await openPath('/tmp/project', { command: { command: '/dev/null/heddlework-opener', args: [] } })).toBe(false)
   }, 10_000)

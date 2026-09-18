@@ -73,10 +73,13 @@ describe('chrome key planning', () => {
     const plan = planChromeKey({ key: 'c', ctrl: true })
     expect(plan.kind).toBe('press')
     if (plan.kind !== 'press') throw new Error('expected a press plan')
-    expect(plan.params).toMatchObject({
+    // A press is a whole keystroke: the page sees the key go down and come back up.
+    expect(plan.calls).toHaveLength(2)
+    expect(plan.calls[0]).toMatchObject({
       method: 'Input.dispatchKeyEvent',
       params: { type: 'keyDown', modifiers: 2, text: '', key: 'c', code: 'KeyC', windowsVirtualKeyCode: 67 },
     })
+    expect(plan.calls[1]).toMatchObject({ params: { type: 'keyUp', key: 'c', code: 'KeyC', windowsVirtualKeyCode: 67, text: '' } })
   })
 
   it('sends printable characters as text and named keys as key events', () => {
@@ -85,7 +88,8 @@ describe('chrome key planning', () => {
     const enter = planChromeKey({ key: 'Enter' })
     expect(enter.kind).toBe('press')
     if (enter.kind !== 'press') throw new Error('expected a press plan')
-    expect(enter.params.params).toMatchObject({ key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    expect(enter.calls[0]?.params).toMatchObject({ key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    expect(enter.calls[1]?.params).toMatchObject({ type: 'keyUp', key: 'Enter' })
   })
 
   it('never types a key name into the page', () => {

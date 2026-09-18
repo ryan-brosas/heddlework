@@ -89,7 +89,7 @@ export function ChromeBrowserSurface({ backend, tabId, generation, visible, read
     return () => { if (timer !== undefined) clearTimeout(timer) }
   }, [backend, renderer, tabId])
 
-  const send = useCallback((calls: ChromeInputCall[]) => { void backend.input(tabId, calls) }, [backend, tabId])
+  const send = useCallback((calls: readonly ChromeInputCall[]) => { void backend.input(tabId, calls) }, [backend, tabId])
 
   const pointer = useCallback((type: 'mousePressed' | 'mouseReleased' | 'mouseMoved', event: ChromeSurfaceEvent) => {
     const current = bounds.current
@@ -112,7 +112,7 @@ export function ChromeBrowserSurface({ backend, tabId, generation, visible, read
         send([{ method: 'Input.insertText', params: { text: plan.text } }])
         break
       case 'press':
-        send([{ method: plan.params.method as string, params: (plan.params.params ?? {}) as Record<string, unknown> }])
+        send(plan.calls)
         break
       case 'paste':
         // Chrome's headless clipboard is not the desktop clipboard, so the paste gesture reads the
