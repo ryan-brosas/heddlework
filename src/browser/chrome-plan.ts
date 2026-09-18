@@ -6,7 +6,7 @@
  * repository - a command applied twice, and input landing on the wrong region - are decidable in a
  * unit test instead of only in a live browser.
  */
-import type { BrowserCommand, BrowserCommandKind } from './types.ts'
+import type { BrowserCommand, BrowserCommandKind, ChromeInputCall } from './types.ts'
 
 /** What one pending browser command means for Chrome. */
 export type ChromeCommandPlan =
@@ -93,8 +93,22 @@ export interface ChromeKeyEvent extends ChromeModifiers {
 export type ChromeKeyPlan =
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'paste' }
-  | { readonly kind: 'press'; readonly params: Record<string, unknown> }
+  // A press is a whole keystroke, so it carries the ordered calls that produce one.
+  | { readonly kind: 'press'; readonly calls: readonly ChromeInputCall[] }
   | { readonly kind: 'ignore' }
+
+/**
+ * One keystroke: the page has to see the key go down and come back up, exactly as a real keyboard sends it.
+ *
+ * A press that only went down left `keyup` handlers - and every affordance built on them - waiting for a
+ * release that never arrived.
+ */
+function keyCalls(params: Record<string, unknown>): readonly ChromeInputCall[] {
+  return [
+    { method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', ...params } },
+    { method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', ...params, text: '' } },
+  ]
+}
 
 /** Named keys that carry no printable character but must reach the page as a real key event. */
 const NAMED_KEYS: Readonly<Record<string, { code: string; key: string; keyCode: number }>> = Object.freeze({
@@ -142,18 +156,14 @@ export function planChromeKey(event: ChromeKeyEvent): ChromeKeyPlan {
     if (!named && !isPrintable(event.key) && !isPrintable(event.keyChar)) return { kind: 'ignore' }
     return {
       kind: 'press',
-      params: {
-        method: 'Input.dispatchKeyEvent',
-        params: {
-          type: 'keyDown',
-          modifiers: modifierBits(event),
-          text: '',
-          unmodifiedText: '',
-          key: named?.key ?? event.key,
-          code: named?.code ?? codeForPrintable(event.key),
-          windowsVirtualKeyCode: named?.keyCode ?? virtualKeyForPrintable(event.key),
-        },
-      },
+      calls: keyCalls({
+        modifiers: modifierBits(event),
+        text: '',
+        unmodifiedText: '',
+        key: named?.key ?? event.key,
+        code: named?.code ?? codeForPrintable(event.key),
+        windowsVirtualKeyCode: named?.keyCode ?? virtualKeyForPrintable(event.key),
+      }),
     }
   }
   if (isPrintable(event.keyChar)) return { kind: 'text', text: event.keyChar }
@@ -162,10 +172,7 @@ export function planChromeKey(event: ChromeKeyEvent): ChromeKeyPlan {
   if (!named) return { kind: 'ignore' }
   return {
     kind: 'press',
-    params: {
-      method: 'Input.dispatchKeyEvent',
-      params: { type: 'keyDown', modifiers: modifierBits(event), text: named.key === ' ' ? ' ' : '', key: named.key, code: named.code, windowsVirtualKeyCode: named.keyCode },
-    },
+    calls: keyCalls({ modifiers: modifierBits(event), text: named.key === ' ' ? ' ' : '', key: named.key, code: named.code, windowsVirtualKeyCode: named.keyCode }),
   }
 }
 

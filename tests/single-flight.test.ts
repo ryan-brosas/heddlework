@@ -34,7 +34,7 @@ describe('single flight', () => {
 
     await expect(flight.run(failing)).rejects.toThrow('Chrome could not start')
     expect(flight.pending).toBe(false)
-    // The same rejection is handed to a caller that joined the failed attempt.
+    // A caller that arrives after the failure starts a fresh attempt: the failed one is never reused.
     const joined = flight.run(() => Promise.resolve('recovered'))
     expect(await joined).toBe('recovered')
     expect(attempts).toBe(1)

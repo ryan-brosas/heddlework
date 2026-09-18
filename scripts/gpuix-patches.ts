@@ -55,7 +55,16 @@ export function runtimePatchSets(source: string, patchesRoot: string): RuntimePa
   return [
     { name: 'gpuix', directory: source, paths: RUNTIME_SOURCE_PATHS, patches: listRuntimePatches(resolve(patchesRoot, 'gpuix')) },
     { name: 'zed', directory: resolve(source, 'zed'), paths: ['.'], patches: listRuntimePatches(resolve(patchesRoot, 'zed')) },
-  ].filter((set) => existsSync(resolve(set.directory, '.git')))
+    // A set that declares patches but has no checkout behind it cannot be applied or verified, so it is
+    // reported instead of dropped: silently skipping it would build native source no patch explains.
+    // A set with no patches is filtered, which is what a patches root without a set for a repository means.
+  ].filter((set) => {
+    const checkout = existsSync(resolve(set.directory, '.git'))
+    if (!checkout && set.patches.length > 0) {
+      throw new Error(`${set.name}: patches are declared but ${set.directory} is not a checkout`)
+    }
+    return checkout
+  })
 }
 
 /** Identity of the whole declared patch set: a changed patch in either repository invalidates a cache. */
@@ -118,7 +127,8 @@ function withScratchIndex<T>(directory: string, paths: readonly string[], body: 
   const environment = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') }
   try {
     git(directory, ['read-tree', 'HEAD'], environment)
-    const existingPaths = paths.filter((path) => existsSync(resolve(directory, path)) || git(directory, ['ls-files', '--', path]).length > 0)
+    // The scratch index is the view being checked, so the existence probe has to read it too.
+    const existingPaths = paths.filter((path) => existsSync(resolve(directory, path)) || git(directory, ['ls-files', '--', path], environment).length > 0)
     if (existingPaths.length > 0) git(directory, ['add', '-A', '--', ...existingPaths], environment)
     return body(environment)
   } finally {

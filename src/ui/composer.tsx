@@ -8,7 +8,7 @@ import { Icon } from './icons.tsx'
 import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
-import { attachClipboardImage, draftBeforeNativePaste, hasSubmittableDraft, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText } from './clipboard-paste-text.ts'
+import { attachClipboardImage, draftBeforeNativePaste, hasSubmittableDraft, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText, sessionIdentity } from './clipboard-paste-text.ts'
 import { nativeClipboardEditing } from './clipboard-ownership.ts'
 import { resolveInsertKeyCommand } from './insert-key.ts'
 import { createPasteAction } from './paste-feedback.ts'
@@ -47,7 +47,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
   const pendingPasteClaimed = useRef(false)
   /** The thread a session change is detected against, so paste bookkeeping does not outlive it. */
-  const sessionFileRef = useRef(state.session.sessionFile ?? '')
+  const sessionIdentityRef = useRef(sessionIdentity(state.session))
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
@@ -57,12 +57,12 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   // A switch drops the paste bookkeeping: what a previous thread's clipboard read produced must not be
   // submitted into the thread that is open now.
   useEffect(() => {
-    const sessionFile = state.session.sessionFile ?? ''
-    if (sessionFileRef.current === sessionFile) return
-    sessionFileRef.current = sessionFile
+    const identity = sessionIdentity(state.session)
+    if (sessionIdentityRef.current === identity) return
+    sessionIdentityRef.current = identity
     pendingPaste.current = null
     pendingPasteClaimed.current = false
-  }, [state.session.sessionFile])
+  }, [state.session.sessionFile, state.session.sessionId])
   const composerId = useRef<number | undefined>(undefined)
   const setComposerNode = useCallback((instance: { id: number } | null) => {
     composerId.current = instance?.id

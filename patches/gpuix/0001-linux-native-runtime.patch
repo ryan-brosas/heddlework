@@ -120,16 +120,19 @@ diff --git a/packages/native/src/lib.rs b/packages/native/src/lib.rs
 index 3f2ab59..fa4b2c0 100644
 --- a/packages/native/src/lib.rs
 +++ b/packages/native/src/lib.rs
-@@ -22,6 +22,13 @@ mod element_tree;
+@@ -22,6 +22,16 @@ mod element_tree;
  mod markdown;
  mod motion;
  mod renderer;
 +
 +// Window-parented XDG portal primitives (ported from the historical heddlework
 +// patch tree; upstream into the fork branch before the next pin bump).
-+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
++// They build on the platforms whose renderer exposes the UI-command channel they drive
++// (`recv_ui_response` and `UiCommand` are compiled for Windows, Linux and FreeBSD): a wider
++// gate makes the macOS build fail on an unresolved import.
++#[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 +mod portal_file_chooser;
-+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
++#[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 +mod system_appearance;
  // The data model is public so `examples/bench_serde.rs` measures the real
  // types instead of a copy that silently drifts from them.

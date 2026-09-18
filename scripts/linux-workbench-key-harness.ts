@@ -243,7 +243,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --type=*)
-      case "${'${1#--type=}'}" in
+      case "\${1#--type=}" in
         text|text/plain) ;;
         *) violation "unsupported mime type: ${'${1#--type=}'}" ;;
       esac
@@ -281,7 +281,7 @@ while [ "$#" -gt 0 ]; do
       type="$2"
       shift 2
       ;;
-    --type=*) type="${'${1#--type=}'}"; shift ;;
+    --type=*) type="\${1#--type=}"; shift ;;
     --no-newline|-n) no_newline=1; shift ;;
     *) violation "unsupported argument: $1" ;;
   esac

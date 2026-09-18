@@ -47,6 +47,17 @@ export interface BrowserCommand {
   value?: string | undefined
 }
 
+/**
+ * One CDP input call, in dispatch order.
+ *
+ * The planner decides what a gesture means and the backend sends it, so the call shape belongs to the
+ * contract they share rather than to either implementation.
+ */
+export interface ChromeInputCall {
+  readonly method: string
+  readonly params: Record<string, unknown>
+}
+
 export interface BrowserNativeState {
   generation: number
   url?: string | undefined

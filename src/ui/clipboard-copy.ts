@@ -6,7 +6,7 @@
  * and this hook only maps the reported outcome onto render state.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { createCopyAction, type ClipboardWriter } from './copy-feedback.ts'
 
@@ -24,13 +24,15 @@ export interface ClipboardCopyControl {
 export function useClipboardCopy(writer: ClipboardWriter = copyTextToClipboard): ClipboardCopyControl {
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [copied, setCopied] = useState(false)
-  const resetTimer = useMemo(() => ({ current: undefined as ReturnType<typeof setTimeout> | undefined }), [])
+  // A holder, not a value: `useMemo` may drop its cache, which would hand the cleanup a fresh object and
+  // cancel the pending reset, leaving the check mark on screen.
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const action = useMemo(() => createCopyAction({ writer, onFailure: setFailure }), [writer])
 
   useEffect(() => () => action.dispose(), [action])
   useEffect(() => () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
-  }, [resetTimer])
+  }, [])
 
   const copy = useCallback((text: string) => {
     void action.copy(text).then((outcome) => {
