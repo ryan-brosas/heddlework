@@ -141,18 +141,31 @@ export class ChromeBrowserBackend {
       return
     }
     if (existing) await this.close(request.tabId)
+    // Hoisted so that one cleanup path can give back whatever this attempt created - including a target
+    // that exists before its session does, when creation succeeded and attachment failed.
+    let chrome: ManagedChrome | undefined
+    let contextId: string | undefined
+    let targetId: string | undefined
+    let contextCounted = false
     try {
-      const chrome = await this.#ensureChrome()
-      const contextId = request.incognito ? await this.#ephemeralContext(chrome, request.profileId) : undefined
-      const { targetId } = await chrome.cdp.send<{ targetId: string }>('Target.createTarget', {
+      chrome = await this.#ensureChrome()
+      contextId = request.incognito ? await this.#ephemeralContext(chrome, request.profileId) : undefined
+      // Counted as soon as this tab owns a context, so the failure path gives back exactly what the
+      // attempt took, and never a context another tab is still using.
+      if (contextId) {
+        this.#contextTabs.set(contextId, (this.#contextTabs.get(contextId) ?? 0) + 1)
+        contextCounted = true
+      }
+      const { targetId: createdTargetId } = await chrome.cdp.send<{ targetId: string }>('Target.createTarget', {
         url: 'about:blank',
         ...(contextId ? { browserContextId: contextId } : {}),
       })
-      const { sessionId } = await chrome.cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true })
+      targetId = createdTargetId
+      const { sessionId } = await chrome.cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: createdTargetId, flatten: true })
       const session: ChromeSession = {
         tabId: request.tabId,
         generation: request.generation,
-        targetId,
+        targetId: createdTargetId,
         sessionId,
         profileId: request.profileId,
         incognito: request.incognito,
@@ -172,27 +185,20 @@ export class ChromeBrowserBackend {
         queue: Promise.resolve(),
         closed: false,
       }
-      if (contextId) this.#contextTabs.set(contextId, (this.#contextTabs.get(contextId) ?? 0) + 1)
       this.#sessions.set(request.tabId, session)
-      try {
-        await chrome.cdp.send('Page.enable', {}, sessionId)
+      await chrome.cdp.send('Page.enable', {}, sessionId)
       await chrome.cdp.send('Runtime.enable', {}, sessionId)
       // Headless pages do not take focus on their own, so focus-dependent UI would never respond.
       await chrome.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => undefined)
-        await this.#applyViewport(chrome, session)
-      } catch (error) {
-        // The tab is registered before its session is usable, so a failed setup has to unregister it:
-        // a lingering entry answers later commands for a session that never opened, and its browser
-        // context would never reach zero tabs and so never be released.
-        this.#sessions.delete(request.tabId)
-        // The target exists already, and a persistent tab has no context to dispose, so it has to be
-        // closed here or every retry would leave an unmanaged page alive until Chrome exits.
-        await chrome.cdp.send('Target.closeTarget', { targetId }).catch(() => undefined)
-        if (contextId) await this.#releaseContext(chrome, contextId).catch(() => undefined)
-        throw error
-      }
+      await this.#applyViewport(chrome, session)
       this.#lastError = undefined
     } catch (error) {
+      // One cleanup path for the whole setup. The tab is registered before its session is usable, and a
+      // target can exist before a session does: leaving either behind answers later commands for a
+      // session that never opened and keeps an unmanaged page alive until Chrome exits.
+      this.#sessions.delete(request.tabId)
+      if (chrome && targetId) await chrome.cdp.send('Target.closeTarget', { targetId }).catch(() => undefined)
+      if (chrome && contextId && contextCounted) await this.#releaseContext(chrome, contextId).catch(() => undefined)
       this.#reportLaunchFailure(error)
     }
   }
