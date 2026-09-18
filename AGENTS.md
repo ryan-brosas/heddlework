@@ -102,7 +102,8 @@ with their implementations.
   negate those two, when generating a mirror patch.
 
 
-- Run the full `check` suite before pushing.
+- Run `bun run verify` before pushing: it is the aggregate CI runs, and `check` alone omits `test:browser`,
+  so a browser-only regression passes locally and fails the required check.
 - Treat an explicit "commit, push, and PR" request as the primary goal: push what is
   verified first, then land review findings as follow-up commits on the same branch.
   Never leave a requested delivery parked locally while expanding scope.
