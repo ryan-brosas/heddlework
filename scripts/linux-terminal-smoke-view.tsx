@@ -33,13 +33,15 @@ export function TerminalSmokeView({
 
   useEffect(() => {
     let cancelled = false
-    void service
+    // Disposal waits for the spawn to settle: disposing while it is still in flight can leave the PTY
+    // behind, because the session this dispose would stop is created after the promise it raced.
+    const spawning = service
       .spawn({ name: 'smoke', shell: '/bin/sh', args: ['-c', TERMINAL_SMOKE_SHELL] })
       .then((id) => { if (!cancelled) setSessionId(id) })
       .catch(() => undefined)
     return () => {
       cancelled = true
-      void service.dispose()
+      void spawning.then(() => service.dispose()).catch(() => undefined)
     }
   }, [service])
 

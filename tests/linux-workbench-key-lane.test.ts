@@ -283,14 +283,14 @@ describe('workbench key lane', () => {
 
   it('reports the insert-key checks as skips when the runtime owns the keys', async () => {
     const { checks, workbench } = await runLane({}, 'native')
-    // The helper-route names and their order stay comparable with a JavaScript-owner run; the two checks the
-    // app still owns sit where the helper-route block was, before the owner-independent ones.
+    // The names and their order stay comparable with a JavaScript-owner run: the same checks appear in the
+    // same order, and the one check the app still owns sits at the end of the helper-route block, before the
+    // owner-independent ones. A skip may only name a check this lane actually emits - the two names this list
+    // used to carry (`native-paste-leaves-text-to-the-runtime`, `paste-reads-image-once`) were emitted by no
+    // branch, so they inflated the skip count with checks that did not exist.
     expect(checks.map((check) => check.name)).toEqual([
-      ...LANE_CHECK_NAMES.slice(0, 5),
-      'native-paste-leaves-text-to-the-runtime',
-      ...LANE_CHECK_NAMES.slice(5, 8),
+      ...LANE_CHECK_NAMES.slice(0, 8),
       'paste-attaches-clipboard-image',
-      'paste-reads-image-once',
       'insert-keys-single-owner',
       ...LANE_CHECK_NAMES.slice(8),
     ])
@@ -302,12 +302,10 @@ describe('workbench key lane', () => {
       'copy-disabled-without-selection',
       'copy-follows-current-selection',
       'shift-insert-pastes-exact-draft',
-      'native-paste-leaves-text-to-the-runtime',
       'duplicate-paste-keeps-exact-copies',
       'paste-disabled-without-focus',
       'paste-disabled-image-only-clipboard',
       'paste-attaches-clipboard-image',
-      'paste-reads-image-once',
     ])
     // The copy checks may carry no byte-level evidence here; the paste route runs for real, the app still
     // attaches the image half, and the app never wrote the clipboard itself for the copy key.

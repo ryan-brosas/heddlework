@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { claimBrowserDataRoot } from '../src/browser/persistence.ts'
 import { BrowserSessionService } from '../src/browser/service.ts'
 
@@ -118,7 +119,7 @@ describe('browser profile locks', () => {
     // Four processes race the same leftover lock; the winner holds it while the others try.
     const script = join(canonical, 'claim-child.ts')
     writeFileSync(script, [
-      `import { claimBrowserDataRoot } from ${JSON.stringify(new URL('../src/browser/persistence.ts', import.meta.url).pathname)}`,
+      `import { claimBrowserDataRoot } from ${JSON.stringify(fileURLToPath(new URL('../src/browser/persistence.ts', import.meta.url)))}`,
       `const claim = claimBrowserDataRoot(${JSON.stringify(dataRoot)}, false)`,
       'console.log(claim.acquired ? "ACQUIRED" : "NO")',
       'await Bun.sleep(2_500)',

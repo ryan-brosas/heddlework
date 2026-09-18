@@ -16,7 +16,7 @@
   live nested-Hyprland lane passes paste byte-for-byte and reports native copy as manual.
 - [x] Lane evidence re-measured after the merge (`af72318`, installed artifact `sha256=41f3f8b9…`): the live
   nested-Hyprland lane reports 4 checks passed and 1 named manual skip, and the stub lane 4 passed with 10
-  named skips. The copy skip now says the runtime's missing-serial diagnostic is not observable on this
+  named skips (8 after the two phantom skip names below were removed on 2026-09-18). The copy skip now says the runtime's missing-serial diagnostic is not observable on this
   build; the copy verdict, and both clipboard stages, are decided by `scripts/linux-clipboard-live-evidence.ts`
   so a failed or timed-out helper can no longer count as evidence.
 - [ ] Device-level acceptance on this machine's own Hyprland session: physical `Ctrl+V`/`Super+C` (including
@@ -131,11 +131,14 @@ Pin the ABI, JS and declarations from one artifact; never publish a pin without 
 
 ```bash
 bun install --frozen-lockfile
-bun run typecheck && bun run typecheck:web
-bun test ./tests
-bun run check          # typecheck + typecheck:web + test + test:performance + web-dom-e2e
+bun run verify         # the aggregate gate CI runs: build:web + test:browser + check + build
+bun run check          # fast subset: typecheck + typecheck:web + test + test:performance + web-dom-e2e
+bun test ./tests       # one file at a time: bun test tests/<name>.test.ts
 bun run build          # HEDDLEWORK_WITHOUT_CEF=1 for browser-free
 ```
+
+`verify` is the one command CI and a prepared checkout both run, so a browser-only regression cannot pass
+`check` locally and then fail the required check. Project `AGENTS.md` owns the gate list.
 
 `check:native` / `check:ai-slop` do not exist in the fresh-fork `package.json`; re-add or drop them from agent
 instructions deliberately.
@@ -232,7 +235,12 @@ each session gets a dedicated harness (`pi --mode rpc --session <file>`, ~4.9 s 
 pointer swap plus the optimistic preview; the previous harness keeps running its turn, so work
 continues while another thread is open. The visible overlay (streaming flag, live tools, dialogs)
 is snapshotted per session file and restored on return. Switching must not send
-`extension_ui_response cancelled` to the old Pi — that aborts the background turn. `createSessionTransport` is injected
+`extension_ui_response cancelled` to the old Pi — that aborts the background turn.
+
+The snapshot covers dialogs that were already visible when the switch started. An interactive request
+that arrives *during* a transition is dropped rather than queued, so that thread's harness keeps waiting
+until the user returns to it; a locally-driven dialog is answered as cancelled so its caller settles.
+Restoring the dropped requests needs per-session pending-dialog state and is not implemented. `createSessionTransport` is injected
 (`createWorkbenchControllerPlugin` mirrors the app's transport options; tests spawn fakes).
 Removed on the switch path: the client-side `abort` and `switch_session` requests. Events/status
 route only from the active harness (guarded `#attachActiveTransport`); the pool re-keys after
@@ -306,7 +314,8 @@ Verify with `bun run setup:native`, then `bun run smoke:workbench-keys -- --inst
 gesture the runtime performs itself as a named skip - a stubbed display can observe neither a native
 clipboard write nor a native paste, and a green run must not imply it did. Measured on 2026-09-15 against the installed build
 `sha256=e7a103ea…`: the stubbed lane passed four checks and reported ten named skips (a stubbed display can
-stage neither gesture, and each skip names the lane that can), `insert-keys-single-owner` pressed
+stage neither gesture, and each skip names the lane that can; two of those names were emitted by no lane
+branch at all and were removed on 2026-09-18, so the same run now reports eight), `insert-keys-single-owner` pressed
 `Ctrl+Insert` over a real selection and saw no app-side write, and `native-round-trip-exact` proved the
 runtime's own paste action with `Ctrl+A`, `Ctrl+C`, `Ctrl+V`. The live lane on a disposable nested Hyprland
 passed with real helpers: `Shift+Insert` submitted exactly the text staged by `wl-copy`, a typed control
@@ -376,10 +385,13 @@ keys before any window sees them.
 - **CLI picker failures are visible.** `classifyPickerExit` reads exit 0/1 as a dismissal (kdialog's cancel)
   and any other status as unavailable, so a picker that ran and failed is reported instead of silently
   reading as a cancelled dialog.
-- **Browser is honest on Linux.** No embedded engine exists (macOS-gated backend), so the panel shows the
-  unavailable state instead of an empty address surface that looked like a broken browser, and a system-browser
-  launch that never started is reported. The web companion says "No embedded browser in this build" rather
-  than showing a placeholder that read as a ready host; `scripts/web-browser-probe.ts` asserts both.
+- **Browser is honest on Linux.** Still no *embedded* engine (the GPUix CEF backend is macOS-gated), but the
+  panel is no longer limited to the unavailable state: it runs the host's own Chrome through the managed
+  engine and streams its frames (`docs/browser.md`, PR #31), and the unavailable state is now reserved for a
+  host with neither an embedded browser nor an installed Chrome - it still replaces an empty address surface
+  that looked like a broken browser, and a system-browser launch that never started is still reported. The web
+  companion says "No embedded browser in this build" rather than showing a placeholder that read as a ready
+  host; `scripts/web-browser-probe.ts` asserts both.
 - **The TypeScript portal transport is gone.** `src/ui/portal-file-chooser.ts` and its 13 tests were the
   gdbus/dbus-monitor seam that could not receive a portal response, and its request/response contract now
   lives where the connection does (`crates/gpui_linux/src/portal_file_chooser.rs`, covered by the six

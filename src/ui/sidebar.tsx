@@ -195,9 +195,11 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
             disabled={pickingProject}
             onClick={() => {
               setPickingProject(true)
-              void pickProjectDirectory(renderer).then((pick) => {
+              void pickProjectDirectory(renderer).then(async (pick) => {
                 if (pick.error) controller.notify('error', pick.error)
-                else if (pick.path) void controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+                // Awaiting the switch keeps `pickingProject` set until the workspace actually changes, so the
+                // button cannot read as idle while the picker result is still being applied.
+                else if (pick.path) await controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
               }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => setPickingProject(false))
             }}
           />
@@ -329,7 +331,7 @@ function SectionLabel({ label, tone = 'normal' }: { label: string; tone?: 'norma
 
 function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expanded: boolean; onToggle(): void }) {
   return (
-    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, borderRadius: 7, backgroundColor: colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onToggle}>
+    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, borderRadius: 7, backgroundColor: colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onToggle} onKeyDown={(event: { key?: string }) => { if (event.key === 'enter' || event.key === 'space') onToggle() }}>
       <text style={{ color: colors.settledText, fontSize: 10, fontWeight: 550, pointerEvents: 'none' }}>{expanded ? 'Settled' : `Settled (${count})`}</text>
       <div style={{ height: 1, flexGrow: 1, backgroundColor: colors.settledDivider, pointerEvents: 'none' }} />
       <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>

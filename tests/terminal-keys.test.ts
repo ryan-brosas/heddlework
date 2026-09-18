@@ -109,6 +109,31 @@ describe('dispatchTerminalKey (shared production seam)', () => {
     }
   })
 
+  it('contains a rejected copy so a key press cannot become an unhandled rejection', async () => {
+    const failures: unknown[] = []
+    const onUnhandled = (reason: unknown) => { failures.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const seen: string[] = []
+      const { writes } = run({ key: 'ctrl-insert' }, {
+        copy: (text: string) => { seen.push(text); return Promise.reject(new Error('clipboard helper died')) },
+      })
+      // The copy still reaches the effect; only its failure is contained.
+      expect(seen).toEqual(['alpha\nbeta'])
+      expect(writes).toEqual([])
+      await Bun.sleep(10)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(failures).toEqual([])
+  })
+
+  it('contains a synchronous copy throw instead of propagating it out of the key path', () => {
+    expect(() => run({ key: 'ctrl-insert' }, {
+      copy: () => { throw new Error('no clipboard helper') },
+    })).not.toThrow()
+  })
+
   it('leaves the clipboard untouched for missing or empty viewports', () => {
     for (const grid of [undefined, { viewport: [] }, new VtEmulator(24, 8).snapshot()]) {
       for (const event of [{ key: 'ctrl-shift-c' }, { key: 'ctrl-insert' }]) {
