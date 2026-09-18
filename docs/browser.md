@@ -216,7 +216,8 @@ The engine runs the host's own Chrome or Chromium (`google-chrome-stable`, `goog
   not the desktop clipboard. The text-to-insertion mapping is `planChromePaste` in `src/browser/chrome-plan.ts`,
   and a read that yields nothing is reported in the surface (`chrome-browser-paste-failure`, message in
   `src/ui/browser-chrome-surface.tsx`) instead of looking like a dead key. Chords such as `Ctrl+C`/`Ctrl+A`
-  are forwarded as key events so the page keeps its own shortcuts.
+  are forwarded as key events so the page keeps its own shortcuts, and a planned press is a whole keystroke:
+  the page sees `keydown` and then `keyup`, the way a real keyboard sends it.
 - A `window.open` from a page (`Page.windowOpen`) becomes an app-managed tab, and the browser's own popup
   window is closed rather than left as an unmanaged duplicate.
 - `Page.javascriptDialogOpening` is accepted automatically; dialogs are not yet surfaced to the user.

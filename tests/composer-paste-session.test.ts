@@ -15,8 +15,8 @@ describe('clipboard image paste and the open thread', () => {
   it('attaches the image when the thread did not change during the read', async () => {
     const attached: ComposerImage[] = []
     const outcome = await attachClipboardImage({
-      startedSessionFile: '/sessions/one.jsonl',
-      currentSessionFile: () => '/sessions/one.jsonl',
+      startedIdentity: 'file:/sessions/one.jsonl',
+      currentIdentity: () => 'file:/sessions/one.jsonl',
       readImage: async () => image,
       attachImage: (value) => attached.push(value),
     })
@@ -39,15 +39,15 @@ describe('clipboard image paste and the open thread', () => {
     // to the thread now on screen. The guard re-reads the current thread instead of comparing a captured one.
     const attached: ComposerImage[] = []
     const read = deferredRead()
-    let currentSessionFile = '/sessions/one.jsonl'
+    let currentIdentity = 'file:/sessions/one.jsonl'
     const pending = attachClipboardImage({
-      startedSessionFile: currentSessionFile,
-      currentSessionFile: () => currentSessionFile,
+      startedIdentity: currentIdentity,
+      currentIdentity: () => currentIdentity,
       readImage: read.read,
       attachImage: (value) => attached.push(value),
     })
     // The switch publishes the new session before the clipboard helper answers.
-    currentSessionFile = '/sessions/two.jsonl'
+    currentIdentity = 'file:/sessions/two.jsonl'
     read.resolve(image)
     expect(await pending).toBe('stale')
     expect(attached).toEqual([])
@@ -56,8 +56,8 @@ describe('clipboard image paste and the open thread', () => {
   it('reports a clipboard with no image without blaming the thread', async () => {
     const attached: ComposerImage[] = []
     const outcome = await attachClipboardImage({
-      startedSessionFile: '/sessions/one.jsonl',
-      currentSessionFile: () => '/sessions/one.jsonl',
+      startedIdentity: 'file:/sessions/one.jsonl',
+      currentIdentity: () => 'file:/sessions/one.jsonl',
       readImage: async () => undefined,
       attachImage: (value) => attached.push(value),
     })
@@ -89,9 +89,9 @@ describe('clipboard image paste and the open thread', () => {
     // it the live thread. Both are needed: a stale value passed in would pass the guard.
     const source = await Bun.file(new URL('../src/ui/composer.tsx', import.meta.url)).text()
     // The live thread comes from the controller snapshot, which the switch updates synchronously...
-    expect(source).toContain('const currentSessionFile = (): string => controller.getSnapshot().session.sessionFile')
+    expect(source).toContain('const currentSessionIdentity = (): string => sessionIdentity(controller.getSnapshot().session)')
     // ...and the asynchronous checks no longer compare against the ref a React effect updates.
-    expect(source).not.toMatch(/pasteTargetsSameSession\([^)]*sessionFileRef\.current/u)
-    expect(source).toContain('currentSessionFile,')
+    expect(source).not.toMatch(/pasteTargetsSameSession\([^)]*sessionIdentityRef\.current/u)
+    expect(source).toContain('currentIdentity: currentSessionIdentity,')
   })
 })

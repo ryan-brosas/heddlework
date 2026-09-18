@@ -125,7 +125,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
    * switch publishes the new session synchronously, while the effect that tracks it runs after the next
    * render, and an asynchronous clipboard read can resolve inside that window.
    */
-  const currentSessionFile = (): string => controller.getSnapshot().session.sessionFile ?? ''
+  const currentSessionIdentity = (): string => sessionIdentity(controller.getSnapshot().session)
   const above = Object.values(state.widgets).filter((widget) => widget.placement === 'aboveEditor')
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
   const contextPercent = state.stats?.contextUsage?.percent
@@ -141,11 +141,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }
 
   /**
-   * Submit a draft decided in `startedSessionFile`. The check runs at delivery because a submit that
-   * waited for a clipboard read can finish after the user clicked another thread.
+   * Submit a draft decided in `startedIdentity`. The check runs at delivery because a submit that waited
+   * for a clipboard read can finish after the user clicked another thread.
    */
-  const send = (value: string, queue = false, startedSessionFile = currentSessionFile()) => {
-    if (!pasteTargetsSameSession(startedSessionFile, currentSessionFile())) return
+  const send = (value: string, queue = false, startedIdentity = currentSessionIdentity()) => {
+    if (!pasteTargetsSameSession(startedIdentity, currentSessionIdentity())) return
     clearQueueHint()
     // The attachments are read live: this closure can run after a paste attached an image to the draft.
     if (!hasSubmittableDraft(value, controller.getSnapshot().editorImages)) {
@@ -161,10 +161,10 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
    * The session guard lives in `attachClipboardImage` so both paste paths share it, and it re-reads the
    * thread at the moment of the write.
    */
-  const insertPastedImage = async (editorTextBeforePaste: string, startedSessionFile: string): Promise<boolean> => {
+  const insertPastedImage = async (editorTextBeforePaste: string, startedIdentity: string): Promise<boolean> => {
     const outcome = await attachClipboardImage({
-      startedSessionFile,
-      currentSessionFile,
+      startedIdentity,
+      currentIdentity: currentSessionIdentity,
       readImage: readClipboardImage,
       attachImage: (image) => controller.addEditorImage(image),
     })
@@ -178,10 +178,10 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   /** Native `Ctrl+V`: the runtime inserts text at the caret itself, so only an image needs the app. */
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
-    const startedSessionFile = currentSessionFile()
+    const startedIdentity = currentSessionIdentity()
     setPastingImage(true)
     try {
-      await insertPastedImage(editorTextBeforePaste, startedSessionFile)
+      await insertPastedImage(editorTextBeforePaste, startedIdentity)
     } finally {
       setPastingImage(false)
     }
@@ -195,11 +195,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
    */
   const pasteClipboardIntoComposer = async () => {
     if (pastingImage) return
-    const startedSessionFile = currentSessionFile()
+    const startedIdentity = currentSessionIdentity()
     setPastingImage(true)
     try {
       const draft = controller.getSnapshot().editorText
-      if (await insertPastedImage(draft, startedSessionFile)) {
+      if (await insertPastedImage(draft, startedIdentity)) {
         keepComposerFocus()
         return
       }
@@ -207,7 +207,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       // The action has reported a clipboard that yielded nothing, and a superseded attempt inserts
       // nothing either: the newer paste owns both the insertion and the notice.
       if (!text) return
-      if (!pasteTargetsSameSession(startedSessionFile, currentSessionFile())) return
+      if (!pasteTargetsSameSession(startedIdentity, currentSessionIdentity())) return
       const current = controller.getSnapshot().editorText
       controller.setEditorText(current ? current + text : text)
       keepComposerFocus()
@@ -246,11 +246,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
   /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
   const submitDraft = (eventValue: string, queue = false): void => {
-    const startedSessionFile = currentSessionFile()
+    const startedIdentity = currentSessionIdentity()
     const plan = planPasteSubmit({ pending: pendingPaste.current, claimed: pendingPasteClaimed.current, eventValue })
     if (plan.action === 'ignore') return
     if (plan.action === 'send') {
-      send(plan.text, queue, startedSessionFile)
+      send(plan.text, queue, startedIdentity)
       return
     }
     pendingPasteClaimed.current = true
@@ -258,7 +258,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       pending: pendingPaste.current,
       eventValue,
       currentDraft: () => controller.getSnapshot().editorText,
-    }).then((text) => send(text, queue, startedSessionFile))
+    }).then((text) => send(text, queue, startedIdentity))
   }
 
   const showQueueHint = () => {
