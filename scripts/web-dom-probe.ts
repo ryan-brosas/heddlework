@@ -53,10 +53,13 @@ const state = {
   ],
   statusLines: [{ id: 1, text: 'TPS 25.6 tok/s', createdAt: 3, turn: 0 }],
 }
+/** Frames the app sent to the host, so the probe can assert what a gesture produced. */
+const sentFrames: string[] = []
+
 class FakeWebSocket extends window.EventTarget {
   static readonly OPEN = 1; readyState = 0; bufferedAmount = 0
   constructor(readonly url: string) { super(); queueMicrotask(() => { this.readyState = 1; this.dispatchEvent(new window.Event('open')) }) }
-  send(raw: string) { const message = JSON.parse(raw) as { kind: string }; if (message.kind === 'hello') queueMicrotask(() => this.dispatchEvent(new window.MessageEvent('message', { data: JSON.stringify({ kind: 'welcome', protocol: 2, workspacePath: '/workspace/mobile', snapshot: state, flows: { schedules: [], pending: [] }, terminal: { sessions: [] } }) }))) }
+  send(raw: string) { sentFrames.push(raw); const message = JSON.parse(raw) as { kind: string }; if (message.kind === 'hello') queueMicrotask(() => this.dispatchEvent(new window.MessageEvent('message', { data: JSON.stringify({ kind: 'welcome', protocol: 2, workspacePath: '/workspace/mobile', snapshot: state, flows: { schedules: [], pending: [] }, terminal: { sessions: [] } }) }))) }
   close() { this.readyState = 3; this.dispatchEvent(new window.Event('close')) }
 }
 const globals = globalThis as unknown as Record<string, unknown>
@@ -83,6 +86,18 @@ codeCopy.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await Bun.sleep(0)
 assert(copiedText?.includes('const measured = true') === true, 'Code block did not use the shared clipboard writer')
 assert(copyLabel() === 'Copied', 'Successful clipboard write did not update the copy action')
+// The web host never sets the native clipboard flag, so the composer's own fallback paste is the live path
+// here. A read that yields nothing has to report through the notice stream instead of looking like a dead
+// key: an unreadable clipboard and an empty one both arrive as no text.
+const composerField = window.document.querySelector('textarea.gx-textarea')
+assert(composerField, 'Composer did not render its text field')
+const framesBeforePaste = sentFrames.length
+composerField.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Insert', shiftKey: true, bubbles: true }))
+await Bun.sleep(1)
+assert(sentFrames.slice(framesBeforePaste).some((frame) => frame.includes('clipboard held no text')), `A fallback paste that read nothing reported no notice: ${sentFrames.slice(framesBeforePaste).join(', ')}`)
+// Read through a call, like the copy label above: an `asserts` comparison narrows the value otherwise.
+const composerDraft = (): string => (composerField as unknown as { value?: string }).value ?? ''
+assert(composerDraft() === '', 'A reported paste changed the draft')
 assert(unhandledRejections.length === 0, `Web entry points leaked unhandled rejections: ${unhandledRejections.map(String).join(', ')}`)
 // Pi's showStatus line carries no notification chrome: no card, no border, no timestamp. Asserting the
 // exact text also proves no time-of-day element was appended beside it.
