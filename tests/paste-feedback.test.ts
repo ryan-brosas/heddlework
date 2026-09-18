@@ -37,6 +37,29 @@ describe('paste feedback action', () => {
     expect(failures).toEqual([undefined, 'Could not paste into the page.'])
   })
 
+  it('returns each attempt the text its own read produced when a later paste starts in between', async () => {
+    const failures: Array<string | undefined> = []
+    let releaseFirst: (value: string) => void = () => undefined
+    const first = new Promise<string>((resolve) => { releaseFirst = resolve })
+    let calls = 0
+    const action = createPasteAction({
+      read: () => (++calls === 1 ? first : Promise.resolve('second')),
+      onFailure: (failure) => failures.push(failure),
+    })
+    const earlier = action.paste()
+    // Resolve the first read, then let it get as far as owning its outcome before the next paste
+    // starts. The two ticks are the attempt's own await plus the check that resolves it.
+    releaseFirst('first')
+    await null
+    await null
+    const later = await action.paste()
+    // A shared buffer would have been cleared by the second paste by now, so the first attempt - which
+    // had already won - would report nothing and this paste would be dropped.
+    expect(await earlier).toBe('first')
+    expect(later).toBe('second')
+    expect(failures).toEqual([undefined, undefined, undefined])
+  })
+
   it('gives a superseded attempt no text to insert', async () => {
     const failures: Array<string | undefined> = []
     let releaseFirst: (value: string) => void = () => undefined

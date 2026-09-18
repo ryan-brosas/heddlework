@@ -40,21 +40,23 @@ export function createPasteAction(options: {
   readonly onFailure: PasteFailureSink
   readonly message?: string
 }): PasteAction {
-  let text: string | undefined
-  const attempt = createLatestAttempt<undefined>({
-    run: async () => {
-      text = await options.read()
+  const attempt = createLatestAttempt<{ text: string | undefined }>({
+    run: async (result) => {
+      result.text = await options.read()
       // No text is the outcome this action exists for, so it is reported rather than dropped.
-      return text || false
+      return result.text || false
     },
     onFailure: options.onFailure,
     message: options.message ?? PASTE_FAILED_MESSAGE,
   })
   return {
     paste: async () => {
-      text = undefined
-      const outcome = await attempt.run(undefined)
-      return outcome === 'done' ? text : undefined
+      // Each attempt carries its own result, the way a copy carries the text it writes: a shared
+      // buffer would let a superseded read hand its text, or a cleared one, to an attempt that had
+      // already owned the outcome - dropping that paste or duplicating the newer one.
+      const result: { text: string | undefined } = { text: undefined }
+      const outcome = await attempt.run(result)
+      return outcome === 'done' ? result.text : undefined
     },
     dispose: attempt.dispose,
   }
