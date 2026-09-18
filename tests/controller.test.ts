@@ -22,7 +22,7 @@ function isFullySettled(controller: WorkbenchController): boolean {
   return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0
 }
 
-class ScriptedTransport {
+class ScriptedTransport implements AgentTransport {
   readonly #eventListeners = new Set<(event: RpcRecord) => void>()
   readonly #statusListeners = new Set<(status: TransportStatus) => void>()
 
@@ -49,10 +49,10 @@ class ScriptedTransport {
 describe('WorkbenchController', () => {
   it('applies each streaming delta once when a pooled transport is attached again', async () => {
     const transport = new ScriptedTransport()
-    const controller = new WorkbenchController(transport as unknown as AgentTransport, '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    const controller = new WorkbenchController(transport, '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
       // A session switch away and back re-attaches the pooled transport.
-      controller.attachTransport(transport as unknown as AgentTransport)
+      controller.attachTransport(transport)
 
       transport.emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'Good' } })
       transport.emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: '.. Now' } })

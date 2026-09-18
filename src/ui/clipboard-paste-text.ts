@@ -55,6 +55,19 @@ export function pasteTargetsSameSession(startedSessionFile: string, currentSessi
 }
 
 /**
+ * Identity of the thread a clipboard gesture belongs to.
+ *
+ * A thread that Pi has not written a file for yet is still a distinct thread, so its session id stands
+ * in for the path. The two are prefixed because a path and an id are different namespaces: without that,
+ * an id that happened to equal a path would compare as the same thread.
+ */
+export function sessionIdentity(session: { readonly sessionFile?: string; readonly sessionId?: string }): string {
+  if (session.sessionFile) return `file:${session.sessionFile}`
+  if (session.sessionId) return `id:${session.sessionId}`
+  return ''
+}
+
+/**
  * The draft a native paste started from, as the runtime reported it.
  *
  * The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion

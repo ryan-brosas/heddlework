@@ -100,6 +100,8 @@ export interface WorkbenchControllerDependencies {
 
 /** Live overlay for a background harness so switching back does not look aborted. */
 interface SessionLiveSnapshot {
+  /** Pi's `showStatus` lines, which belong to the turn that produced them and come back with it. */
+  readonly statusLines: WorkbenchState['statusLines']
   isStreaming: boolean
   liveAssistant: WorkbenchState['liveAssistant']
   liveTools: WorkbenchState['liveTools']
@@ -572,6 +574,8 @@ export class WorkbenchController {
     const previousFile = this.#state.session.sessionFile
     const wasStreaming = this.#state.session.isStreaming
     if (!this.#createSessionTransport && wasStreaming) return
+    /** The harness opened for the new session; it is dropped again unless Pi accepts the move. */
+    let replacement: AgentTransport | undefined
     this.#sessionTransitionDepth += 1
     try {
       if (previousFile) {
@@ -580,13 +584,19 @@ export class WorkbenchController {
         this.#dialogs.hideVisible()
       }
       if (this.#createSessionTransport) {
-        const transport = await this.#openSessionTransport('')
-        this.#attachActiveTransport(transport)
+        // A dedicated harness for the new thread. It is attached only once Pi accepts the request,
+        // so the app stays on the harness that owns the thread the state still names until then.
+        replacement = await this.#openSessionTransport('')
       } else {
         this.#dialogs.cancelAll()
       }
-      const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
+      const result = await (replacement ?? this.#transport).request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
+      if (replacement) {
+        // The harness owns a session from here on, so the cleanup below leaves it alone.
+        this.#attachActiveTransport(replacement)
+        replacement = undefined
+      }
       if (previousFile && wasStreaming) {
         this.#patch({
           sessionActivity: {
@@ -625,8 +635,22 @@ export class WorkbenchController {
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
+      this.#dropSessionReplacement(replacement)
       this.#endSessionTransition()
     }
+  }
+
+  /**
+   * Stop a harness that never took ownership of a session, so a new session Pi refused - or one that
+   * failed before it was accepted - leaves no attached harness holding an empty session behind.
+   *
+   * A harness is only attached after Pi accepted the request, which is when the caller clears
+   * `replacement`; anything still set here was never attached and is not in the pool either (only a
+   * named session path is), so stopping it is the whole cleanup.
+   */
+  #dropSessionReplacement(replacement: AgentTransport | undefined): void {
+    if (!replacement) return
+    void replacement.stop().catch(() => {})
   }
 
   async switchWorkspace(workspacePath: string): Promise<void> {
@@ -798,6 +822,7 @@ export class WorkbenchController {
       dialog: this.#state.dialog,
       dialogQueue: this.#state.dialogQueue,
       statusItems: this.#state.statusItems,
+      statusLines: this.#state.statusLines,
       widgets: this.#state.widgets,
     }
     this.#liveSessions.set(resolve(sessionFile), snapshot)
@@ -923,7 +948,7 @@ export class WorkbenchController {
       editorText: '',
       editorImages: [],
       notices: [],
-      statusLines: [],
+      statusLines: live?.statusLines ?? [],
       statusItems: live?.statusItems ?? {},
       widgets: live?.widgets ?? {},
       dialog: live?.dialog,

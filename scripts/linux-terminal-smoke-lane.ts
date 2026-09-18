@@ -88,7 +88,7 @@ export async function runTerminalShortcutLane(app: TerminalLaneApp, options: Ter
 
   await terminalInput.press('ctrl-c')
   const interrupted = await nextEvidence((value) => value.status === 'exited' ? value : undefined)
-  assert(interrupted.text.includes(TERMINAL_INTERRUPT_MARKER), 'plain Ctrl+C did not reach the PTY as SIGINT')
+  assert(interrupted.text.includes(TERMINAL_INTERRUPT_MARKER), 'plain Ctrl+C did not reach the PTY as the one ETX byte the shortcut owns')
   assert(interrupted.copyCalls === copied.copyCalls, 'plain Ctrl+C was resolved as a copy')
   assert(interrupted.exitCode === 0, `the interrupt trap exited with code ${interrupted.exitCode}`)
   pass(

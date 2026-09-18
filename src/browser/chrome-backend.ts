@@ -54,10 +54,10 @@ export interface ChromeSessionRequest {
 }
 
 /** A CDP call the UI prepared with the pure planners. */
-export interface ChromeInputCall {
-  readonly method: string
-  readonly params: Record<string, unknown>
-}
+import type { ChromeInputCall } from './types.ts'
+
+// Re-exported so a caller that already imports the backend keeps one import site for the gesture contract.
+export type { ChromeInputCall } from './types.ts'
 
 /**
  * Chrome as Heddlework's browser engine on hosts with no embedded browser (Linux today).
@@ -174,11 +174,20 @@ export class ChromeBrowserBackend {
       }
       if (contextId) this.#contextTabs.set(contextId, (this.#contextTabs.get(contextId) ?? 0) + 1)
       this.#sessions.set(request.tabId, session)
-      await chrome.cdp.send('Page.enable', {}, sessionId)
+      try {
+        await chrome.cdp.send('Page.enable', {}, sessionId)
       await chrome.cdp.send('Runtime.enable', {}, sessionId)
       // Headless pages do not take focus on their own, so focus-dependent UI would never respond.
       await chrome.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId).catch(() => undefined)
-      await this.#applyViewport(chrome, session)
+        await this.#applyViewport(chrome, session)
+      } catch (error) {
+        // The tab is registered before its session is usable, so a failed setup has to unregister it:
+        // a lingering entry answers later commands for a session that never opened, and its browser
+        // context would never reach zero tabs and so never be released.
+        this.#sessions.delete(request.tabId)
+        if (contextId) await this.#releaseContext(chrome, contextId).catch(() => undefined)
+        throw error
+      }
       this.#lastError = undefined
     } catch (error) {
       this.#reportLaunchFailure(error)
@@ -412,7 +421,11 @@ export class ChromeBrowserBackend {
       return
     }
     const plan = planChromeEvent(event.method, event.params)
-    const session = this.#sessionBySessionId(event.sessionId)
+    // A browser-level `Target.detachedFromTarget` carries the detached session id in its own params
+    // rather than on the envelope, so the tab it belongs to is only reachable through that fallback.
+    const detached = (event.params as { sessionId?: unknown } | undefined)?.sessionId
+    const sessionId = event.sessionId ?? (plan.kind === 'detached' && typeof detached === 'string' ? detached : undefined)
+    const session = this.#sessionBySessionId(sessionId)
     if (!session) return
     switch (plan.kind) {
       case 'navigated':

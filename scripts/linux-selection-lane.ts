@@ -56,7 +56,9 @@ export async function runSelectionLane(app: App, options: SelectionLaneOptions):
     return selected.text
   }
 
-  for (const surface of ['selection-code', 'selection-content']) {
+  // Every surface the drag below reads bounds from has to be measured first, or the drag lands on a
+  // surface that has not been laid out yet and the lane reports a selection failure of its own making.
+  for (const surface of ['selection-code', 'selection-content', 'selection-chrome']) {
     await app.getByTestId(surface).waitFor()
   }
 

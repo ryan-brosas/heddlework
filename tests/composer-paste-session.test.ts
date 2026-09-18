@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { ComposerImage } from '../src/pi/types.ts'
-import { attachClipboardImage, hasSubmittableDraft, pasteTargetsSameSession } from '../src/ui/clipboard-paste-text.ts'
+import { attachClipboardImage, hasSubmittableDraft, pasteTargetsSameSession, sessionIdentity } from '../src/ui/clipboard-paste-text.ts'
 
 const image: ComposerImage = { type: 'image', data: 'AA==', mimeType: 'image/png', id: 'clipboard-1', fileName: 'clipboard.png', size: 1 }
 
@@ -22,6 +22,15 @@ describe('clipboard image paste and the open thread', () => {
     })
     expect(outcome).toBe('attached')
     expect(attached).toEqual([image])
+  })
+
+  it('tells two file-less threads apart', () => {
+    // A thread Pi has not written a file for yet is identified by its session id: without that, every
+    // such thread shared the empty identity and a paste could land in the wrong one.
+    const first = sessionIdentity({ sessionId: 'one' })
+    expect(first).not.toBe(sessionIdentity({ sessionId: 'two' }))
+    expect(pasteTargetsSameSession(first, sessionIdentity({ sessionId: 'one' }))).toBe(true)
+    expect(pasteTargetsSameSession(sessionIdentity({ sessionFile: '/sessions/one.jsonl' }), first)).toBe(false)
   })
 
   it('drops an image whose read finished after the user switched threads', async () => {

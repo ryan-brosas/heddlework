@@ -220,6 +220,8 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
    * composer's draft on Linux (see above), so the helper channel is the only signal that a paste has landed,
    * and pressing Enter first would turn a slow paste into a phantom failure. Returns how long the paste took.
    */
+  /** Which owner performs the insert-key gestures: the runtime itself, or the application's fallback. */
+  const insertKeyOwner = options.insertKeyOwner ?? 'javascript'
   const pressPasteKey = async (description: string): Promise<number> => {
     const before = await clipboardTextReads()
     await composer.press('shift-insert')
@@ -289,7 +291,6 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
   await submit(markers.other)
   pass('exact-transcript-ready', `the workbench submitted ${JSON.stringify(markers.selection)} and ${JSON.stringify(markers.other)} as exact user messages on ${options.compositor}`)
 
-  const insertKeyOwner = options.insertKeyOwner ?? 'javascript'
   if (insertKeyOwner === 'javascript') {
     // 1. Ctrl+Insert copies the current document selection byte for byte.
     const firstSelection = await selectMessage(SELECTION_ROW, markers.selection)

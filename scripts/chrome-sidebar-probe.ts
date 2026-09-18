@@ -165,7 +165,7 @@ try {
   record('a clicked field receives typed text', typed === 'heddlework', `field held "${String(typed ?? '')}"`)
 
   const enter = planChromeKey({ key: 'Enter' })
-  if (enter.kind === 'press') await backend.input(tabId, [{ method: enter.params.method as string, params: (enter.params.params ?? {}) as Record<string, unknown> }])
+  if (enter.kind === 'press') await backend.input(tabId, [...enter.calls])
   const keys = await evaluate(tabId, 'JSON.stringify(window.__keys)') as string
   record('a named key is dispatched as a key event', enter.kind === 'press' && keys.includes('Enter'), `page saw ${keys}`)
 
@@ -207,7 +207,7 @@ try {
   unsubscribe()
   await service.dispose()
   await backend.dispose()
-  server.stop(true)
+  await server.stop(true)
 
   // A reusable profile directory is the proof that the browser actually exited.
   const relaunch = await import('../src/browser/chrome-process.ts')

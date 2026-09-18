@@ -10,6 +10,15 @@ describe('parseKeyChord', () => {
     }
   })
 
+  it('reads a trailing separator as the key that follows its modifiers', () => {
+    // The regression: splitting `ctrl+-` on `-` produced only `['ctrl']`, so the minus the user pressed
+    // disappeared into an empty key.
+    expect(parseKeyChord('ctrl+-')).toEqual({ key: '-', modifiers: { ...NONE, ctrl: true } })
+    expect(parseKeyChord('ctrl++')).toEqual({ key: '+', modifiers: { ...NONE, ctrl: true } })
+    // A modifier followed by a separator and nothing else keeps that separator as the key.
+    expect(parseKeyChord('shift+')).toEqual({ key: '+', modifiers: { ...NONE, shift: true } })
+  })
+
   it('reads modifiers embedded in key strings', () => {
     expect(parseKeyChord('CTRL-SHIFT-C')).toEqual({ key: 'c', modifiers: { ...NONE, ctrl: true, shift: true } })
     expect(parseKeyChord('ctrl+insert')).toEqual({ key: 'insert', modifiers: { ...NONE, ctrl: true } })
