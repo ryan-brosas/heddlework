@@ -95,12 +95,27 @@ const lockRegistry = lockGlobal.__heddleworkBrowserDataLocks ??= {
   cleanupRegistered: false,
 }
 
+/**
+ * Why a lock could not be claimed. The distinction is what lets a refusal tell the truth: a lock held by a
+ * live process is contention the user can act on, while a lock nobody can be identified behind is not.
+ */
+type LockClaim = 'acquired' | 'held' | 'unidentified'
+
+/**
+ * How long a lock must sit unchanged before a dead holder's lock may be reclaimed.
+ *
+ * A lock written moments ago can belong to a process that is still starting up, and a lock being rewritten
+ * belongs to whoever is writing it. Only a lock that has stopped changing and names a process that is
+ * definitely gone is stale.
+ */
+const STALE_LOCK_SETTLE_MS = 2_000
+
 export function claimBrowserDataRoot(dataRoot: string, statePath: string | false = false): BrowserDataRootClaim {
   let paths: Required<Pick<BrowserDataRootClaim, 'dataRoot' | 'profilesRoot' | 'statePath'>>
   try {
     paths = canonicalBrowserStorage(dataRoot, statePath)
   } catch {
-    return unavailableDataRoot()
+    return unavailableDataRoot('Browser profile storage is unavailable: its directories could not be prepared.')
   }
 
   const lockPaths = [
@@ -114,20 +129,18 @@ export function claimBrowserDataRoot(dataRoot: string, statePath: string | false
     if (lockRegistry.owned.has(lockPath) && readLockPid(lockPath) === process.pid) continue
     lockRegistry.owned.delete(lockPath)
 
+    let claim: LockClaim
     try {
       mkdirSync(dirname(lockPath), { recursive: true })
-      if (lstatSync(lockPath, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('lock path is a symlink')
+      claim = claimLock(lockPath)
     } catch {
-      rollbackClaims(newlyOwned)
-      return unavailableDataRoot(paths)
+      claim = 'unidentified'
     }
 
-    const acquired = process.platform === 'darwin'
-      ? claimMacOSLock(lockPath)
-      : claimExclusiveLockFile(lockPath)
-    if (!acquired) {
+    if (claim !== 'acquired') {
+      const heldBy = claim === 'held' ? readLockPid(lockPath) : undefined
       rollbackClaims(newlyOwned)
-      return unavailableDataRoot(paths)
+      return unavailableDataRoot(lockRefusalMessage(claim, lockPath, heldBy), paths)
     }
     lockRegistry.owned.add(lockPath)
     newlyOwned.push(lockPath)
@@ -135,6 +148,24 @@ export function claimBrowserDataRoot(dataRoot: string, statePath: string | false
 
   registerLockCleanup()
   return { acquired: true, ...paths }
+}
+
+/**
+ * Claim one lock, reclaiming it only when its recorded holder is provably gone.
+ *
+ * A crash used to leave the browser surface permanently unavailable, because an exclusive create cannot
+ * tell a live owner from a leftover file. Reclaiming is deliberately narrow: the holder's pid must be dead
+ * (not merely unreadable), the lock must have stopped changing, and the takeover must be atomic and
+ * verified afterwards. Anything else stays fail-closed, as before.
+ */
+function claimLock(lockPath: string): LockClaim {
+  if (lstatSync(lockPath, { throwIfNoEntry: false })?.isSymbolicLink()) return 'unidentified'
+  if (process.platform === 'darwin') return claimMacOSLock(lockPath) ? 'acquired' : 'held'
+  if (tryCreateLockFile(lockPath)) return 'acquired'
+  const holder = readLockPid(lockPath)
+  if (holder === undefined) return 'unidentified'
+  if (processIsAlive(holder)) return 'held'
+  return takeOverStaleLock(lockPath, holder) ? 'acquired' : 'unidentified'
 }
 
 function canonicalBrowserStorage(
@@ -176,13 +207,65 @@ function claimMacOSLock(lockPath: string): boolean {
   return result.exitCode === 0
 }
 
-function claimExclusiveLockFile(lockPath: string): boolean {
+function tryCreateLockFile(lockPath: string): boolean {
   try {
     writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
     return true
   } catch {
     return false
   }
+}
+
+/**
+ * Whether a pid names a process that currently exists.
+ *
+ * Only `ESRCH` proves absence. `EPERM` means the process exists and belongs to someone else, which is
+ * still a live owner, so anything other than `ESRCH` is treated as alive.
+ */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+/**
+ * Reclaim a lock whose holder is gone, without ever unlinking a file that might belong to someone.
+ *
+ * The exclusive step is moving the leftover aside: `rename` succeeds for exactly one racer and fails with
+ * `ENOENT` for the rest, so two processes cannot both conclude they reclaimed the same lock. Replacing the
+ * file in place could not do this - both racers would take their own success as proof of ownership. After
+ * winning the move, the lock is created with the ordinary exclusive create, so a contender that claimed it
+ * in the meantime keeps it: this path fails closed rather than displacing a live owner.
+ */
+function takeOverStaleLock(lockPath: string, holder: number): boolean {
+  const entry = lstatSync(lockPath, { throwIfNoEntry: false })
+  if (!entry || entry.isSymbolicLink()) return false
+  if (Date.now() - entry.mtimeMs < STALE_LOCK_SETTLE_MS) return false
+  if (readLockPid(lockPath) !== holder) return false
+  const quarantine = `${lockPath}.stale-${process.pid}`
+  try {
+    renameSync(lockPath, quarantine)
+  } catch {
+    return false
+  }
+  try {
+    if (!tryCreateLockFile(lockPath)) return false
+  } finally {
+    rmSync(quarantine, { force: true })
+  }
+  return readLockPid(lockPath) === process.pid
+}
+
+function lockRefusalMessage(claim: Exclude<LockClaim, 'acquired'>, lockPath: string, holder: number | undefined): string {
+  if (claim === 'held') {
+    return holder === undefined
+      ? 'Browser profiles are locked by another Heddlework process. Close it before opening this browser.'
+      : `Browser profiles are locked by another Heddlework process (pid ${holder}). Close it before opening this browser.`
+  }
+  return `Browser profile storage is locked by something Heddlework cannot identify. Remove ${lockPath} if no Heddlework process is running.`
 }
 
 function registerLockCleanup(): void {
@@ -212,12 +295,8 @@ function readLockPid(lockPath: string): number | undefined {
   }
 }
 
-function unavailableDataRoot(paths: Partial<BrowserDataRootClaim> = {}): BrowserDataRootClaim {
-  return {
-    ...paths,
-    acquired: false,
-    message: 'Browser profiles are locked by another Heddlework process. Close it before opening this browser.',
-  }
+function unavailableDataRoot(message: string, paths: Partial<BrowserDataRootClaim> = {}): BrowserDataRootClaim {
+  return { ...paths, acquired: false, message }
 }
 
 function browserConfigRoot(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv, home: string): string {

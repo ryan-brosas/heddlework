@@ -1,3 +1,6 @@
+import { resolveInsertKeyCommand } from '../ui/insert-key.ts'
+import { parseKeyChord } from '../ui/key-chord.ts'
+
 export interface TerminalKeyEvent {
   readonly eventType?: string
   readonly key?: string
@@ -5,6 +8,7 @@ export interface TerminalKeyEvent {
   readonly modifiers?: {
     readonly shift?: boolean
     readonly ctrl?: boolean
+    readonly control?: boolean
     readonly alt?: boolean
     readonly cmd?: boolean
   }
@@ -26,22 +30,12 @@ export function normalizeTerminalKey(event: TerminalKeyEvent): {
   keyChar: string
 } {
   const mods = event.modifiers ?? {}
-  let ctrl = Boolean(mods.ctrl)
-  let alt = Boolean(mods.alt)
-  let cmd = Boolean(mods.cmd)
-  let shift = Boolean(mods.shift)
-  let key = (event.key ?? '').toLowerCase()
-  const tokens = key.split(/[+-]/).filter(Boolean)
-  if (tokens.length > 1) {
-    const last = tokens.at(-1) ?? key
-    for (const token of tokens.slice(0, -1)) {
-      if (token === 'ctrl' || token === 'control') ctrl = true
-      else if (token === 'alt' || token === 'option') alt = true
-      else if (token === 'cmd' || token === 'meta' || token === 'super' || token === 'win') cmd = true
-      else if (token === 'shift') shift = true
-    }
-    key = last
-  }
+  const parsed = parseKeyChord(event.key)
+  let ctrl = Boolean(mods.ctrl || mods.control || parsed.modifiers.ctrl)
+  let alt = Boolean(mods.alt || parsed.modifiers.alt)
+  let cmd = Boolean(mods.cmd || parsed.modifiers.cmd)
+  let shift = Boolean(mods.shift || parsed.modifiers.shift)
+  let key = parsed.key
   if (key.startsWith('arrow')) key = key.slice(5)
   if (key === 'return') key = 'enter'
   if (key === 'esc') key = 'escape'
@@ -124,4 +118,89 @@ export function encodeTerminalKey(event: TerminalKeyEvent, applicationCursor = f
 export function wrapBracketedPaste(text: string, enabled: boolean): string {
   if (!enabled) return text
   return ESC + '[200~' + text + ESC + '[201~'
+}
+
+export type TerminalCommand = 'copy' | 'paste' | 'interrupt' | 'none'
+
+export function resolveTerminalCommand(event: TerminalKeyEvent, platform: NodeJS.Platform): TerminalCommand {
+  // A compositor may deliver a clipboard command as an insert keystroke
+  // (see src/ui/insert-key.ts), so the terminal accepts the same convention as the composer.
+  const insert = resolveInsertKeyCommand(event)
+  if (insert !== 'none') return insert
+  const { key, ctrl, alt, cmd, shift } = normalizeTerminalKey(event)
+  if (key === 'c') {
+    // Copy is resolved BEFORE the interrupt branch: an unqualified ctrl 'c'
+    // check would otherwise swallow Linux/Windows Ctrl+Shift+C (and macOS
+    // Command+C) and write ETX to the PTY instead of copying.
+    if (platform === 'darwin') {
+      if (cmd) return 'copy'
+      if (ctrl && !alt && !shift) return 'interrupt'
+      return 'none'
+    }
+    if (ctrl && shift && !alt && !cmd) return 'copy'
+    if (ctrl && !alt && !shift && !cmd) return 'interrupt'
+    return 'none'
+  }
+  if (key === 'v' && (cmd || ctrl) && !alt) return 'paste'
+  return 'none'
+}
+
+export interface TerminalKeyGridLike {
+  readonly viewport: readonly { readonly text: string }[]
+  readonly bracketedPaste?: boolean
+  readonly applicationCursor?: boolean
+}
+
+/**
+ * The visible viewport as copied text.
+ *
+ * Grid rows are padded to the terminal width, so joining them verbatim copies a trailing run of
+ * spaces on every line plus the unused blank rows below the last line. Only that padding and those
+ * blank rows are removed: leading indentation and interior blank lines are what the terminal shows.
+ */
+export function copyableViewportText(grid: TerminalKeyGridLike | undefined): string {
+  if (!grid) return ''
+  return grid.viewport
+    .map((row) => row.text.replace(/[ \t]+$/u, ''))
+    .join('\n')
+    .replace(/\n+$/u, '')
+}
+
+export interface TerminalKeyEffects {
+  readonly platform: NodeJS.Platform
+  readonly grid: TerminalKeyGridLike | undefined
+  readonly write: (data: string) => void
+  readonly copy: (text: string) => void | boolean | Promise<unknown>
+  readonly readPaste: () => Promise<string | undefined>
+}
+
+/** Production terminal keyboard dispatch, kept renderer-free for deterministic tests. */
+export function dispatchTerminalKey(event: TerminalKeyEvent, effects: TerminalKeyEffects): void {
+  const { grid } = effects
+  if (event.eventType === 'textInput' || event.eventType === 'paste') {
+    const text = event.keyChar ?? ''
+    if (text) effects.write(event.eventType === 'paste' ? wrapBracketedPaste(text, Boolean(grid?.bracketedPaste)) : text)
+    return
+  }
+  const command = resolveTerminalCommand(event, effects.platform)
+  if (command === 'copy') {
+    // Nothing to copy is not a copy failure: an empty or padding-only viewport must not report one.
+    const text = copyableViewportText(grid)
+    if (text) void effects.copy(text)
+    return
+  }
+  if (command === 'interrupt') {
+    effects.write(String.fromCharCode(3))
+    return
+  }
+  if (command === 'paste') {
+    // A rejected read stays local: it must never become an unhandled rejection
+    // in the key path, and it must never fall through to PTY encoding.
+    void effects.readPaste().then((text) => {
+      if (text) effects.write(wrapBracketedPaste(text, Boolean(grid?.bracketedPaste)))
+    }).catch(() => undefined)
+    return
+  }
+  const encoded = encodeTerminalKey(event, grid?.applicationCursor)
+  if (encoded) effects.write(encoded)
 }

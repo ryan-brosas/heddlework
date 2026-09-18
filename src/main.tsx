@@ -1,5 +1,4 @@
-import React from 'react'
-import { GpuixRenderer, render, resetRender } from '@gpuix/react'
+import { GpuixRenderer, render, resetRender, type WindowKeyEventHandler } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
@@ -23,8 +22,11 @@ import {
   workbenchControllerToken,
 } from './workbench/plugins.ts'
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
-import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
-import { assertNativeRuntime } from './native-runtime.ts'
+import { browserSessionToken, chromeBrowserToken, createBrowserPlugin } from './browser/plugin.ts'
+import { assertNativeRuntime, runtimeOwnsNativeClipboardEditing } from './native-runtime.ts'
+import { setNativeClipboardEditing } from './ui/clipboard-ownership.ts'
+import { resolveInsertKeyCommand } from './ui/insert-key.ts'
+import { copyTextToClipboard } from './ui/clipboard-media.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment } from './host/plugin.ts'
 import { resolveStaticRoot } from './host/static-root.ts'
 import { hostTokenPath } from './host/token.ts'
@@ -40,6 +42,12 @@ declare global {
 }
 
 assertNativeRuntime(GpuixRenderer.prototype)
+// One owner per clipboard gesture, decided once from the runtime's own answer: a patched build binds copy and
+// paste itself, and a runtime that predates the patch keeps the JavaScript fallback instead of losing the
+// gesture. Every surface asks the same flag, so no keystroke can be handled twice.
+const nativeClipboardEditing = runtimeOwnsNativeClipboardEditing(GpuixRenderer.prototype)
+setNativeClipboardEditing(nativeClipboardEditing)
+console.log(`[heddlework] clipboard editing: ${nativeClipboardEditing ? 'native' : 'javascript fallback'}`)
 
 const workspacePath = resolveWorkspacePath()
 const demoMode = process.env.HEDDLEWORK_DEMO === '1'
@@ -92,6 +100,7 @@ const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 const terminals = kernel.get(terminalSessionToken)
 const browsers = kernel.get(browserSessionToken)
+const chromeBrowsers = kernel.get(chromeBrowserToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   shutdown(isGpuixWindowCloseRace(error) ? undefined : error)
@@ -128,13 +137,21 @@ function shutdown(initialError?: unknown): void {
       failures.push(error)
     }
 
-    let nativeStopped = false
+    let nativeStopped: boolean
     try {
       resetRender()
       nativeStopped = true
     } catch (error) {
       nativeStopped = isGpuixWindowCloseRace(error)
       if (!nativeStopped) failures.push(error)
+    }
+
+    // The managed Chrome process owns its profile directory, so it is stopped before that directory
+    // is touched. A failure here is reported like any other shutdown failure.
+    try {
+      await chromeBrowsers.dispose()
+    } catch (error) {
+      failures.push(error)
     }
 
     if (nativeStopped) {
@@ -156,8 +173,27 @@ process.prependListener('unhandledRejection', handleUnhandledRejection)
 process.once('SIGINT', handleSignal)
 process.once('SIGTERM', handleSignal)
 
+/**
+ * Copy the document selection for compositors that deliver clipboard commands as insert keys.
+ *
+ * Omarchy's Hyprland bindings rewrite `Ctrl+V` to `Shift+Insert` ("Direct paste") and `Super+C` to
+ * `Ctrl+Insert` ("Universal copy"). The pinned GPUiX input element binds neither, so with those
+ * bindings installed the window looks as if it had no clipboard at all. Paste is handled by the
+ * focused surface (`Composer`, `TerminalView`); this listener supplies the half a DOM-level handler
+ * cannot reach, because the transcript selection lives in the native runtime rather than in an
+ * element.
+ */
+const handleWindowKeyDown: WindowKeyEventHandler = (event, renderer) => {
+  // A runtime that binds the clipboard keys copies the document selection itself, and two owners writing one
+  // clipboard is the same double handling the paste path avoids.
+  if (nativeClipboardEditing) return
+  if (resolveInsertKeyCommand(event) !== 'copy') return
+  const selected = renderer.getSelectedText?.()
+  if (selected) void copyTextToClipboard(selected)
+}
+
 render(
-  <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} chrome={chromeBrowsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,
@@ -166,6 +202,7 @@ render(
       browsers.canInitializeNativeBrowser(),
     ),
     ...(browserSmokeUrl ? { focus: false, show: false } : {}),
+    onKeyDown: handleWindowKeyDown,
     onTerminated: shutdown,
   },
 )

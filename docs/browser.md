@@ -191,6 +191,60 @@ with the normal Developer ID, hardened-runtime, and notarization flow while
 preserving the inside-out order and bundle names. `dist/heddlework` is a
 compatibility symlink to the app executable when Chromium is bundled.
 
+## Linux
+
+Linux builds ship no embedded browser, and the pinned GPUix backend stays macOS-gated (its CEF backend is
+Objective-C/CoreFoundation), so `supportsNativeBrowser()` answers false. The Browser surface is served instead by the installed browser through the `chrome` engine kind.
+
+### Managed Chrome engine
+
+The engine runs the host's own Chrome or Chromium (`google-chrome-stable`, `google-chrome`, `chromium`,
+`chromium-browser`, or `HEDDLEWORK_CHROME_PATH`) as an app-owned process:
+
+- Chrome is launched headless with `--remote-debugging-pipe`, an app-owned `--user-data-dir` under the
+  browser data root, and its sandbox intact. No TCP debugging port is opened and the user's own Chrome
+  profile is neither read nor written.
+- `src/browser/chrome-process.ts` owns the process; `src/browser/cdp.ts` speaks the fd3/fd4 private pipe;
+  `src/browser/chrome-backend.ts` translates the service's ordered commands and reports Chrome's state
+  back through `BrowserNativeState`; `src/browser/chrome-plan.ts` holds the pure command, key, pointer,
+  viewport and event decisions.
+- Each tab gets its own Chrome target with a flat session. The visible tab's page is streamed with
+  `Page.startScreencast` and drawn as frames; pointer, wheel, key and text gestures are forwarded with the
+  `Input` domain, and the page viewport is set from the measured panel rectangle so input needs no scale
+  factor.
+- `Ctrl+V`/`Cmd+V` reads the desktop clipboard and inserts its text, because Chrome's headless clipboard is
+  not the desktop clipboard. The text-to-insertion mapping is `planChromePaste` in `src/browser/chrome-plan.ts`,
+  and a read that yields nothing is reported in the surface (`chrome-browser-paste-failure`, message in
+  `src/ui/browser-chrome-surface.tsx`) instead of looking like a dead key. Chords such as `Ctrl+C`/`Ctrl+A`
+  are forwarded as key events so the page keeps its own shortcuts.
+- A `window.open` from a page (`Page.windowOpen`) becomes an app-managed tab, and the browser's own popup
+  window is closed rather than left as an unmanaged duplicate.
+- `Page.javascriptDialogOpening` is accepted automatically; dialogs are not yet surfaced to the user.
+
+Verified by `bun run probe:chrome`, which drives the real service into a real Chrome process and checks
+navigation, frames, a planned click, typing into a focused field, a named key, history back, idempotent
+command application, popup adoption, and that quitting leaves no browser holding the profile.
+
+Known limits in this first version, none of which are silent:
+
+- Persistent Heddlework profiles share one managed Chrome data directory, so the engine reports
+  `profileIsolation: 'limited'` rather than claiming full isolation. Private-profile tabs use an ephemeral
+  Chrome browser context and are never restored.
+- A popup whose address is still blank is closed rather than adopted, so opener-dependent OAuth/payment
+  flows are unsupported, as they already are on macOS.
+- IME composition, downloads, site permission prompts, passkeys and media capture are not bridged yet.
+- Frames are streamed at a bounded rate, so this is not a zero-latency embedded browser; pages that
+  repaint heavily trade smoothness for bandwidth.
+- Frames default to one pixel per CSS pixel because the pinned renderer exposes no display scale. On a
+  fractionally scaled display that can look soft; `HEDDLEWORK_CHROME_FRAME_SCALE=1.5` (clamped to 1-2)
+  raises frame resolution for proportionally more bandwidth and CPU.
+- Agent automation is still not wired to this engine: `BrowserAutomationAdapter` remains the boundary, and
+  `ChromeBrowserBackend.evaluate` is app-internal readback, not a model-facing capability.
+
+The unavailable-engine surface and its **Open in system browser** action remain for hosts with neither an
+embedded browser nor an installed Chrome. An embedded Linux browser still needs a native CEF surface in
+GPUix plus packaged helpers and a sandbox path; that remains a separate milestone.
+
 ## Web and mobile
 
 CEF is intentionally not compiled into the WASM client. The browser domain and

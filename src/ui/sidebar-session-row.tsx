@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
-import type { ThreadLifecycle } from '../workbench/state.ts'
 import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
 import { formatTimeOfDay } from './format-time.ts'
 import { DropdownSurface, useDropdownPresence } from './dropdown.tsx'

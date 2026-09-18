@@ -5,10 +5,11 @@ import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
 import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
-import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
+import { hydrateMessageImages } from './clipboard-media.ts'
+import { useClipboardCopy } from './clipboard-copy.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
@@ -24,7 +25,6 @@ import {
   currentWorkWave,
   emptyWorkTrace,
   groupWorkItems,
-  isActiveTraceEntry,
   isCompactionWorkTrace,
   liveWorkTraceId,
   pendingWorkTraceId,
@@ -459,7 +459,7 @@ function ProjectedTranscriptRow({
     const running = live
     const inline = row.trace.items.length <= TRACE_INITIAL_PROJECTED_ROWS
     return (
-      <TranscriptRowShell compact={running} noSelect>
+      <TranscriptRowShell compact={running}>
         <ExecutionTraceHeader
           trace={row.trace}
           presenters={presenters}
@@ -556,10 +556,32 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
   )
 }
 
+/**
+ * Row padding plus the selection policy for one transcript row.
+ *
+ * Only explicitly non-selectable chrome opts out. Read-only content (expanded traces,
+ * nested tool calls, reasoning, changed-file paths) stays selectable: a `userSelect: 'none'`
+ * here also disabled the native drag-selection copy path in the pinned GPUiX runtime.
+ */
+export function transcriptRowShellStyle(options: { user: boolean; compact: boolean; noSelect: boolean; contentGutter: number }) {
+  const { user, compact, noSelect, contentGutter } = options
+  return {
+    display: 'flex' as const,
+    flexDirection: 'row' as const,
+    justifyContent: 'center' as const,
+    width: '100%' as const,
+    paddingTop: user ? 9 : compact ? 0 : 4,
+    paddingBottom: user ? 11 : compact ? 0 : 7,
+    paddingLeft: contentGutter,
+    paddingRight: contentGutter,
+    userSelect: noSelect ? ('none' as const) : ('text' as const),
+   }
+}
+
 function TranscriptRowShell({ children, user = false, compact = false, noSelect = false }: { children: React.ReactNode; user?: boolean; compact?: boolean; noSelect?: boolean }) {
   const { contentGutter } = useResponsiveLayout()
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: contentGutter, paddingRight: contentGutter, ...((compact || noSelect) ? { userSelect: 'none' as const } : {}) }}>
+    <div style={transcriptRowShellStyle({ user, compact, noSelect, contentGutter })}>
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>{children}</div>
     </div>
   )
@@ -586,6 +608,7 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
 }
 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
+  const link = useExternalLink()
   return (
     <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
       <MathMarkdown
@@ -593,8 +616,9 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
         source={item.text || '…'}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
-        onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+        onLinkClick={(event) => link.launch(String(event.value ?? ''))}
       />
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
       {!item.streaming && <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
     </div>
   )
@@ -637,9 +661,8 @@ function ExecutionTraceHeader({
   const naturalHeight = !expanded && running ? Math.max(COLLAPSED_TRACE_ROW_HEIGHT, collapsedPreviewHeight(collapsedTools, preview, presenters)) : 0
   const leasedHeight = leasePreviewHeight(trace.boundaryId ?? trace.items[0]?.id ?? trace.id, naturalHeight, running)
   const extraHeight = Math.max(0, leasedHeight - naturalHeight)
-  const height = leasedHeight
   return (
-    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2, userSelect: 'none' }}>
+    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2 }}>
       <div
         testId="tool-row"
         tabIndex={0}
@@ -652,7 +675,7 @@ function ExecutionTraceHeader({
         <TraceChevron expanded={expanded} />
       </div>
       {!expanded && (
-        <WorkPreviewTransition height={height}>
+        <WorkPreviewTransition height={leasedHeight}>
           {running && preview && <TracePreview item={preview} />}
           {running && collapsedTools.length > 0 ? <CollapsedTraceTools items={collapsedTools} presenters={presenters} hidden={Math.max(0, wave.tools.length - collapsedTools.length)} /> : null}
           {running && extraHeight > 0 && <div testId="transcript-lease" style={{ width: '100%', height: extraHeight }} />}
@@ -796,6 +819,7 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
 }
 
 function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
+  const link = useExternalLink()
   return (
     <div testId={testId} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div testId={`${testId}-toggle`} tabIndex={0} style={{ position: 'relative', minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none', backgroundColor: colors.background }} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
@@ -809,12 +833,21 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
           testId={`${testId}-markdown`}
           source={text}
           theme={traceMarkdownTheme()}
-          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'none', pointerEvents: 'none' }}
-          onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+          style={traceBodyStyle()}
+          onLinkClick={(event) => link.launch(String(event.value ?? ''))}
         />
       )}
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
     </div>
   )
+}
+
+/**
+ * Expanded trace bodies stay interactive: their links open externally and their text selects.
+ * `pointerEvents: 'none'` here made every link in a disclosure inert.
+ */
+export function traceBodyStyle() {
+  return { width: '100%', minWidth: 0, overflow: 'visible' as const, userSelect: 'text' as const }
 }
 
 function TracePreview({ item }: { item: TracePreviewItem }) {
@@ -927,20 +960,6 @@ function compactOneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
-function formatFabricValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value.slice(0, 18_000)
-  try {
-    return JSON.stringify(value, null, 2).slice(0, 18_000)
-  } catch {
-    return String(value).slice(0, 18_000)
-  }
-}
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1_000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1_000).toFixed(1)}s`
-}
-
 function MessageImage({ image }: { image: PiImageContent }) {
   return (
     <div style={{ width: 156, height: 104, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
@@ -964,24 +983,11 @@ function MessageFooter({
   align: 'start' | 'end'
   onRevert(entryId: string): void
 }) {
-  const [copied, setCopied] = useState(false)
-  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => {
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-  }, [])
-  const copy = async () => {
-    if (!await copyTextToClipboard(copyText)) return
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-    setCopied(true)
-    copyResetTimer.current = setTimeout(() => {
-      copyResetTimer.current = undefined
-      setCopied(false)
-    }, 900)
-  }
+  const copy = useClipboardCopy()
   const actions = (
     <>
       {revertEntryId && <TranscriptInlineAction icon="gitBranch" testId="tree-message" onClick={() => onRevert(revertEntryId)} />}
-      {copyText && <TranscriptInlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
+      {copyText && <TranscriptInlineAction icon={copy.copied ? 'check' : 'copy'} testId="copy-message" onClick={() => copy.copy(copyText)} />}
     </>
   )
   return (
@@ -989,6 +995,7 @@ function MessageFooter({
       {align === 'start' && actions}
       {timestamp && <Timestamp value={timestamp} />}
       {align === 'end' && actions}
+      {copy.failure && <text testId="copy-message-failure" style={{ color: colors.error, fontSize: 9 }}>{copy.failure}</text>}
     </div>
   )
 }

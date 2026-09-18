@@ -1,9 +1,9 @@
 import React from 'react'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, expect, it } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
@@ -12,13 +12,12 @@ import { createInitialState } from '../src/workbench/state.ts'
 import { ComposerNotificationStack, NotificationLedgerView, composerNotificationStackHeight } from '../src/ui/notifications.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 const controllers: WorkbenchController[] = []
 afterEach(async () => {
   await Promise.all(controllers.splice(0).map((controller) => controller.dispose()))
 })
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('notification surfaces', () => {
   it('keeps notices out of the composer while retaining the notification ledger', async () => {

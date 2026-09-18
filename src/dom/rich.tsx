@@ -2,12 +2,13 @@
 // DOM renderers for gpuix's markdown, code, and diff intrinsics. They take the same props (source/theme/code/patch) and
 // paint with the theme's metrics so text sits on the same grid as the desktop.
 
-import React, { forwardRef, useMemo, useState, type CSSProperties } from 'react'
+import React, { forwardRef, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { EventPayload, StyleDesc } from '@gpuix/react'
 import { toCss } from './style.ts'
 import { plainPayload } from './events.ts'
 import { parseMarkdownBlocks, type BlockNode, type InlineNode } from '../web/markdown-blocks.ts'
 import { markdownSourceWithNewlines } from '../ui/markdown-source.ts'
+import { copyTextToClipboard } from '../ui/clipboard-media.ts'
 
 type AnyProps = Record<string, unknown>
 
@@ -82,11 +83,22 @@ function Block({ block }: { block: BlockNode }) {
 // Fenced code carries a header with the language and a copy action, like gpuix markdown/render.rs.
 function CodeBlock({ text, language }: { text: string; language?: string }) {
   const [copied, setCopied] = useState(false)
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => { if (resetTimer.current) clearTimeout(resetTimer.current) }, [])
+  const copy = async (): Promise<void> => {
+    // The shared writer reports a refused clipboard as `false` rather than rejecting, so a denied
+    // copy leaves the action on "Copy" instead of claiming a write that never happened. Calling
+    // navigator.clipboard directly both bypassed that contract and leaked a rejection.
+    if (!await copyTextToClipboard(text)) return
+    setCopied(true)
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+    resetTimer.current = setTimeout(() => { resetTimer.current = undefined; setCopied(false) }, 1200)
+  }
   return (
     <div className="gx-md-code">
       <div className="gx-md-code-header">
         <span>{language || 'text'}</span>
-        <button type="button" className="gx-md-copy" onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }) }}>{copied ? 'Copied' : 'Copy'}</button>
+        <button type="button" className="gx-md-copy" onClick={() => { void copy() }}>{copied ? 'Copied' : 'Copy'}</button>
       </div>
       <pre><code>{text}</code></pre>
     </div>

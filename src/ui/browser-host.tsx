@@ -1,5 +1,6 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
+import type { ChromeBrowserBackend } from '../browser/chrome-backend.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import type { BrowserEngineKind, BrowserEngineStatus, BrowserNativeState } from '../browser/types.ts'
 import { useBrowserSnapshot } from './browser-context.tsx'
@@ -20,14 +21,62 @@ interface BrowserValueEvent {
   value: string
 }
 
-export function BrowserNativeHost({ service, suspended = false }: { service: BrowserSessionService; suspended?: boolean }) {
+/**
+ * The one owner of browser engine selection, native element placement, and Chrome's own state feed.
+ *
+ * A build has at most one usable engine, and the sidebar's chrome depends on knowing which one that is:
+ * two components setting the engine made the panel offer controls for an engine that had already lost.
+ * Native elements are only materialized when the native engine won.
+ */
+export function BrowserHost({ service, suspended = false, chrome }: {
+  service: BrowserSessionService
+  suspended?: boolean
+  chrome?: ChromeBrowserBackend | undefined
+}) {
   const renderer = useGpuixRequired() as BrowserRenderer
   const snapshot = useBrowserSnapshot(service)
-  const engine = useMemo(() => probeBrowserEngine(renderer), [renderer])
+  const native = useMemo(() => probeBrowserEngine(renderer), [renderer])
+  const [chromeEngine, setChromeEngine] = useState<BrowserEngineStatus | undefined>(() => chrome?.engineStatus)
+  const chromeActive = Boolean(chrome?.available) && !native.available
 
-  useEffect(() => service.setEngine(engine), [engine, service])
+  useEffect(() => { setChromeEngine(chrome?.engineStatus) }, [chrome])
 
-  if (!engine.available) return null
+  // Chrome reports its own page state, popups and failures; the service stays the side that owns tabs.
+  useEffect(() => {
+    if (!chrome || !chromeActive) return
+    return chrome.subscribe((event) => {
+      if (event.kind === 'state') service.applyNativeState(event.tabId, event.state)
+      else if (event.kind === 'popup') service.openRequested(event.tabId, event.generation, event.url)
+      else setChromeEngine(chrome.engineStatus)
+    })
+  }, [chrome, chromeActive, service])
+
+  useEffect(() => { service.setEngine(selectBrowserEngine(native, chromeEngine, chromeActive)) }, [service, native, chromeEngine, chromeActive])
+
+  // Sessions follow the service's tabs: one Chrome page per materialized tab, and nothing left behind
+  // for a tab that no longer exists.
+  useEffect(() => {
+    if (!chrome || !chromeActive) return
+    const live = new Set<string>()
+    for (const tab of snapshot.tabs) {
+      if (!tab.materialized || !tab.url) continue
+      live.add(tab.id)
+      const profile = service.runtimeProfile(tab.profileId)
+      void chrome.open({
+        tabId: tab.id,
+        generation: tab.generation,
+        profileId: tab.profileId,
+        incognito: profile?.incognito ?? false,
+        viewport: { width: 0, height: 0 },
+      })
+      void chrome.applyCommands(tab.id, tab.generation, tab.commands, tab.commandSerial)
+    }
+    for (const tabId of chrome.openTabIds) {
+      if (!live.has(tabId)) void chrome.close(tabId)
+    }
+  }, [chrome, chromeActive, service, snapshot.tabs])
+
+  if (!native.available) return null
   const placement = snapshot.placement
 
   return (
@@ -74,6 +123,12 @@ export function BrowserNativeHost({ service, suspended = false }: { service: Bro
       })}
     </div>
   )
+}
+
+export function selectBrowserEngine(native: BrowserEngineStatus, chrome: BrowserEngineStatus | undefined, chromeActive: boolean): BrowserEngineStatus {
+  if (native.available) return native
+  if (chromeActive && chrome?.available) return chrome
+  return native
 }
 
 function probeBrowserEngine(renderer: BrowserRenderer): BrowserEngineStatus {

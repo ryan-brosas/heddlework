@@ -1,36 +1,22 @@
-import React, { useMemo, useState } from 'react'
-import { basename, resolve } from 'node:path'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import { useMemo, useState } from 'react'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
+
 import { Composer } from './composer.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { matchSelectOptions, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { Icon } from './icons.tsx'
-import { pickWorkspaceDirectory } from './open-external.ts'
+import { useGpuixRequired } from '@gpuix/react'
+import { pickProjectDirectory } from './native-directory-picker.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+import { workspaceChoices } from './workspace-choices.ts'
 
-interface WorkspaceChoice {
-  path: string
-  name: string
-  current: boolean
-}
+export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
 
-export function workspaceChoices(state: Pick<WorkbenchState, 'workspacePath' | 'sessions'>): WorkspaceChoice[] {
-  const currentPath = resolve(state.workspacePath)
-  const paths = new Map<string, string>([[currentPath, basename(currentPath) || currentPath]])
-  for (const session of state.sessions) {
-    const path = resolve(session.cwd)
-    if (!paths.has(path)) paths.set(path, basename(path) || path)
-  }
-  return [...paths].map(([path, name]) => ({ path, name, current: path === currentPath })).sort((left, right) => {
-    if (left.current !== right.current) return left.current ? -1 : 1
-    return left.name.localeCompare(right.name)
-  })
-}
-
-export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
   const layout = useResponsiveLayout()
+  const renderer = useGpuixRequired()
   const dropdown = useDropdownState()
   const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
@@ -48,14 +34,17 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
   const chooseNewProject = () => {
     if (picking) return
     setPicking(true)
-    void pickWorkspaceDirectory().then((pick) => {
+    // Stay busy until the switch settles, not just until a path came back: releasing the picker on
+    // selection let a second click start an overlapping switch to a different folder.
+    void pickProjectDirectory(renderer).then(async (pick) => {
       if (pick.error) controller.notify('error', pick.error)
-      else if (pick.path) void controller.switchWorkspace(pick.path)
-    }).finally(() => {
+      else if (pick.path) await controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+    }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => {
       setPicking(false)
       closeMenu()
     })
   }
+
   return (
     <div testId="draft-workspace" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter, paddingBottom: layout.mobile ? 42 : 74, ...(layout.mobile ? { overflow: 'scroll' } : {}) }}>
       <div testId="draft-workspace-stack" style={{ position: 'relative', width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: layout.mobile ? 18 : 25, overflow: 'visible' }}>
@@ -83,7 +72,7 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
               {filteredChoices.length > 0 ? (
                 <NativeVirtualList testId="workspace-project-list" alignment="top" estimatedItemHeight={42} overdraw={84} itemCount={Math.max(1, filteredChoices.length)} windowStart={projectWindow.windowStart} onVisibleRange={projectWindow.onVisibleRange} style={{ width: '100%', height: projectListHeight, minHeight: 0 }}>
                   {visibleChoices.map((choice) => (
-                    <div key={choice.path} testId={choice.current ? 'workspace-choice-current' : 'workspace-choice'} tabIndex={choice.current ? -1 : 0} style={{ height: 42, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: choice.current ? colors.raised : colors.transparent, cursor: choice.current ? 'default' : 'pointer', hover: choice.current ? {} : { backgroundColor: colors.hover } }} {...(choice.current ? {} : { onClick: () => { closeMenu(); void controller.switchWorkspace(choice.path) }, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') { closeMenu(); void controller.switchWorkspace(choice.path) } } })}>
+                    <div key={choice.path} testId={choice.current ? 'workspace-choice-current' : 'workspace-choice'} tabIndex={choice.current ? -1 : 0} style={{ height: 42, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: choice.current ? colors.raised : colors.transparent, cursor: choice.current ? 'default' : 'pointer', hover: choice.current ? {} : { backgroundColor: colors.hover } }} {...(choice.current ? {} : { onClick: () => { closeMenu(); void controller.switchWorkspace(choice.path).catch(notifyFailure(controller, 'Could not open the project')) }, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') { closeMenu(); void controller.switchWorkspace(choice.path).catch(notifyFailure(controller, 'Could not open the project')) } } })}>
                       <Icon name="folder" size={15} color={choice.current ? colors.textMuted : colors.textFaint} />
                       <text style={{ minWidth: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{choice.name}</text>
                       {choice.current && <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>CURRENT</text>}

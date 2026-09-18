@@ -31,7 +31,6 @@ export interface TerminalRow {
 
 export const TERMINAL_PACKED_CELL_WORDS = 4
 export const TERMINAL_PACKED_COLOR_KIND_MASK = 0xff000000
-export const TERMINAL_PACKED_COLOR_RGB = 0
 export const TERMINAL_PACKED_COLOR_INDEXED = 0x01000000
 export const TERMINAL_PACKED_COLOR_DEFAULT_FG = 0x02000000
 export const TERMINAL_PACKED_COLOR_DEFAULT_BG = 0x03000000
@@ -84,7 +83,13 @@ export interface TerminalServiceSnapshot {
   readonly activeRightId: TerminalSessionId | undefined
   readonly appearance: TerminalAppearance
   readonly generation: number
-}
+
+  /**
+   * The most recent terminal action failure. Terminal affordances are fire-and-forget (see
+   * `TerminalSessionService.dispatch`), so the failure is published as service state for the
+   * terminal surfaces to render instead of escaping as an unhandled rejection.
+   */
+  readonly lastError?: string}
 
 export type TerminalPlacement = 'bottom' | 'right'
 

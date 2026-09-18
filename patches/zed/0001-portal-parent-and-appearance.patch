@@ -1,0 +1,958 @@
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index e37ab99..2e135dc 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -847,6 +847,14 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn activate(&self);
+     /// Requests that the operating system draw attention to this window.
+     fn request_attention(&self) {}
++    /// Exports this window as an XDG portal `parent_window` value
++    /// (`wayland:<handle>` or `x11:<xid>`). `None` when the platform has no
++    /// export machinery or the window is not live. The task must resolve on
++    /// the foreground executor and identifies THIS window, not whichever
++    /// window is focused later.
++    fn parent_window_identifier(&self) -> Option<Task<Option<String>>> {
++        None
++    }
+     fn is_active(&self) -> bool;
+     fn is_hovered(&self) -> bool;
+     fn background_appearance(&self) -> WindowBackgroundAppearance;
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 9e06f2d..b01985d 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -2179,6 +2179,12 @@ impl Window {
+         self.platform_window.is_maximized()
+     }
+ 
++    /// Exports this window as an XDG portal `parent_window` value
++    /// (`wayland:<handle>` or `x11:<xid>`), for window-parented portal dialogs.
++    pub fn parent_window_identifier(&self) -> Option<Task<Option<String>>> {
++        self.platform_window.parent_window_identifier()
++    }
++
+     /// request a certain window decoration (Wayland)
+     pub fn request_decorations(&self, decorations: WindowDecorations) {
+         self.platform_window.request_decorations(decorations);
+diff --git a/crates/gpui_linux/src/gpui_linux.rs b/crates/gpui_linux/src/gpui_linux.rs
+index 62d972d..ec12777 100644
+--- a/crates/gpui_linux/src/gpui_linux.rs
++++ b/crates/gpui_linux/src/gpui_linux.rs
+@@ -1,4 +1,7 @@
+ #![cfg(any(target_os = "linux", target_os = "freebsd"))]
+ mod linux;
+ 
++pub mod portal_file_chooser;
++pub mod system_appearance;
++
+ pub use linux::current_platform;
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index 2d25416..3c8e925 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -1618,6 +1618,18 @@ impl rwh::HasDisplayHandle for WaylandWindow {
+ }
+ 
+ impl PlatformWindow for WaylandWindow {
++    fn parent_window_identifier(&self) -> Option<gpui::Task<Option<String>>> {
++        let surface = self.0.surface();
++        let executor = self.0.state.borrow().globals.executor.clone();
++        // ashpd performs the zxdg_exporter roundtrip on its own thread; the
++        // awaited channel keeps the foreground loop responsive.
++        Some(executor.spawn(async move {
++            ashpd::WindowIdentifier::from_wayland(&surface)
++                .await
++                .map(|identifier| identifier.to_string())
++        }))
++    }
++
+     fn bounds(&self) -> Bounds<Pixels> {
+         self.borrow().bounds
+     }
+diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
+index 9e8c56b..27df7a2 100644
+--- a/crates/gpui_linux/src/linux/x11/window.rs
++++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -1403,6 +1403,14 @@ impl X11WindowStatePtr {
+ }
+ 
+ impl PlatformWindow for X11Window {
++    fn parent_window_identifier(&self) -> Option<gpui::Task<Option<String>>> {
++        let xid = self.0.x_window as u64;
++        let executor = self.0.state.borrow().executor.clone();
++        Some(executor.spawn(async move {
++            Some(ashpd::WindowIdentifier::from_xid(xid).to_string())
++        }))
++    }
++
+     fn bounds(&self) -> Bounds<Pixels> {
+         self.0.state.borrow().bounds
+     }
+diff --git a/crates/gpui_linux/src/portal_file_chooser.rs b/crates/gpui_linux/src/portal_file_chooser.rs
+new file mode 100644
+index 0000000..9385cab
+--- /dev/null
++++ b/crates/gpui_linux/src/portal_file_chooser.rs
+@@ -0,0 +1,759 @@
++//! Narrow XDG Desktop Portal FileChooser transport with explicit close
++//! confirmation. ashpd 0.13's high-level `OpenFileRequest` awaits the response
++//! before exposing the request, so wrapping `send()` cannot issue a timely
++//! `Request.Close`; raw zbus calls keep cancellation server-side.
++
++use ashpd::zbus::message::Type as MessageType;
++use ashpd::zbus::zvariant::{ObjectPath, OwnedValue, Str, Value};
++use ashpd::zbus::{Connection, Error as ZBusError, Message, MessageStream};
++use futures::{FutureExt, StreamExt};
++use std::collections::HashMap;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++
++const PORTAL_DESTINATION: &str = "org.freedesktop.portal.Desktop";
++const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
++const FILE_CHOOSER: &str = "org.freedesktop.portal.FileChooser";
++const REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
++
++/// Connection setup and portal-owner resolution must not hang the request.
++const SETUP_TIMEOUT: Duration = Duration::from_secs(6);
++/// The opening `OpenFile` call must return a request handle promptly.
++const OPEN_IPC_TIMEOUT: Duration = Duration::from_secs(5);
++/// A close IPC that outlives this bound cannot be confirmed.
++const CLOSE_IPC_TIMEOUT: Duration = Duration::from_secs(2);
++/// After an accepted `Close`, the portal owes a terminal Response.
++const CLOSE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum DirectoryCleanupOutcome {
++  /// The request is known to have ended; retry and fallback are safe.
++  Closed,
++  /// Termination could not be confirmed; a dialog may still be open.
++  Uncertain,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum DirectoryResponse {
++  Selected(String),
++  Cancelled,
++  Unavailable {
++    reason: String,
++    safe_to_fallback: bool,
++  },
++}
++
++#[derive(Debug)]
++pub enum DirectoryEvent {
++  /// Exactly one terminal application result.
++  Response(DirectoryResponse),
++  /// Exactly one cleanup outcome, after the response or a disposal.
++  Cleanup(DirectoryCleanupOutcome),
++}
++
++enum WatchEvent {
++  Response(Message),
++  PortalLost,
++}
++
++pub struct DirectoryRequest {
++  close: smol::channel::Sender<()>,
++  /// Set when the transport thread was spawned; the thread is detached, so
++  /// nothing joins it (JS teardown must not wait for portal confirmation).
++  _task: Option<std::thread::JoinHandle<()>>,
++}
++
++impl Drop for DirectoryRequest {
++  fn drop(&mut self) {
++    // Dropping the handle must close any dialog the portal may have opened;
++    // the transport observes this signal and reports the cleanup outcome
++    // without another JavaScript turn.
++    let _ = self.close.try_send(());  }
++}
++
++impl DirectoryRequest {
++  pub fn new(
++    parent_window: Option<String>,
++    title: Option<String>,
++    mut emit: impl FnMut(DirectoryEvent) + Send + 'static,
++  ) -> Self {
++    let (close, close_rx) = smol::channel::bounded::<()>(1);
++    // Drive the transport on a dedicated thread with its own executor: a
++    // dispose from the JavaScript thread must be observed even when no other
++    // D-Bus traffic is ticking the global executor. The thread ends when
++    // run_request returns; the handle never joins it, so JS teardown never
++    // waits for the portal close confirmation.
++    let run = async move {
++      let cleanup = run_request(parent_window, title, close_rx, &mut emit).await;
++      emit(DirectoryEvent::Cleanup(cleanup));
++    };
++    // Drive the transport on a dedicated thread with its own executor: a
++    // dispose from the JavaScript thread must be observed even when no other
++    // D-Bus traffic is ticking the global executor. The thread is detached,
++    // so JS teardown never waits for the portal close confirmation.
++    let task = std::thread::spawn(move || smol::block_on(run));
++    Self { close, _task: Some(task) }
++  }
++}
++
++async fn run_request(
++  parent_window: Option<String>,
++  title: Option<String>,
++  close_rx: smol::channel::Receiver<()>,
++  emit: &mut (dyn FnMut(DirectoryEvent) + Send),
++) -> DirectoryCleanupOutcome {
++  let established = futures::future::select(
++    Box::pin(establish_session()),
++    Box::pin(smol::Timer::after(SETUP_TIMEOUT)),
++  )
++  .await;
++  let (connection, owner, token) = match established {
++    futures::future::Either::Left((Ok(setup), _)) => setup,
++    futures::future::Either::Left((Err(reason), _)) => {
++      emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++        reason,
++        safe_to_fallback: true,
++      }));
++      return DirectoryCleanupOutcome::Closed;
++    }
++    // Nothing was opened yet, so the retry is safe.
++    futures::future::Either::Right(_) => {
++      emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++        reason: "portal setup timed out".into(),
++        safe_to_fallback: true,
++      }));
++      return DirectoryCleanupOutcome::Closed;
++    }
++  };
++
++  let request_path = expected_request_path(connection.unique_name().map(|n| n.to_string()), &token);
++  let (hit_tx, hit_rx) = smol::channel::unbounded::<WatchEvent>();
++  // Subscribe before the opening call so a response emitted inside the
++  // opening-call interval is already buffered and reconciled by returned
++  // request path, token, and portal sender.
++  let stream = Box::pin(MessageStream::from(connection.clone()));
++  let _watcher = smol::spawn({
++    let request_path = request_path.clone();
++    let owner = owner.clone();
++    let mut stream = stream;
++    async move {
++      while let Some(item) = stream.as_mut().next().await {
++        let Ok(message) = item else { break };
++        match classify_message(&message, &request_path, &owner) {
++          MessageClass::Other => {}
++          MessageClass::Response => {
++            if hit_tx.send(WatchEvent::Response(message)).await.is_err() {
++              break;
++            }
++          }
++          MessageClass::PortalOwnershipChanged => {
++            let _ = hit_tx.send(WatchEvent::PortalLost).await;
++            break;
++          }
++        }
++      }
++      // Dropping hit_tx also ends hit_rx: a lost stream is a transport failure.
++    }
++  });
++
++  let mut options: HashMap<&str, Value> = HashMap::new();
++  options.insert("handle_token", Value::from(token.clone()));
++  options.insert("modal", Value::from(true));
++  options.insert("multiple", Value::from(false));
++  options.insert("directory", Value::from(true));
++  if let Some(title) = title.clone() {
++    options.insert("title", Value::from(title));
++  }
++  let parent_window = parent_window.unwrap_or_default();
++  let call = smol::spawn({
++    let connection = connection.clone();
++    async move {
++      connection
++        .call_method(
++          Some(PORTAL_DESTINATION),
++          PORTAL_PATH,
++          Some(FILE_CHOOSER),
++          "OpenFile",
++          &(&parent_window, &options),
++        )
++        .await
++    }
++  });
++
++  let mut call = Box::pin(call);
++  // A disposal landing during setup must not open a dialog afterwards. The
++  // open call may already be on the bus, so a late returned handle is still
++  // closed server-side.
++  if close_rx.try_recv().is_ok() {
++    return settle_unconfirmed_call(&connection, &owner, call, &request_path, &hit_rx).await;
++  }
++
++  let opened = futures::select! {
++    reply = call.as_mut().fuse() => Opened::Reply(reply),
++    _ = futures::FutureExt::fuse(Box::pin(close_rx.recv())) => Opened::Cancelled,
++    _ = futures::FutureExt::fuse(Box::pin(smol::Timer::after(OPEN_IPC_TIMEOUT))) => Opened::TimedOut,
++  };
++
++  match opened {
++    Opened::Reply(Err(error)) => {
++      let safe_to_fallback = is_definite_portal_rejection(&error);
++      emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++        reason: format!("the portal rejected the open request: {error}"),
++        safe_to_fallback,
++      }));
++      if safe_to_fallback {
++        DirectoryCleanupOutcome::Closed
++      } else {
++        DirectoryCleanupOutcome::Uncertain
++      }
++    }
++    Opened::Reply(Ok(reply)) => {
++      let Some(handle) = reply
++        .body()
++        .deserialize::<ObjectPath>()
++        .ok()
++        .map(|path| path.to_string())
++      else {
++        emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++          reason: "the portal returned no request handle".into(),
++          safe_to_fallback: false,
++        }));
++        return DirectoryCleanupOutcome::Uncertain;
++      };
++      if handle != request_path {
++        // Response correlation is impossible on an unexpected handle.
++        emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++          reason: format!("the portal returned an unexpected request handle: {handle}"),
++          safe_to_fallback: false,
++        }));
++        return close_untracked(&connection, &owner, &handle).await;
++      }
++      await_response(&connection, &owner, &request_path, close_rx, hit_rx, emit).await
++    }
++    Opened::TimedOut => {
++      emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++        reason: "the open request timed out".into(),
++        safe_to_fallback: false,
++      }));
++      settle_unconfirmed_call(&connection, &owner, call, &request_path, &hit_rx).await
++    }
++    // The application already fenced its result; only native cleanup remains.
++    Opened::Cancelled => {
++      settle_unconfirmed_call(&connection, &owner, call, &request_path, &hit_rx).await
++    }
++  }
++}
++
++enum Opened {
++  Reply(ashpd::zbus::Result<Message>),
++  Cancelled,
++  TimedOut,
++}
++
++/// After cancellation or an open timeout the call may still be in flight. A
++/// late returned handle must be closed so no dialog is left behind.
++async fn settle_unconfirmed_call(
++  connection: &Connection,
++  owner: &str,
++  call: std::pin::Pin<Box<smol::Task<ashpd::zbus::Result<Message>>>>,
++  request_path: &str,
++  hit_rx: &smol::channel::Receiver<WatchEvent>,
++) -> DirectoryCleanupOutcome {
++  let settled = futures::future::select(
++    Box::pin(call),
++    Box::pin(smol::Timer::after(OPEN_IPC_TIMEOUT)),
++  )
++  .await;
++  match settled {
++    futures::future::Either::Left((Ok(reply), _)) => {
++      let handle = reply
++        .body()
++        .deserialize::<ObjectPath>()
++        .ok()
++        .map(|path| path.to_string());
++      match handle {
++        Some(handle) if handle == request_path => {
++          close_confirmed(connection, owner, request_path, hit_rx).await
++        }
++        // An uncorrelated late handle cannot report a confirmed termination.
++        Some(handle) => close_untracked(connection, owner, &handle).await,
++        None => DirectoryCleanupOutcome::Uncertain,
++      }
++    }
++    futures::future::Either::Left((Err(error), _)) => {
++      if is_definite_portal_rejection(&error) {
++        DirectoryCleanupOutcome::Closed
++      } else {
++        DirectoryCleanupOutcome::Uncertain
++      }
++    }
++    // The portal never answered; termination cannot be confirmed.
++    _ => DirectoryCleanupOutcome::Uncertain,
++  }
++}
++
++async fn await_response(
++  connection: &Connection,
++  owner: &str,
++  request_path: &str,
++  close_rx: smol::channel::Receiver<()>,
++  hit_rx: smol::channel::Receiver<WatchEvent>,
++  emit: &mut (dyn FnMut(DirectoryEvent) + Send),
++) -> DirectoryCleanupOutcome {
++  loop {
++    // A dispose from the JavaScript thread must not depend on the global
++    // executor being woken by unrelated D-Bus traffic: poll the close signal
++    // on a bounded timer so the dialog close is always observed.
++    if close_rx.try_recv().is_ok() {
++      return close_confirmed(connection, owner, request_path, &hit_rx).await;
++    }
++    let wait = futures::future::select(
++      Box::pin(next_hit(hit_rx.clone())),
++      futures::FutureExt::fuse(Box::pin(smol::Timer::after(std::time::Duration::from_millis(200)))),
++    )
++    .await;
++    match wait {
++      futures::future::Either::Left((hit, pending)) => {
++        drop(pending);
++        match hit {
++          Some(WatchEvent::Response(message)) => {
++            emit(DirectoryEvent::Response(parse_response(&message)));
++            // The response itself proves the request ended.
++            return DirectoryCleanupOutcome::Closed;
++          }
++          Some(WatchEvent::PortalLost) => {
++            emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++              reason: "the portal connection or owner was lost".into(),
++              safe_to_fallback: false,
++            }));
++            return DirectoryCleanupOutcome::Uncertain;
++          }
++          None => {
++            emit(DirectoryEvent::Response(DirectoryResponse::Unavailable {
++              reason: "the portal message stream ended".into(),
++              safe_to_fallback: false,
++            }));
++            return DirectoryCleanupOutcome::Uncertain;
++          }
++        }
++      }
++      // Timer tick: the loop head re-checks the close signal.
++      futures::future::Either::Right(_) => {}
++    }
++  }
++}
++
++/// Dropping the transport future alone leaves the portal dialog open; closing
++/// requires `Request.Close` plus a confirmed termination.
++async fn close_confirmed(
++  connection: &Connection,
++  owner: &str,
++  request_path: &str,
++  hit_rx: &smol::channel::Receiver<WatchEvent>,
++) -> DirectoryCleanupOutcome {
++  let close = smol::spawn({
++    let connection = connection.clone();
++    let owner = owner.to_string();
++    let request_path = request_path.to_string();
++    async move {
++      connection
++        .call_method(
++          Some(owner),
++          request_path,
++          Some(REQUEST_INTERFACE),
++          "Close",
++          &(),
++        )
++        .await
++    }
++  });
++  let result =
++    match futures::future::select(Box::pin(close), Box::pin(smol::Timer::after(CLOSE_IPC_TIMEOUT)))
++      .await
++    {
++      futures::future::Either::Left((result, _)) => result,
++      // The close IPC itself could not be confirmed.
++      futures::future::Either::Right(_) => return DirectoryCleanupOutcome::Uncertain,
++    };
++  match result {
++    Ok(_) => match wait_for_terminal(hit_rx).await {
++      true => DirectoryCleanupOutcome::Closed,
++      false => DirectoryCleanupOutcome::Uncertain,
++    },
++    Err(error) => close_error_outcome(&error),
++  }
++}
++
++/// An uncorrelated handle can be closed but its termination cannot be observed.
++async fn close_untracked(
++  connection: &Connection,
++  owner: &str,
++  handle: &str,
++) -> DirectoryCleanupOutcome {
++  let close = smol::spawn({
++    let connection = connection.clone();
++    let owner = owner.to_string();
++    let handle = handle.to_string();
++    async move {
++      connection
++        .call_method(Some(owner), handle, Some(REQUEST_INTERFACE), "Close", &())
++        .await
++    }
++  });
++  match futures::future::select(Box::pin(close), Box::pin(smol::Timer::after(CLOSE_IPC_TIMEOUT)))
++    .await
++  {
++    futures::future::Either::Left((Err(error), _)) => close_error_outcome(&error),
++    _ => DirectoryCleanupOutcome::Uncertain,
++  }
++}
++
++async fn wait_for_terminal(hit_rx: &smol::channel::Receiver<WatchEvent>) -> bool {
++  match futures::future::select(
++    Box::pin(next_hit(hit_rx.clone())),
++    Box::pin(smol::Timer::after(CLOSE_CONFIRM_TIMEOUT)),
++  )
++  .await
++  {
++    futures::future::Either::Left((Some(WatchEvent::Response(_)), _)) => true,
++    _ => false,
++  }
++}
++
++/// `Receiver` is a `!Unpin` stream, so `next` needs a stack pin. Taking the
++/// receiver by value keeps the wait future independent of the owned channel.
++async fn next_hit(hit_rx: smol::channel::Receiver<WatchEvent>) -> Option<WatchEvent> {
++  std::pin::pin!(hit_rx).as_mut().next().await
++}
++
++async fn establish_session() -> Result<(Connection, String, String), String> {
++  let connection = Connection::session()
++    .await
++    .map_err(|error| format!("the session bus is unavailable: {error}"))?;
++  subscribe_to_responses(&connection).await?;
++  let owner = portal_owner(&connection).await?;
++  let token = format!("heddlework_{}", fresh_token());
++  Ok((connection, owner, token))
++}
++
++/// The bus only delivers broadcast signals with a match rule; without one the
++/// raw message stream never sees Request responses or portal-owner changes.
++async fn subscribe_to_responses(connection: &Connection) -> Result<(), String> {
++  for rule in [
++    "type='signal',interface='org.freedesktop.portal.Request'",
++    "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.freedesktop.portal.Desktop'",
++  ] {
++    connection
++      .call_method(
++        Some("org.freedesktop.DBus"),
++        "/org/freedesktop/DBus",
++        Some("org.freedesktop.DBus"),
++        "AddMatch",
++        &(rule,),
++      )
++      .await
++      .map_err(|error| format!("the response match rule was rejected: {error}"))?;
++  }
++  Ok(())
++}
++
++async fn portal_owner(connection: &Connection) -> Result<String, String> {
++  let reply = connection
++    .call_method(
++      Some("org.freedesktop.DBus"),
++      "/org/freedesktop/DBus",
++      Some("org.freedesktop.DBus"),
++      "GetNameOwner",
++      &(PORTAL_DESTINATION,),
++    )
++    .await
++    .map_err(|error| format!("the portal owner could not be resolved: {error}"))?;
++  reply
++    .body()
++    .deserialize::<String>()
++    .map_err(|error| format!("unexpected GetNameOwner reply: {error}"))
++}
++
++fn fresh_token() -> u128 {
++  static COUNTER: AtomicU64 = AtomicU64::new(0);
++  let nanos = SystemTime::now()
++    .duration_since(UNIX_EPOCH)
++    .map(|since| since.as_nanos())
++    .unwrap_or_default();
++  nanos ^ ((COUNTER.fetch_add(1, Ordering::Relaxed) as u128) << 64)
++}
++
++/// The portal builds the request path from our unique bus name and the
++/// `handle_token`: `:1.42` plus `tok` becomes `request/1_42/tok`.
++fn expected_request_path(unique_name: Option<String>, token: &str) -> String {
++  let sender = unique_name
++    .unwrap_or_default()
++    .trim_start_matches(':')
++    .replace('.', "_");
++  format!("/org/freedesktop/portal/desktop/request/{sender}/{token}")
++}
++
++enum MessageClass {
++  Other,
++  Response,
++  PortalOwnershipChanged,
++}
++
++fn classify_message(message: &Message, request_path: &str, owner: &str) -> MessageClass {
++  let header = message.header();
++  if header.message_type() != MessageType::Signal {
++    return MessageClass::Other;
++  }
++  if header.interface().map(|i| i.as_str()) == Some("org.freedesktop.DBus")
++    && header.member().map(|m| m.as_str()) == Some("NameOwnerChanged")
++  {
++    let is_portal = message
++      .body()
++      .deserialize::<(String, String, String)>()
++      .map(|(name, _, _)| name == PORTAL_DESTINATION);
++    return if is_portal == Ok(true) {
++      MessageClass::PortalOwnershipChanged
++    } else {
++      MessageClass::Other
++    };
++  }
++  let matches_request = header.path().map(|p| p.as_str()) == Some(request_path)
++    && header.interface().map(|i| i.as_str()) == Some(REQUEST_INTERFACE)
++    && header.member().map(|m| m.as_str()) == Some("Response")
++    && header.sender().map(|s| s.as_str()) == Some(owner);
++  if matches_request {
++    MessageClass::Response
++  } else {
++    MessageClass::Other
++  }
++}
++
++fn parse_response(message: &Message) -> DirectoryResponse {
++  let parsed = message
++    .body()
++    .deserialize::<(u32, HashMap<String, OwnedValue>)>();
++  let (code, results) = match parsed {
++    Ok(parsed) => parsed,
++    Err(error) => {
++      return DirectoryResponse::Unavailable {
++        reason: format!("malformed portal response: {error}"),
++        safe_to_fallback: true,
++      }
++    }
++  };
++  // The code decides first: a real cancellation carries no uris entry, and
++  // requiring one would turn the user's cancellation into a fallback.
++  response_from_code(code, uris_from(&results))
++}
++
++/// Response 1 is the user's cancellation; response 0 requires exactly one
++/// valid selection; any other code is unavailable with a confirmed end.
++fn response_from_code(code: u32, uris: Result<Vec<String>, String>) -> DirectoryResponse {
++  match code {
++    1 => DirectoryResponse::Cancelled,
++    0 => match uris {
++      Ok(uris) => selection_from_uris(&uris),
++      Err(reason) => DirectoryResponse::Unavailable {
++        reason,
++        safe_to_fallback: true,
++      },
++    },
++    code => DirectoryResponse::Unavailable {
++      reason: format!("unexpected portal response code {code}"),
++      safe_to_fallback: true,
++    },
++  }
++}
++
++fn uris_from(results: &HashMap<String, OwnedValue>) -> Result<Vec<String>, String> {
++  let Some(owned) = results.get("uris") else {
++    return Err("the portal response carried no uris entry".into());
++  };
++  let array: ashpd::zbus::zvariant::Array = owned
++    .downcast_ref()
++    .map_err(|error| format!("the portal uris entry is malformed: {error}"))?;
++  let mut uris = Vec::new();
++  for item in array.iter() {
++    let uri: Str<'_> = item
++      .downcast_ref()
++      .map_err(|error| format!("the portal uris entry is malformed: {error}"))?;
++    uris.push(uri.as_str().to_string());
++  }
++  Ok(uris)
++}
++
++fn selection_from_uris(uris: &[String]) -> DirectoryResponse {
++  match uris {
++    // Response 0 requires exactly one valid selection; never fall back to the
++    // first of many and never resolve malformed input against a directory.
++    [uri] => match validated_path(uri) {
++      Some(path) => DirectoryResponse::Selected(path),
++      None => DirectoryResponse::Unavailable {
++        reason: format!("the portal returned an unsupported selection: {uri}"),
++        safe_to_fallback: true,
++      },
++    },
++    [..] => DirectoryResponse::Unavailable {
++      reason: format!(
++        "the portal returned {} selections; exactly one is supported",
++        uris.len()
++      ),
++      safe_to_fallback: true,
++    },
++  }
++}
++
++/// Local file URIs only: remote authorities, unsupported schemes, malformed
++/// escapes, NULs, and paths outside the addon's lossless string contract are
++/// rejected. Spaces, Unicode, and valid percent encoding survive.
++pub fn validated_path(uri: &str) -> Option<String> {
++  // The url crate tolerates invalid percent escapes; the portal contract does not.
++  if has_malformed_escapes(uri) {
++    return None;
++  }
++  let url = url::Url::parse(uri).ok()?;
++  if url.scheme() != "file" {
++    return None;
++  }
++  if let Some(host) = url.host_str() {
++    if !host.is_empty() && host != "localhost" {
++      return None;
++    }
++  }
++  let path = url.to_file_path().ok()?;
++  if !path.is_absolute() {
++    return None;
++  }
++  let path = path.into_os_string().into_string().ok()?;
++  if path.contains('\u{0}') {
++    return None;
++  }
++  Some(path)
++}
++
++/// Every `%` must introduce two hex digits.
++fn has_malformed_escapes(uri: &str) -> bool {
++  let bytes = uri.as_bytes();
++  let mut index = 0;
++  while index < bytes.len() {
++    if bytes[index] == b'%' {
++      match bytes.get(index + 1..index + 3) {
++        Some([high, low]) if high.is_ascii_hexdigit() && low.is_ascii_hexdigit() => index += 3,
++        _ => return true,
++      }
++    } else {
++      index += 1;
++    }
++  }
++  false
++}
++
++fn is_definite_portal_rejection(error: &ZBusError) -> bool {
++  // A definite error reply proves no dialog was opened; transport failures
++  // leave that unknown.
++  matches!(error, ZBusError::MethodError(_, _, _))
++}
++
++fn close_error_outcome(error: &ZBusError) -> DirectoryCleanupOutcome {
++  match error {
++    ZBusError::MethodError(name, _, _) => close_error_for_name(name.as_str()),
++    _ => DirectoryCleanupOutcome::Uncertain,
++  }
++}
++
++/// A definite unknown-object family reply proves the request already ended;
++/// any other close failure leaves termination unconfirmed.
++fn close_error_for_name(name: &str) -> DirectoryCleanupOutcome {
++  match name {
++    "org.freedesktop.DBus.Error.UnknownObject"
++    | "org.freedesktop.DBus.Error.UnknownInterface"
++    | "org.freedesktop.DBus.Error.UnknownMethod"
++    | "org.freedesktop.DBus.Error.ServiceUnknown" => DirectoryCleanupOutcome::Closed,
++    _ => DirectoryCleanupOutcome::Uncertain,
++  }
++}
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  #[test]
++  fn request_path_embeds_sender_and_token() {
++    assert_eq!(
++      expected_request_path(Some(":1.42".into()), "tok"),
++      "/org/freedesktop/portal/desktop/request/1_42/tok"
++    );
++  }
++
++  #[test]
++  fn accepts_only_single_normalized_local_file_uris() {
++    assert_eq!(validated_path("file:///home/u/dir"), Some("/home/u/dir".into()));
++    // Percent-encoded and literal Unicode selections survive untouched.
++    assert_eq!(
++      validated_path("file:///home/u/my%20folder"),
++      Some("/home/u/my folder".into())
++    );
++    assert_eq!(
++      validated_path("file:///home/u/\u{1f40d}"),
++      Some("/home/u/\u{1f40d}".into())
++    );
++    assert_eq!(validated_path("file://localhost/home/u"), Some("/home/u".into()));
++    assert_eq!(validated_path("file://remote/home/u"), None);
++    assert_eq!(validated_path("ftp:///home/u"), None);
++    assert_eq!(validated_path("file:///home/u/%zz"), None);
++    assert_eq!(validated_path("file:///home/u%00x"), None);
++  }
++
++  #[test]
++  fn selections_require_exactly_one_valid_uri() {
++    assert!(matches!(
++      selection_from_uris(&[]),
++      DirectoryResponse::Unavailable { safe_to_fallback: true, .. }
++    ));
++    assert_eq!(
++      selection_from_uris(&["file:///a".to_string()]),
++      DirectoryResponse::Selected("/a".into())
++    );
++    assert!(matches!(
++      selection_from_uris(&["file:///a".into(), "file:///b".into()]),
++      DirectoryResponse::Unavailable { safe_to_fallback: true, .. }
++    ));
++    assert!(matches!(
++      selection_from_uris(&["gopher://x".into()]),
++      DirectoryResponse::Unavailable { safe_to_fallback: true, .. }
++    ));
++  }
++
++  #[test]
++  fn response_codes_map_to_outcomes() {
++    // A real cancellation carries no uris entry and must stay a cancellation.
++    assert_eq!(
++      response_from_code(1, Err("no uris entry".into())),
++      DirectoryResponse::Cancelled
++    );
++    assert_eq!(
++      response_from_code(0, Ok(vec!["file:///a".to_string()])),
++      DirectoryResponse::Selected("/a".into())
++    );
++    assert!(matches!(
++      response_from_code(7, Err("unused".into())),
++      DirectoryResponse::Unavailable { safe_to_fallback: true, .. }
++    ));
++  }
++
++  #[test]
++  fn unknown_request_objects_are_confirmed_ended() {
++    for name in [
++      "org.freedesktop.DBus.Error.UnknownObject",
++      "org.freedesktop.DBus.Error.UnknownInterface",
++      "org.freedesktop.DBus.Error.UnknownMethod",
++      "org.freedesktop.DBus.Error.ServiceUnknown",
++    ] {
++      assert_eq!(close_error_for_name(name), DirectoryCleanupOutcome::Closed);
++    }
++    assert_eq!(
++      close_error_for_name("org.freedesktop.DBus.Error.AccessDenied"),
++      DirectoryCleanupOutcome::Uncertain
++    );
++  }
++}
+diff --git a/crates/gpui_linux/src/system_appearance.rs b/crates/gpui_linux/src/system_appearance.rs
+new file mode 100644
+index 0000000..830ca49
+--- /dev/null
++++ b/crates/gpui_linux/src/system_appearance.rs
+@@ -0,0 +1,79 @@
++//! Owned, raw XDG appearance subscription, independent of window appearance policy.
++use ashpd::desktop::settings::Settings;
++use futures::{FutureExt, StreamExt};
++use std::time::Duration;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum AppearancePreference { None, Dark, Light }
++pub fn appearance_preference(value: u32) -> AppearancePreference {
++    match value { 1 => AppearancePreference::Dark, 2 => AppearancePreference::Light, _ => AppearancePreference::None }
++}
++
++/// Dropping the handle cancels initialization or the pending stream read.
++pub struct SystemAppearanceSubscription { _task: smol::Task<()> }
++impl SystemAppearanceSubscription {
++    pub fn new(mut emit: impl FnMut(Result<AppearancePreference, String>) + Send + 'static) -> Self {
++        let task = smol::spawn(async move {
++            let run = async {
++                let settings = Settings::new().await?;
++                let owners = settings.receive_owner_changed().await?;
++                let changes = settings.receive_setting_changed_with_args::<u32>("org.freedesktop.appearance", "color-scheme").await?;
++                let initial = settings.read::<u32>("org.freedesktop.appearance", "color-scheme").await?;
++                anyhow::Ok((settings, changes, owners, initial))
++            };
++            let setup = futures::future::select(Box::pin(run), Box::pin(smol::Timer::after(Duration::from_secs(6)))).await;
++            let (_settings, mut changes, mut owners, mut value) = match setup {
++                futures::future::Either::Left((Ok(result), _)) => result,
++                futures::future::Either::Left((Err(error), _)) => { emit(Err(error.to_string())); return; }
++                futures::future::Either::Right(_) => { emit(Err("Settings initialization timed out".into())); return; }
++            };
++            match owners.next().now_or_never() {
++                Some(None) => { emit(Err("Settings stream closed".into())); return; }
++                Some(Some(_)) => { emit(Err("Settings portal owner changed".into())); return; }
++                None => {}
++            }
++            // Signals already buffered during Read supersede its potentially older snapshot.
++            loop {
++                match changes.next().now_or_never() {
++                    Some(Some(Ok(next))) => value = next,
++                    Some(Some(Err(error))) => { emit(Err(error.to_string())); return; }
++                    Some(None) => { emit(Err("Settings stream closed".into())); return; }
++                    None => break,
++                }
++            }
++            let mut previous = appearance_preference(value);
++            emit(Ok(previous));
++            loop {
++                let next = match futures::future::select(Box::pin(changes.next()), Box::pin(owners.next())).await {
++                    futures::future::Either::Left((Some(next), _)) => next,
++                    futures::future::Either::Left((None, _)) => break,
++                    futures::future::Either::Right((owner, _)) => {
++                        emit(Err(if owner.is_none() { "Settings stream closed" } else { "Settings portal owner changed" }.into()));
++                        return;
++                    }
++                };
++                match next {
++                    Ok(value) => {
++                        let preference = appearance_preference(value);
++                        if preference != previous { previous = preference; emit(Ok(preference)); }
++                    }
++                    Err(error) => { emit(Err(error.to_string())); return; }
++                }
++            }
++            emit(Err("Settings stream closed".into()));
++        });
++        Self { _task: task }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn maps_raw_preferences_without_inventing_light() {
++        assert_eq!(appearance_preference(0), AppearancePreference::None);
++        assert_eq!(appearance_preference(1), AppearancePreference::Dark);
++        assert_eq!(appearance_preference(2), AppearancePreference::Light);
++        assert_eq!(appearance_preference(u32::MAX), AppearancePreference::None);
++    }
++}
+diff --git a/crates/gpui_platform/src/gpui_platform.rs b/crates/gpui_platform/src/gpui_platform.rs
+index 91d336a..92e5d4c 100644
+--- a/crates/gpui_platform/src/gpui_platform.rs
++++ b/crates/gpui_platform/src/gpui_platform.rs
+@@ -3,6 +3,13 @@
+ 
+ pub use gpui::Platform;
+ 
++#[cfg(target_os = "linux")]
++pub use gpui_linux::portal_file_chooser::{
++  DirectoryCleanupOutcome, DirectoryEvent, DirectoryRequest, DirectoryResponse,
++};
++#[cfg(target_os = "linux")]
++pub use gpui_linux::system_appearance::{ AppearancePreference, SystemAppearanceSubscription };
++
+ use std::rc::Rc;
+ 
+ /// Returns a background executor for the current platform.

@@ -1,11 +1,12 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
+import { notifyFailure } from './failure-notice.ts'
 import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
@@ -23,11 +24,11 @@ export function SettingsView({
   onClose,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   theme: ThemeSnapshot
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
-  terminals?: TerminalSessionService | undefined
+  terminals?: TerminalService | undefined
   browsers?: BrowserSessionService | undefined
   onClose(): void
 }) {
@@ -46,7 +47,7 @@ export function SettingsView({
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
             <SettingsActions>
-              <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect()} />
+              <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect().catch(notifyFailure(controller, 'Could not reconnect'))} />
             </SettingsActions>
           </SettingsSection>
 
@@ -119,7 +120,7 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
   const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot, service.getSnapshot)
   return (
     <SettingsSection title="Browser" description="App-owned profiles keep browser identities separate. Personal profiles are never exposed to agents; workspace profiles require the policy shown below.">
-      <SettingsRow icon="globe" label="Native engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
+      <SettingsRow icon="globe" label="Engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
       {snapshot.profiles.map((profile) => (
         <SettingsControlRow key={profile.id} label={profile.name} description={`${profile.persistent ? 'Persistent' : 'Ephemeral'} · Agent access ${profile.agentAccess}`}>
           {profile.id === snapshot.defaultProfileId
@@ -133,7 +134,7 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
   )
 }
 
-function TerminalSettings({ service }: { service: TerminalSessionService }) {
+function TerminalSettings({ service }: { service: TerminalService }) {
   const appearance = useSyncExternalStore(service.subscribe, service.getSnapshot).appearance
   return (
     <SettingsSection title="Terminal" description="Native GPUI text shaping and renderer controls. Font changes apply to every live terminal without restarting its PTY.">

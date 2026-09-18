@@ -1,20 +1,20 @@
 import React, { createContext, useCallback, useContext, useRef, useSyncExternalStore } from 'react'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { TerminalGridSnapshot, TerminalServiceSnapshot, TerminalSessionId } from '../terminal/types.ts'
 
-const TerminalServiceContext = createContext<TerminalSessionService | undefined>(undefined)
+const TerminalServiceContext = createContext<TerminalService | undefined>(undefined)
 
 export function TerminalServiceProvider({
   service,
   children,
 }: {
-  service?: TerminalSessionService | undefined
+  service?: TerminalService | undefined
   children: React.ReactNode
 }) {
   return <TerminalServiceContext.Provider value={service}>{children}</TerminalServiceContext.Provider>
 }
 
-export function useOptionalTerminalService(): TerminalSessionService | undefined {
+export function useOptionalTerminalService(): TerminalService | undefined {
   return useContext(TerminalServiceContext)
 }
 
@@ -35,7 +35,7 @@ export function useTerminalProjectionSuspended(): boolean {
 }
 
 export function useTerminalServiceSnapshot(
-  service: TerminalSessionService,
+  service: TerminalService,
   suspended = false,
 ): TerminalServiceSnapshot {
   const retained = useRef(service.getStateSnapshot())
@@ -48,11 +48,11 @@ export function useTerminalServiceSnapshot(
 }
 
 export function useTerminalGrid(
-  service: TerminalSessionService,
+  service: TerminalService,
   sessionId: TerminalSessionId | undefined,
   suspended = false,
 ): TerminalGridSnapshot | undefined {
-  const retained = useRef<{ service: TerminalSessionService; id: TerminalSessionId | undefined; grid: TerminalGridSnapshot | undefined }>({
+  const retained = useRef<{ service: TerminalService; id: TerminalSessionId | undefined; grid: TerminalGridSnapshot | undefined }>({
     service,
     id: sessionId,
     grid: service.grid(sessionId),

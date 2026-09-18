@@ -9,6 +9,7 @@ export function webAliasPlugin(root: string): BunPlugin {
   const files: Record<string, string> = {
     'src/ui/clipboard-media.ts': dom('shims/clipboard-media.ts'),
     'src/ui/open-external.ts': dom('shims/open-external.ts'),
+    'src/ui/native-directory-picker.ts': dom('shims/native-directory-picker.ts'),
     'src/ui/theme-manager.ts': dom('shims/theme-manager.ts'),
   }
   const replacements = new Map(Object.entries(files).map(([file, target]) => [resolve(root, file), target]))

@@ -32,8 +32,10 @@ jobs:
         with:
           path: node_modules/.cache/heddlework-gpuix
           # The installer produces these artifacts, so its content belongs in the key: a cache
-          # saved before the addon install would otherwise be restored forever.
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock', 'scripts/install-gpuix.ts') }}
+          # saved before the addon install would otherwise be restored forever. The declared patch
+          # set is part of those inputs too - a key without it restored a checkout patched from an
+          # older patch revision, which is exactly what `native-...-<old hash>` did in PR #25.
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock', 'scripts/install-gpuix.ts', 'scripts/gpuix-patches.ts', 'patches/**') }}
       # The pinned GPUix runtime links against all of these; the compositor workflow proved the
       # list when its "Build pinned Heddlework GPUix runtime" step started passing. Without
       # libxkbcommon-x11-dev the build fails at link time: unable to find library -lxkbcommon-x11.
@@ -51,11 +53,9 @@ jobs:
           addon="$PWD/node_modules/@gpuix/native/gpuix-native.linux-x64-gnu.node"
           test -f "$addon"
           echo "NAPI_RS_NATIVE_LIBRARY_PATH=$addon" >> "$GITHUB_ENV"
-      - run: bun run typecheck:web
-      - run: bun run build:web
       - run: bunx playwright install chromium
-      - run: bun run test:browser
-      - run: bun run check
-      - run: bun run build
-        env:
-          HEDDLEWORK_WITHOUT_CEF: '1'
+      # One aggregate command, shared with a prepared local checkout, so the CI lane and the
+      # documented pre-push gate cannot drift. `check` alone omits the browser probe, which is how a
+      # web-companion-only break once reached CI green-adjacent.
+      - name: Full verification gate
+        run: bun run verify

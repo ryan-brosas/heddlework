@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { boundedServerFrames, createWorkspaceHost, hostConnectUrl, ServerMessageSendQueue, type WorkspaceHost } from '../src/host/server.ts'
+import { boundedServerFrames, createWorkspaceHost, hostConnectUrl, ServerMessageSendQueue } from '../src/host/server.ts'
 import { generateHostToken } from '../src/host/token.ts'
 import { hostOptionsFromEnvironment } from '../src/host/plugin.ts'
 import { createInitialState, type WorkbenchState } from '../src/workbench/state.ts'
@@ -17,7 +17,7 @@ import { FrameAssembler, utf8ByteLength } from '../src/protocol/frames.ts'
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 function doubles(initial: Partial<WorkbenchState> = {}) { let state: WorkbenchState = { ...createInitialState('/workspace'), connection: 'connected', ...initial }; const listeners = new Set<() => void>(); const controller = { getSnapshot: () => state, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener) }, setEditorText: (text: string) => { state = { ...state, editorText: text }; for (const listener of listeners) listener() }, loadEarlierMessages: async () => {} } as unknown as WorkbenchController; const flows = { getSnapshot: () => ({ schedules: [], pending: [] }), subscribe: () => () => {} } as unknown as FlowRuntime; return { controller, flows, state: () => state } }
-async function waitFor(check: () => boolean, label: string, timeout = 5_000) { const end = Date.now() + timeout; while (Date.now() < end) { if (check()) return; await Bun.sleep(10) }; throw new Error(`Timed out waiting for ${label}`) }
+async function waitFor(check: () => boolean, label: string, timeout = 5_000) { const end = Date.now() + timeout; while (Date.now() < end) { if (check()) return; await Bun.sleep(10) } throw new Error(`Timed out waiting for ${label}`) }
 
 describe('authenticated workspace host', () => {
  it('is loopback/off by default and requires explicit network exposure', () => { expect(hostOptionsFromEnvironment({})).toMatchObject({ enabled: false, hostname: '127.0.0.1', allowNetwork: false }); const { controller, flows } = doubles(); expect(() => createWorkspaceHost({ controller, flows, workspacePath: '/workspace', port: 0, hostname: '0.0.0.0', token: generateHostToken() })).toThrow(/ALLOW_NETWORK/) })

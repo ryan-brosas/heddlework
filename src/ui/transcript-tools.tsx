@@ -1,12 +1,13 @@
-import React, { useRef } from 'react'
+import { useRef } from 'react'
 import type { StyleDesc } from '@gpuix/react'
 import type { TimelineItem } from '../workbench/timeline.ts'
 import type { ToolRun } from '../workbench/state.ts'
-import { copyTextToClipboard } from './clipboard-media.ts'
+import { useClipboardCopy } from './clipboard-copy.ts'
 import { Icon, type IconName } from './icons.tsx'
 import { TranscriptInlineAction } from './transcript-actions.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { headlineArg } from './call-preview.ts'
+import { formatDuration, formatFabricValue } from './fabric-format.ts'
 import {
   resolveToolPresentation,
   type FabricAuditPresentation,
@@ -28,7 +29,28 @@ function toolCodeTheme() {
   }
 }
 
-function codeSurfaceStyle(): StyleDesc {
+/**
+ * The tool header row is a control (click to expand) that carries its own copy button, so it opts
+ * out of text selection even though the expanded args and output below it stay selectable:
+ * dragging on a control row is otherwise ambiguous between "expand" and "select".
+ */
+export function toolRowHeaderStyle(): StyleDesc {
+  return {
+    minHeight: 28,
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingLeft: 4,
+    paddingRight: 5,
+    borderRadius: 6,
+    cursor: 'pointer',
+    hover: { color: colors.text },
+    userSelect: 'none',
+  }
+}
+
+export function codeSurfaceStyle(): StyleDesc {
   return {
     width: '100%',
     paddingTop: 8,
@@ -40,13 +62,17 @@ function codeSurfaceStyle(): StyleDesc {
     borderColor: colors.border,
     backgroundColor: colors.code,
     overflow: 'visible',
-    userSelect: 'none',
+    // Read-only tool output is content the user must be able to copy. A `none` here also
+    // disables the native drag-selection path (verified in the pinned GPUiX runtime), which
+    // made tool args, output, and diffs impossible to select in the desktop app.
+    userSelect: 'text',
   }
 }
 
 export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Extract<TimelineItem, { kind: 'tool' }>; presenters: ReadonlyMap<string, ToolPresenter>; expanded: boolean; onToggle(): void; onRevert(entryId: string): void }) {
   const tool = item.tool
   const presentation = resolveToolPresentation(tool, presenters)
+  const copy = useClipboardCopy()
   const suppressToggle = useRef(false)
   const runTranscriptInlineAction = (action: () => void) => {
     suppressToggle.current = true
@@ -71,18 +97,7 @@ export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { it
       <div
         testId="tool-detail-row"
         tabIndex={0}
-        style={{
-          minHeight: 28,
-          display: 'flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 7,
-          paddingLeft: 4,
-          paddingRight: 5,
-          borderRadius: 6,
-          cursor: 'pointer',
-          hover: { color: colors.text },
-        }}
+        style={toolRowHeaderStyle()}
         onClick={toggleExpanded}
         onKeyDown={(event) => { if (event.key === 'enter') toggleExpanded() }}
       >
@@ -91,7 +106,8 @@ export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { it
         </div>
         <text testId="tool-summary-label" style={{ color: colors.textMuted, fontSize: 10, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono, hover: { color: colors.text } }}>{summary}</text>
         <div style={{ flexGrow: 1 }} />
-        <TranscriptInlineAction icon="copy" testId="copy-tool" onClick={() => runTranscriptInlineAction(() => { void copyTextToClipboard(toolCopyText(tool, args, content)) })} />
+        <TranscriptInlineAction icon={copy.copied ? 'check' : 'copy'} testId="copy-tool" onClick={() => runTranscriptInlineAction(() => copy.copy(toolCopyText(tool, args, content)))} />
+        {copy.failure && <text testId="copy-tool-failure" style={{ color: colors.error, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{copy.failure}</text>}
         {item.revertEntryId && <TranscriptInlineAction icon="undo" testId="revert-tool" onClick={() => runTranscriptInlineAction(() => onRevert(item.revertEntryId!))} />}
         <text style={{ color: tool.isError ? colors.error : tool.status === 'complete' ? colors.textFaint : colors.info, fontSize: 10, fontFamily: nativeTheme.fontMono }}>
           {tool.isError ? 'failed' : tool.status === 'complete' ? 'done' : tool.status}
@@ -227,20 +243,6 @@ function fabricAuditHeadline(audit: FabricAuditPresentation): string {
   const tool = [audit.provider, audit.tool].filter(Boolean).join('.') || audit.ref
   const detail = headlineArg(audit.args)
   return detail ? `${tool} ${detail}` : tool
-}
-
-function formatFabricValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value.slice(0, 18_000)
-  try {
-    return JSON.stringify(value, null, 2).slice(0, 18_000)
-  } catch {
-    return String(value).slice(0, 18_000)
-  }
-}
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1_000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1_000).toFixed(1)}s`
 }
 
 function toolCopyText(tool: ToolRun, args: string, content: string): string {

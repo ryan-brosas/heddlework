@@ -6,12 +6,20 @@ import type { RpcRecord } from '../src/pi/types.ts'
 
 describe('PiRpcTransport', () => {
   it('prefers Localterm’s credential-injecting shim before generic PATH binaries', () => {
-    const home = '/fixture-home'
-    const shim = join(home, '.localterm', 'shims', process.platform === 'win32' ? 'pi.exe' : 'pi')
-    const generic = join('/generic-bin', process.platform === 'win32' ? 'pi.exe' : 'pi')
-    const existing = new Set([shim, generic])
-    expect(resolvePiExecutable({ home, path: ['/generic-bin'].join(delimiter), exists: (path) => existing.has(path) })).toBe(shim)
-    expect(resolvePiExecutable({ configured: '/explicit/pi', home, path: '', exists: () => false })).toBe('/explicit/pi')
+    // HEDDLEWORK_PI is an explicit user override that outranks every discovered candidate;
+    // scrub it so this machine's exported value cannot leak into the fixture resolution.
+    const configuredEnv = process.env.HEDDLEWORK_PI
+    delete process.env.HEDDLEWORK_PI
+    try {
+      const home = '/fixture-home'
+      const shim = join(home, '.localterm', 'shims', process.platform === 'win32' ? 'pi.exe' : 'pi')
+      const generic = join('/generic-bin', process.platform === 'win32' ? 'pi.exe' : 'pi')
+      const existing = new Set([shim, generic])
+      expect(resolvePiExecutable({ home, path: ['/generic-bin'].join(delimiter), exists: (path) => existing.has(path) })).toBe(shim)
+      expect(resolvePiExecutable({ configured: '/explicit/pi', home, path: '', exists: () => false })).toBe('/explicit/pi')
+    } finally {
+      if (configuredEnv !== undefined) process.env.HEDDLEWORK_PI = configuredEnv
+    }
   })
 
   it('keeps Bun package bins from shadowing Pi behind the LocalTerm shim', () => {

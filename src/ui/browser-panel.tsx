@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import type { BrowserSessionService } from '../browser/service.ts'
 import type { BrowserProfile, BrowserTab } from '../browser/types.ts'
@@ -8,9 +8,10 @@ import { Icon } from './icons.tsx'
 import { IconButton, Button } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors } from './theme.ts'
-import { useBrowserSnapshot } from './browser-context.tsx'
+import { useBrowserSnapshot, useOptionalChromeBackend } from './browser-context.tsx'
+import { ChromeBrowserSurface } from './browser-chrome-surface.tsx'
 import { useWindowMetrics } from './window-metrics.tsx'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { sampleBrowserPlacement, type BrowserPlacementSample } from './browser-placement.ts'
 
 interface BoundsRenderer {
@@ -32,6 +33,14 @@ export function BrowserPanel({
   const activeTab = snapshot.tabs.find((tab) => tab.id === activeId)
   const profile = snapshot.profiles.find((candidate) => candidate.id === activeTab?.profileId)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const systemBrowser = useExternalLink()
+  const chromeBackend = useOptionalChromeBackend()
+  const unavailable = !snapshot.engine.available
+  // Chrome renders through the frames it streams to the panel, so the measured native surface slot is
+  // not used: it would place an element that this build has no native browser for.
+  const chromeSurface = snapshot.engine.kind === 'chrome' ? chromeBackend : undefined
+  const body = browserPanelBody({ available: !unavailable, hasTab: Boolean(activeTab), hasUrl: Boolean(activeTab?.url) })
+  const chrome = browserPanelChrome({ available: !unavailable, hasTab: Boolean(activeTab), profileMenuOpen })
 
   useEffect(() => { service.ensureTab() }, [service])
 
@@ -60,27 +69,42 @@ export function BrowserPanel({
         onToggleFullscreen={onToggleFullscreen}
         onClose={onClose}
       />
-      <BrowserToolbar
-        service={service}
-        tab={activeTab}
-        profile={profile}
-        profileMenuOpen={profileMenuOpen}
-        onToggleProfileMenu={() => {
-          if (profileMenuOpen && activeId) service.command(activeId, 'focus')
-          setProfileMenuOpen((value) => !value)
-        }}
-      />
+      {chrome.toolbar ? (
+        <BrowserToolbar
+          service={service}
+          tab={activeTab}
+          profile={profile}
+          onOpenExternal={systemBrowser.launch}
+          profileMenuOpen={profileMenuOpen}
+          onToggleProfileMenu={() => {
+            if (profileMenuOpen && activeId) service.command(activeId, 'focus')
+            setProfileMenuOpen((value) => !value)
+          }}
+        />
+      ) : null}
       <div testId="browser-panel-body" style={{ position: 'relative', flexGrow: 1, minHeight: 0, overflow: 'hidden', backgroundColor: colors.card }}>
-        {activeTab && activeTab.url ? (
-          <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
-        ) : (
+        {body === 'surface' && activeTab ? (
+          chromeSurface ? (
+            <ChromeBrowserSurface backend={chromeSurface} tabId={activeTab.id} generation={activeTab.generation} visible={!profileMenuOpen && !activeTab.error} />
+          ) : (
+            <BrowserSurfaceSlot service={service} tabId={activeTab.id} visible={!profileMenuOpen && !activeTab.error} />
+          )
+        ) : body === 'empty' && activeTab ? (
           <BrowserEmptyState service={service} tab={activeTab} />
-        )}
-        {activeTab?.error ? <BrowserError message={activeTab.error} onRetry={() => service.command(activeTab.id, 'reload')} /> : null}
-        {!snapshot.engine.available && activeTab?.url ? (
-          <BrowserUnavailable message={snapshot.engine.message} url={activeTab.url} />
         ) : null}
-        {profileMenuOpen && activeTab ? (
+        {!unavailable && activeTab?.error ? <BrowserError message={activeTab.error} onRetry={() => service.command(activeTab.id, 'reload')} /> : null}
+        {/* Without an engine this is the whole surface: an address bar and a Loading tab
+            promised browsing that could never start. */}
+        {unavailable ? (
+          <BrowserUnavailable
+            message={snapshot.engine.message}
+            {...(activeTab?.url ? { url: activeTab.url } : {})}
+            onOpenExternal={systemBrowser.launch}
+          />
+        ) : null}
+        {/* Last, so the opaque unavailable surface cannot paint over a launch failure. */}
+        {systemBrowser.failure ? <BrowserError testId="browser-external-error" message={systemBrowser.failure} /> : null}
+        {chrome.profileMenu && activeTab ? (
           <ProfileMenu
             service={service}
             profiles={snapshot.profiles}
@@ -95,16 +119,70 @@ export function BrowserPanel({
   )
 }
 
+/**
+ * What the panel body shows. Unavailable wins outright: an empty address surface and a "Loading…" tab
+ * both promised browsing that could never start.
+ */
+export function browserPanelBody(options: { available: boolean; hasTab: boolean; hasUrl: boolean }): 'unavailable' | 'surface' | 'empty' | 'none' {
+  if (!options.available) return 'unavailable'
+  if (!options.hasTab) return 'none'
+  return options.hasUrl ? 'surface' : 'empty'
+}
+
+/**
+ * Which embedded-browser chrome a panel may show. Navigation and profile controls operate only the
+ * embedded engine, so a build with no browser host must not offer an address bar or profile menu -
+ * the unavailable surface carries the system-browser action instead.
+ */
+export function browserPanelChrome(options: { available: boolean; hasTab: boolean; profileMenuOpen: boolean }): { toolbar: boolean; profileMenu: boolean } {
+  if (!options.available) return { toolbar: false, profileMenu: false }
+  return { toolbar: true, profileMenu: options.hasTab && options.profileMenuOpen }
+}
+
+/** The system browser is the user's own profile: Heddlework's browser is not involved. */
+const SYSTEM_BROWSER_CAVEAT = "Opens in your own browser, not Heddlework's sandboxed profiles."
+
+/**
+ * The Browser surface for a build with no native browser host at all (the web companion).
+ *
+ * It replaces a placeholder that read as "the host is ready", which promised embedded browsing in a
+ * client that has none.
+ */
+export function BrowserHostUnavailableSurface(props: WorkbenchSurfaceProps) {
+  return (
+    <div testId="browser-surface-unavailable" style={rightPanelStyle(props.fullscreen, props.panelWidth)}>
+      <RightPanelHeader
+        icon="globe"
+        title="Browser"
+        compact
+        fullscreen={props.fullscreen}
+        {...(props.fullscreenProgress === undefined ? {} : { fullscreenProgress: props.fullscreenProgress })}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+        onNew={props.onNewSurface}
+        onToggleFullscreen={props.onToggleFullscreen}
+        onClose={props.onClose}
+      />
+      <div style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, backgroundColor: colors.card }}>
+        <Icon name="globe" size={26} color={colors.textFaint} />
+        <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>No embedded browser in this build</text>
+        <text style={{ maxWidth: 330, color: colors.textMuted, fontSize: 10, lineHeight: 16, textAlign: 'center' }}>Browsing inside Heddlework needs the desktop app's native browser host. Open the address in your own browser instead.</text>
+      </div>
+    </div>
+  )
+}
+
 function BrowserToolbar({
   service,
-  tab,
   profile,
+  tab,
+  onOpenExternal,
   profileMenuOpen,
   onToggleProfileMenu,
 }: {
   service: BrowserSessionService
   tab?: BrowserTab | undefined
   profile?: BrowserProfile | undefined
+  onOpenExternal(url: string): void
   profileMenuOpen: boolean
   onToggleProfileMenu(): void
 }) {
@@ -140,7 +218,7 @@ function BrowserToolbar({
         <Icon name={profile?.kind === 'private' ? 'lock' : 'circle'} size={10} color={profile?.kind === 'workspace' ? colors.primary : colors.textFaint} />
         <text style={{ minWidth: 0, color: colors.textMuted, fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{profile?.name ?? 'Profile'}</text>
       </div>
-      <IconButton icon="globe" label="Open in system browser" testId="browser-open-external" disabled={!tab?.url} onClick={() => tab?.url && openExternal(tab.url)} />
+      <IconButton icon="globe" label="Open in system browser" testId="browser-open-external" disabled={!tab?.url} onClick={() => tab?.url && onOpenExternal(tab.url)} />
     </div>
   )
 }
@@ -187,23 +265,24 @@ function BrowserEmptyState({ service, tab }: { service: BrowserSessionService; t
   )
 }
 
-function BrowserError({ message, onRetry }: { message: string; onRetry(): void }) {
+function BrowserError({ message, onRetry, testId = 'browser-error' }: { message: string; onRetry?(): void; testId?: string }) {
   return (
-    <div testId="browser-error" style={{ position: 'absolute', left: 18, right: 18, bottom: 18, minHeight: 44, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.popover }}>
+    <div testId={testId} style={{ position: 'absolute', left: 18, right: 18, bottom: 18, minHeight: 44, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.popover }}>
       <Icon name="circle" size={12} color={colors.error} />
       <text style={{ minWidth: 0, flexGrow: 1, color: colors.textMuted, fontSize: 10, lineHeight: 15 }}>{message}</text>
-      <Button label="Retry" compact onClick={onRetry} />
+      {onRetry ? <Button label="Retry" compact onClick={onRetry} /> : null}
     </div>
   )
 }
 
-function BrowserUnavailable({ message, url }: { message: string; url: string }) {
+function BrowserUnavailable({ message, url, onOpenExternal }: { message: string; url?: string | undefined; onOpenExternal(url: string): void }) {
   return (
     <div testId="browser-unavailable" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, backgroundColor: colors.card }}>
       <Icon name="globe" size={26} color={colors.textFaint} />
       <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Native browser unavailable</text>
       <text style={{ maxWidth: 330, color: colors.textMuted, fontSize: 10, lineHeight: 16, textAlign: 'center' }}>{message}</text>
-      <Button label="Open in system browser" compact icon="globe" onClick={() => openExternal(url)} />
+      <text style={{ maxWidth: 330, color: colors.textFaint, fontSize: 9, lineHeight: 15, textAlign: 'center' }}>{SYSTEM_BROWSER_CAVEAT}</text>
+      {url ? <Button label="Open in system browser" compact icon="globe" onClick={() => onOpenExternal(url)} /> : null}
     </div>
   )
 }
@@ -243,7 +322,7 @@ function ProfileMenu({
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 5, paddingRight: 3 }}>
         <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <text style={{ color: colors.text, fontSize: 11, fontWeight: 650 }}>Browser profiles</text>
-          <text style={{ color: colors.textFaint, fontSize: 8 }}>{isolation === 'full' ? 'Isolated cookies, storage, cache, and logins' : 'System engine: profile isolation may be limited'}</text>
+          <text style={{ color: colors.textFaint, fontSize: 8 }}>{isolation === 'full' ? 'Isolated cookies, storage, cache, and logins' : 'Limited isolation: persistent profiles share this engine\u2019s browser data'}</text>
         </div>
         <IconButton icon="x" label="Close profiles" onClick={onClose} />
       </div>

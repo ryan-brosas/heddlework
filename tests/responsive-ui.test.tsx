@@ -1,9 +1,8 @@
-import React from 'react'
 import { describe, expect, it } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
@@ -12,6 +11,7 @@ import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { resolveResponsiveLayout } from '../src/ui/responsive.tsx'
 import { ThemeManager } from '../src/ui/theme-manager.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 describe('responsive layout', () => {
   it('classifies mobile, tablet, and desktop widths with adaptive gutters', () => {
@@ -36,8 +36,6 @@ describe('responsive layout', () => {
     })
   })
 })
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('responsive workbench shell', () => {
   it('uses drawers, compact controls, and fullscreen secondary surfaces on mobile', async () => {

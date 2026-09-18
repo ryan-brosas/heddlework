@@ -50,6 +50,7 @@ import {
   createQueueState,
   moveQueuedInput,
   moveQueuedInputToLaneTail,
+  queueHasFlow,
   queueLaneHead,
   queuedInputControl,
   type QueuedControl,
@@ -108,6 +109,16 @@ interface SessionLiveSnapshot {
   statusItems: WorkbenchState['statusItems']
   widgets: WorkbenchState['widgets']
 }
+
+/**
+ * UI-facing workbench surface, the companion of `TerminalService` in `src/terminal/service.ts`.
+ * The web companion substitutes for the desktop controller, so both sides implement this structural
+ * contract instead of an unchecked cast. The three omitted members are host-owned transport ingress:
+ * `attachTransport` attaches a live agent transport, and `acceptAgentEvent`/`acceptAgentStatus`
+ * feed RPC records and transport status. Callers today are `src/workbench/*` and the controller
+ * tests; the web companion receives both over its socket, and no UI component calls them.
+ */
+export type WorkbenchService = Omit<WorkbenchController, 'attachTransport' | 'acceptAgentEvent' | 'acceptAgentStatus'>
 
 export class WorkbenchController {
   #transport: AgentTransport
@@ -193,7 +204,12 @@ export class WorkbenchController {
   }
 
   #attachActiveTransport(transport: AgentTransport): void {
-    const detachPrevious = this.#detachActiveTransport
+    // Withdraw the previous attachment first. Session transports are pooled and can be
+    // attached again later; a deferred chain would leave the old listeners registered on
+    // that same transport, and with the identity guard passing they would apply every
+    // event twice (streaming deltas doubled in the live transcript).
+    this.#detachActiveTransport?.()
+    this.#detachActiveTransport = undefined
     this.#transport = transport
     const onEvent = (event: RpcRecord): void => {
       if (this.#transport === transport) this.#handleEvent(event)
@@ -206,7 +222,6 @@ export class WorkbenchController {
     this.#detachActiveTransport = () => {
       offEvent()
       offStatus()
-      detachPrevious?.()
     }
   }
 
@@ -355,7 +370,7 @@ export class WorkbenchController {
   }
 
   hasQueuedFlow(runId: string): boolean {
-    return this.#state.queue.items.some((item) => item.flow?.runId === runId)
+    return queueHasFlow(this.#state.queue.items, runId)
   }
 
   removeQueuedFlow(runId: string): void {
@@ -766,7 +781,10 @@ export class WorkbenchController {
       for (const [path, pooled] of [...this.#sessionTransports]) {
         if (pooled === transport) this.#sessionTransports.delete(path)
       }
-      void transport.stop()
+      // Fire-and-forget teardown of a pooled harness: no caller awaits it and the failure has no
+      // owner (the harness is already dropped), so a rejected stop must not surface as an
+      // unhandled rejection. Mirrors the `await transport.stop().catch(() => {})` recovery above.
+      void transport.stop().catch(() => {})
     }
   }
 

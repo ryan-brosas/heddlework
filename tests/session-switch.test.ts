@@ -12,6 +12,13 @@ const sessions: PiSessionSummary[] = [
   { id: 'one', path: '/tmp/one.jsonl', cwd: '/tmp/project', title: 'First thread', firstMessage: 'First', messageCount: 1, createdAt: 1, modifiedAt: 1 },
   { id: 'two', path: '/tmp/two.jsonl', cwd: '/tmp/project-two', title: 'Second thread', firstMessage: 'Second', messageCount: 1, createdAt: 2, modifiedAt: 2 },
 ]
+
+const branchingEntries = [
+  { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
+  { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
+  { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
+  { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
+]
 const workspaceSession: PiSessionSummary = { id: 'three', path: '/tmp/three.jsonl', cwd: '/tmp/project-three', title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: 3, modifiedAt: 3 }
 
 const fixtures: string[] = []
@@ -64,11 +71,9 @@ class SwitchingTransport implements AgentTransport {
   stopCalls = 0
   streaming = false
   #notifyDuringBootstrap = false
-  #switchBarrier: Promise<void> | undefined
-  #newSessionBarrier: Promise<void> | undefined
-  #switchFailure: string | undefined
   #startBarrier: Promise<void> | undefined
   #startFailure: string | undefined
+  #stopFailure: string | undefined
   #getStateBarrier: Promise<void> | undefined
 
   constructor(active: PiSessionSummary = sessions[0]!) {
@@ -101,45 +106,26 @@ class SwitchingTransport implements AgentTransport {
   }
 
   failStart(message: string): void { this.#startFailure = message }
-  async stop(): Promise<void> { this.stopCalls += 1; this.emitStatus({ state: 'stopped' }) }
+
+  failStop(message: string): void { this.#stopFailure = message }
+
+  async stop(): Promise<void> {
+    this.stopCalls += 1
+    const failure = this.#stopFailure
+    this.#stopFailure = undefined
+    if (failure) throw new Error(failure)
+    this.emitStatus({ state: 'stopped' })
+  }
   send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
   onStatus(listener: (status: TransportStatus) => void): () => void { this.statuses.add(listener); return () => this.statuses.delete(listener) }
 
-  holdNextSwitch(): () => void {
-    let release = () => {}
-    this.#switchBarrier = new Promise<void>((resolve) => { release = resolve })
-    return release
-  }
-
-  holdNextNewSession(): () => void {
-    let release = () => {}
-    this.#newSessionBarrier = new Promise<void>((resolve) => { release = resolve })
-    return release
-  }
-
-  failNextSwitch(message: string): void { this.#switchFailure = message }
-
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     this.requests.push(command)
     if (command.type === 'abort') return undefined as T
-    if (command.type === 'new_session') {
-      const barrier = this.#newSessionBarrier
-      this.#newSessionBarrier = undefined
-      if (barrier) await barrier
-      return {} as T
-    }
+    if (command.type === 'new_session') return {} as T
     if (command.type === 'switch_session') {
-      const barrier = this.#switchBarrier
-      this.#switchBarrier = undefined
-      if (barrier) await barrier
-      // Pi keeps the previous session when a switch fails, so active must stay put here.
-      if (this.#switchFailure) {
-        const message = this.#switchFailure
-        this.#switchFailure = undefined
-        throw new Error(message)
-      }
       this.active = [...sessions, workspaceSession, ...this.extras].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
@@ -448,6 +434,41 @@ describe('clickable session switching', () => {
     }
   })
 
+  it('never leaves a rejected idle-harness stop unhandled', async () => {
+    const extras: PiSessionSummary[] = Array.from({ length: SESSION_IDLE_POOL_LIMIT + 3 }, (_, index) => ({
+      id: 'reject-' + String(index),
+      path: '/tmp/reject-' + String(index) + '.jsonl',
+      cwd: '/tmp/project',
+      title: 'Reject ' + String(index),
+      firstMessage: 'p',
+      messageCount: 1,
+      createdAt: index,
+      modifiedAt: index,
+    }))
+    const transport = new SwitchingTransport()
+    transport.extras = extras
+    const pool = createTransportPool(transport)
+    const controller = new WorkbenchController(transport, '/tmp/project', pool.deps())
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      await controller.start()
+      for (const session of extras) {
+        // Teardown of a pooled harness can fail (a dead stdin, a throwing status listener);
+        // the trim path must not surface that as an unhandled rejection.
+        for (const spawned of pool.spawned.values()) spawned.failStop('idle harness teardown failed')
+        await controller.switchSession(session)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect([...pool.spawned.values()].filter((spawned) => spawned.stopCalls > 0).length).toBeGreaterThan(0)
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+      await controller.dispose()
+    }
+  })
+
   it('explains why a disconnected workbench cannot switch threads', async () => {
     const transport = new SwitchingTransport()
     const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
@@ -734,12 +755,7 @@ describe('clickable session switching', () => {
     const directory = await mkdtemp(join(tmpdir(), 'heddlework-switch-leaf-'))
     fixtures.push(directory)
     const sessionPath = join(directory, 'branching.jsonl')
-    const entries = [
-      { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
-      { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
-      { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
-      { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
-    ]
+    const entries = branchingEntries
     const writeEntries = (records: ReadonlyArray<Record<string, unknown>>) => writeFile(sessionPath, records.map((record) => JSON.stringify(record)).join('\n') + '\n')
     await writeEntries(entries)
     // Pi moved the leaf to the assistant turn without appending, so the file still ends on the abandoned branch.
@@ -776,12 +792,7 @@ describe('clickable session switching', () => {
     const directory = await mkdtemp(join(tmpdir(), 'heddlework-switch-anchor-'))
     fixtures.push(directory)
     const sessionPath = join(directory, 'branching.jsonl')
-    const entries = [
-      { type: 'message', id: 'entry-u1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'first', timestamp: 1 } },
-      { type: 'message', id: 'entry-a1', parentId: 'entry-u1', timestamp: new Date(2).toISOString(), message: { role: 'assistant', content: 'reply one', timestamp: 2 } },
-      { type: 'message', id: 'entry-u2', parentId: 'entry-a1', timestamp: new Date(3).toISOString(), message: { role: 'user', content: 'second', timestamp: 3 } },
-      { type: 'message', id: 'entry-a2', parentId: 'entry-u2', timestamp: new Date(4).toISOString(), message: { role: 'assistant', content: 'reply two', timestamp: 4 } },
-    ]
+    const entries = branchingEntries
     await writeFile(sessionPath, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
     const otherPath = join(directory, 'other.jsonl')
     await writeFile(otherPath, [JSON.stringify({ type: 'message', id: 'other-1', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'user', content: 'elsewhere', timestamp: 1 } })].join('\n') + '\n')

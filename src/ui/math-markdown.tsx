@@ -88,7 +88,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
   const cellPadding = metrics?.mdTableCellPadding ?? 8
   const paragraphGap = Math.round(fontSizePx * 1.15)
   const headingAbove = Math.round(fontSizePx * 2)
-  const headingBelow = Math.round(fontSizePx * 1)
+  const headingBelow = fontSizePx
   const formula: FormulaPaint = { renderer, ink, fontSizePx, lineHeight, fontFamily }
   return (
     <div

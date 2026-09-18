@@ -1,20 +1,26 @@
+import { useCallback } from 'react'
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React from 'react'
 import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
+import { useExternalLaunch } from './external-launch.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
-async function exportTranscript(controller: WorkbenchController): Promise<void> {
+/** Launch failures for the header's own controls; the notice stream renders the text. */
+const FOLDER_FAILURE = 'Could not open this folder in your file manager'
+const EXPORT_OPEN_FAILURE = 'Could not open the exported transcript'
+
+async function exportTranscript(controller: WorkbenchService, open: (path: string) => void): Promise<void> {
   const path = await controller.exportSession()
-  if (path) openPath(path)
+  if (path) open(path)
 }
 
 export function ChatHeader({
@@ -27,13 +33,22 @@ export function ChatHeader({
   onToggleTerminal,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchService
   diffOpen: boolean
   terminalOpen?: boolean
   leftSidebarProgress: number
   onToggleDiff(): void
   onToggleTerminal?(): void
 }) {
+  // One tracker per action, not per call: two quick clicks must resolve through one rule, or the
+  // first launch's slow failure would report after the second already succeeded.
+  const notice = useCallback((message: string) => controller.notify('error', message), [controller])
+  const openFolder = useExternalLaunch({ run: openPath, message: FOLDER_FAILURE, notify: notice })
+  const openExport = useExternalLaunch({ run: openPath, message: EXPORT_OPEN_FAILURE, notify: notice })
+  const exportThread = useCallback(() => {
+    void exportTranscript(controller, openExport.launch).catch(notifyFailure(controller, 'Could not export the transcript'))
+  }, [controller, openExport.launch])
+  const openProject = useCallback(() => openFolder.launch(state.workspacePath), [openFolder.launch, state.workspacePath])
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
@@ -56,16 +71,16 @@ export function ChatHeader({
         <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 3 : 7, flexShrink: 0 }}>
-        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} />
+        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} onOpenProject={openProject} onExportTranscript={exportThread} />
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
-            <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
-            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
+            <IconButton testId="header-open" icon="box" label="Open" onClick={openProject} />
+            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={exportThread} />
           </>
         ) : (
           <>
-            <Button testId="header-open" label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
-            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void exportTranscript(controller)} />
+            <Button testId="header-open" label="Open" icon="box" compact onClick={openProject} />
+            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={exportThread} />
           </>
         ))}
         {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
@@ -75,7 +90,7 @@ export function ChatHeader({
   )
 }
 
-function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
+function ActionMenu({ state, controller, compact, onOpenProject, onExportTranscript }: { state: WorkbenchState; controller: WorkbenchService; compact: boolean; onOpenProject(): void; onExportTranscript(): void }) {
   const dropdown = useDropdownState()
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
@@ -91,12 +106,12 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       open={dropdown.mounted}
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
-        if (value === 'new') void controller.newSession()
-        if (value === 'open') openPath(state.workspacePath)
-        if (value === 'clone') void controller.cloneSession()
-        if (value === 'compact') void controller.compact()
-        if (value === 'refresh') void controller.refreshSessions()
-        if (value === 'export') void exportTranscript(controller)
+        if (value === 'new') void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread'))
+        if (value === 'open') onOpenProject()
+        if (value === 'clone') void controller.cloneSession().catch(notifyFailure(controller, 'Could not clone the thread'))
+        if (value === 'compact') void controller.compact().catch(notifyFailure(controller, 'Could not compact the session'))
+        if (value === 'refresh') void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))
+        if (value === 'export') onExportTranscript()
       }}
     >
       <SelectTrigger
