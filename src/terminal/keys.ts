@@ -174,6 +174,19 @@ export interface TerminalKeyEffects {
   readonly readPaste: () => Promise<string | undefined>
 }
 
+/**
+ * Runs one copy effect without letting its failure escape the key path: a synchronous throw and a
+ * rejected promise are both contained, exactly as the paste read below is. A copy failure is a local
+ * condition, so it must never surface as an unhandled rejection from a key press.
+ */
+function containCopyFailure(copy: TerminalKeyEffects['copy'], text: string): void {
+  try {
+    Promise.resolve(copy(text)).catch(() => undefined)
+  } catch {
+    // Contained: the terminal key path never propagates a copy failure.
+  }
+}
+
 /** Production terminal keyboard dispatch, kept renderer-free for deterministic tests. */
 export function dispatchTerminalKey(event: TerminalKeyEvent, effects: TerminalKeyEffects): void {
   const { grid } = effects
@@ -186,7 +199,7 @@ export function dispatchTerminalKey(event: TerminalKeyEvent, effects: TerminalKe
   if (command === 'copy') {
     // Nothing to copy is not a copy failure: an empty or padding-only viewport must not report one.
     const text = copyableViewportText(grid)
-    if (text) void effects.copy(text)
+    if (text) containCopyFailure(effects.copy, text)
     return
   }
   if (command === 'interrupt') {

@@ -197,9 +197,17 @@ export class WorkbenchDialogCoordinator {
 
   /** Drop visible dialogs without telling Pi. Background harnesses keep waiting. */
   hideVisible(): void {
+    const pending = [this.#host.getState().dialog, ...this.#host.getState().dialogQueue]
+      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
     this.#askUserDialogDriver = undefined
     this.#host.patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
     this.#clearDialogTimer()
+    // A locally-driven dialog settles through its stored callback, so hiding it must answer it or the
+    // caller waits forever. Pi-originated dialogs stay unanswered on purpose: that is what keeps the
+    // background turn alive.
+    for (const dialog of pending) {
+      if (this.#localDialogResponses.has(dialog.id)) this.#sendDialogResponse(dialog.id, { cancelled: true })
+    }
   }
 
   cancelAll(): void {

@@ -151,7 +151,9 @@ try {
   const pressed = planChromePointer({ x: box.x, y: box.y, button: 0, clickCount: 1 }, bounds, 'mousePressed')
   const released = planChromePointer({ x: box.x, y: box.y, button: 0, clickCount: 1 }, bounds, 'mouseReleased')
   if (pressed && released) await backend.input(tabId, [{ method: 'Input.dispatchMouseEvent', params: pressed }, { method: 'Input.dispatchMouseEvent', params: released }])
-  const clicked = await waitFor('the page to report the click', () => evaluate(tabId, 'window.__clicked === true'), 8_000).catch(() => false)
+  // `waitFor` retries while the probe answers `undefined`, so the click check has to answer
+  // `undefined` until the page reports it: returning `false` here ended the wait on the first poll.
+  const clicked = await waitFor('the page to report the click', () => evaluate(tabId, 'window.__clicked === true ? true : undefined'), 8_000).catch(() => false)
   record('a planned click reaches the page', clicked === true, `pointer at ${Math.round(box.x)},${Math.round(box.y)}`)
 
   // Focus the field through the same planned-click path, then type: the whole chain, not just the API.
@@ -166,7 +168,8 @@ try {
 
   const enter = planChromeKey({ key: 'Enter' })
   if (enter.kind === 'press') await backend.input(tabId, [...enter.calls])
-  const keys = await evaluate(tabId, 'JSON.stringify(window.__keys)') as string
+  // The page listener records the event, so the read waits for the record instead of racing it.
+  const keys = await waitFor('the page listener to record the key', () => evaluate(tabId, "window.__keys.includes('Enter') ? JSON.stringify(window.__keys) : undefined"), 8_000).catch(() => '[]') as string
   record('a named key is dispatched as a key event', enter.kind === 'press' && keys.includes('Enter'), `page saw ${keys}`)
 
   // History through the real Chrome history stack.

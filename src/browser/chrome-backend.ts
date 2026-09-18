@@ -136,7 +136,7 @@ export class ChromeBrowserBackend {
   async open(request: ChromeSessionRequest): Promise<void> {
     if (this.#disposed) return
     const existing = this.#sessions.get(request.tabId)
-    if (existing && existing.generation === request.generation) {
+    if (existing && existing.generation === request.generation && !existing.closed) {
       if (request.viewport.width >= 2 && request.viewport.height >= 2) await this.setViewport(request.tabId, request.viewport.width, request.viewport.height)
       return
     }
@@ -473,8 +473,16 @@ export class ChromeBrowserBackend {
     for (const session of this.#sessions.values()) {
       session.error = this.#lastError
       session.loading = false
+      // The target and session ids belonged to the process that just died: marking the session closed
+      // before dropping it keeps a same-generation `open()` from resuming a dead session, so the next
+      // navigation creates a fresh target on a restarted Chrome.
+      session.closed = true
       this.#emitState(session, { loading: false })
     }
+    this.#sessions.clear()
+    // Context ids described the dead process, so nothing can release them now; keeping them would leak.
+    this.#contextTabs.clear()
+    this.#ephemeralContexts.clear()
     this.#emit({ kind: 'engine' })
   }
 

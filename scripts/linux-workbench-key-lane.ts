@@ -342,7 +342,9 @@ export async function runWorkbenchKeyLane(app: App, options: WorkbenchKeyLaneOpt
   // never touches them and nothing here can produce the gesture. Those checks are reported as named skips;
   // `HEDDLEWORK_CLIPBOARD_LIVE=1 bun run smoke:clipboard-live` proves the same gesture with real helpers.
   if (insertKeyOwner === 'native') {
-    for (const name of ['shift-insert-pastes-exact-draft', 'native-paste-leaves-text-to-the-runtime', 'duplicate-paste-keeps-exact-copies', 'paste-disabled-without-focus', 'paste-disabled-image-only-clipboard', 'paste-attaches-clipboard-image', 'paste-reads-image-once']) {
+    // Exactly the checks the JavaScript branch below emits; a name that branch does not emit would
+    // report a skip for a check that does not exist.
+    for (const name of ['shift-insert-pastes-exact-draft', 'duplicate-paste-keeps-exact-copies', 'paste-disabled-without-focus', 'paste-disabled-image-only-clipboard', 'paste-attaches-clipboard-image']) {
       checks.push({
         name,
         skipped: true,
