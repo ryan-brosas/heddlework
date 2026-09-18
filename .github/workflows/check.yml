@@ -13,8 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Primary quality gate: Linux (the fork's development lane, Omarchy/Arch x86_64).
+  # The job id stays "test" so the published check context (check / test) does not change.
   test:
-    runs-on: macos-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       HEDDLEWORK_WITHOUT_CEF: '1'
@@ -29,15 +31,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: node_modules/.cache/heddlework-gpuix
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock') }}
-      - name: Install Metal compiler
-        run: xcodebuild -downloadComponent MetalToolchain
+          # The installer produces these artifacts, so its content belongs in the key: a cache
+          # saved before the addon install would otherwise be restored forever. The declared patch
+          # set is part of those inputs too - a key without it restored a checkout patched from an
+          # older patch revision, which is exactly what `native-...-<old hash>` did in PR #25.
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpuix-runtime.json', 'bun.lock', 'scripts/install-gpuix.ts', 'scripts/gpuix-patches.ts', 'patches/**') }}
+      # The pinned GPUix runtime links against all of these; the compositor workflow proved the
+      # list when its "Build pinned Heddlework GPUix runtime" step started passing. Without
+      # libxkbcommon-x11-dev the build fails at link time: unable to find library -lxkbcommon-x11.
+      - name: Install Linux native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang pkg-config \
+            libfontconfig-dev libgl1-mesa-dri libgtk-3-dev libssl-dev libudev-dev libvulkan1 \
+            libwayland-dev libwebkit2gtk-4.1-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev \
+            wayland-protocols
       - run: bun run setup:native
-      - run: bun run typecheck:web
-      - run: bun run build:web
+      - name: Point native tests at the freshly built runtime
+        run: |
+          addon="$PWD/node_modules/@gpuix/native/gpuix-native.linux-x64-gnu.node"
+          test -f "$addon"
+          echo "NAPI_RS_NATIVE_LIBRARY_PATH=$addon" >> "$GITHUB_ENV"
       - run: bunx playwright install chromium
-      - run: bun run test:browser
-      - run: bun run check
-      - run: bun run build
-        env:
-          HEDDLEWORK_WITHOUT_CEF: '1'
+      # One aggregate command, shared with a prepared local checkout, so the CI lane and the
+      # documented pre-push gate cannot drift. `check` alone omits the browser probe, which is how a
+      # web-companion-only break once reached CI green-adjacent.
+      - name: Full verification gate
+        run: bun run verify

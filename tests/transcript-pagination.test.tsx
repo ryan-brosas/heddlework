@@ -1,8 +1,7 @@
 import React from 'react'
-import { performance } from 'node:perf_hooks'
-import { describe, expect, it, spyOn } from 'bun:test'
+import { expect, it, spyOn } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import type { PiForkMessage, PiMessage } from '../src/pi/types.ts'
 import { Transcript } from '../src/ui/transcript.tsx'
 import { createInitialState } from '../src/workbench/state.ts'
@@ -10,14 +9,14 @@ import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../src/ui/tool-presenters.ts'
 import { colors } from '../src/ui/theme.ts'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
+import { expectScrollWheelLatency } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 const messages: PiMessage[] = Array.from({ length: 120 }, (_, index): PiMessage[] => [
   { role: 'user', content: `Prompt ${index}`, timestamp: index * 2 },
   { role: 'assistant', content: [{ type: 'text', text: `Answer ${index}` }], timestamp: index * 2 + 1 },
 ]).flat()
 const forkMessages: PiForkMessage[] = Array.from({ length: 120 }, (_, index) => ({ entryId: `entry-${index}`, text: `Prompt ${index}` }))
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('reverse-infinite transcript', () => {
   it('keeps one bottom-aligned native list while the reader changes direction', async () => {
@@ -937,12 +936,7 @@ describeNative('reverse-infinite transcript', () => {
     expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(1)
     expect(root.renderer.getAllText().length).toBeLessThan(1_000)
 
-    const wheelStarted = performance.now()
-    for (let index = 0; index < 20; index += 1) {
-      await automation.call('scrollWheel', { x: surface.x + surface.width / 2, y: surface.y + surface.height / 2, deltaX: 0, deltaY: index % 2 ? -120 : 120 })
-      root.renderer.flush()
-    }
-    expect(performance.now() - wheelStarted).toBeLessThan(400)
+    await expectScrollWheelLatency(automation, root, surface)
 
     for (let attempt = 0; attempt < 20 && await automation.getByTestId('tool-detail-row').count() < 256; attempt += 1) {
       await Bun.sleep(20)

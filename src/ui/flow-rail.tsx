@@ -1,4 +1,3 @@
-import React from 'react'
 import type { FlowTaskStatus } from '../flows/projection.ts'
 import { colors } from './theme.ts'
 

@@ -1,13 +1,15 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
 import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { formatElapsedSeconds } from './duration.ts'
-import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
+import { formatTimeOfDay, formatTokenCount } from './format-time.ts'
+import { hydrateMessageImages } from './clipboard-media.ts'
+import { useClipboardCopy } from './clipboard-copy.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
@@ -23,12 +25,13 @@ import {
   currentWorkWave,
   emptyWorkTrace,
   groupWorkItems,
-  isActiveTraceEntry,
   isCompactionWorkTrace,
   liveWorkTraceId,
   pendingWorkTraceId,
   projectTranscriptRows,
+  resetRowIdentityCache,
   type DisplayTimelineItem,
+  type TracePreviewItem,
   type TraceTimelineItem,
   type TranscriptProjectionRow,
 } from './transcript-projection.ts'
@@ -76,6 +79,7 @@ interface TranscriptDisclosureState {
 
 const EMPTY_IDS: ReadonlySet<string> = new Set()
 const EMPTY_LIMITS: ReadonlyMap<string, number> = new Map()
+const EMPTY_LENGTHS: ReadonlyMap<string, number> = new Map()
 
 export const Transcript = memo(function Transcript({
   state,
@@ -106,6 +110,7 @@ export const Transcript = memo(function Transcript({
   if (previewLeaseSession.current !== sessionKey) {
     previewLeaseSession.current = sessionKey
     previewLeases.current = new Map()
+    resetRowIdentityCache()
   }
   const [disclosures, setDisclosures] = useState<TranscriptDisclosureState>(() => ({ sessionKey, traces: new Set(), entries: new Set(), traceLimits: new Map() }))
   const [retiringAssistants, setRetiringAssistants] = useState<AssistantTimelineItem[]>([])
@@ -134,16 +139,25 @@ export const Transcript = memo(function Transcript({
 
   const hydratedMessages = useMemo(() => hydrateMessageImages(state.messages), [state.messages])
   const items = useMemo(
-    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices), state.session.isStreaming),
-    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.session.isStreaming],
+    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices, state.statusLines), state.session.isStreaming),
+    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices, state.statusLines, state.session.isStreaming],
   )
-  const traceLengths = useMemo(() => new Map(items.flatMap((item) => item.kind === 'work-trace' ? [[item.id, item.items.length] as const] : [])), [items])
+  // Only expanded traces are ever read back from this map (the row filter below, the
+  // limit-growth effect, and the toggle clamp), so a transcript with nothing expanded skips the
+  // O(items) build that every live delta would otherwise pay for.
+  const traceLengths = useMemo(() => {
+    if (expandedTraceIds.size === 0) return EMPTY_LENGTHS
+    const lengths = new Map<string, number>()
+    for (const item of items) {
+      if (item.kind === 'work-trace' && expandedTraceIds.has(item.id)) lengths.set(item.id, item.items.length)
+    }
+    return lengths
+  }, [expandedTraceIds, items])
   const projectedRows = useMemo(() => projectTranscriptRows(items, expandedTraceIds, traceLimits), [expandedTraceIds, items, traceLimits])
-  const displayedAssistants = useMemo(
-    () => items.flatMap((item) => item.kind === 'assistant' ? [item] : []),
-    [items],
-  )
   useEffect(() => {
+    // Derived here rather than in a memo: this effect is the only consumer, and a live delta
+    // replaces `items` on every streamed block.
+    const displayedAssistants = items.flatMap((item) => item.kind === 'assistant' ? [item] : [])
     const displayedIds = new Set(displayedAssistants.map((item) => item.id))
     const displayedTexts = new Set(displayedAssistants.map((item) => item.text))
     const disappeared = previousAssistants.current.filter((item) => !displayedIds.has(item.id) && !displayedTexts.has(item.text))
@@ -154,7 +168,7 @@ export const Transcript = memo(function Transcript({
       const known = new Set(remaining.map((item) => item.id))
       return [...remaining, ...disappeared.filter((item) => !known.has(item.id))]
     })
-  }, [displayedAssistants])
+  }, [items])
   useEffect(() => {
     if (state.session.isStreaming && !wasStreaming.current) setFollowTail(true)
     wasStreaming.current = state.session.isStreaming
@@ -184,7 +198,6 @@ export const Transcript = memo(function Transcript({
     next.push({ id: 'composer-spacer', kind: 'composer-spacer' })
     return next
   }, [items, liveTraceId, projectedRows, retiringAssistants, state.session.isStreaming, traceLengths])
-  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows])
   // Spread retained-tree growth across frames; native virtualization handles layout and paint per direct row.
   useEffect(() => {
     if (disclosures.sessionKey !== sessionKey) return
@@ -252,7 +265,8 @@ export const Transcript = memo(function Transcript({
     const pending = pendingHistoryPage.current
     if (!pending) return
     pendingHistoryPage.current = undefined
-    const anchorIndex = pending.anchorId ? rowIndexById.get(pending.anchorId) ?? -1 : -1
+    // Built only when a page actually landed: this anchor is its only reader.
+    const anchorIndex = pending.anchorId ? new Map(rows.map((row, index) => [row.id, index])).get(pending.anchorId) ?? -1 : -1
     if (
       anchorIndex === 0
       && state.messagesHasOlder
@@ -261,33 +275,52 @@ export const Transcript = memo(function Transcript({
     ) {
       queueMicrotask(() => loadEarlier(pending.continuation + 1))
     }
-  }, [rowIndexById, state.messagesHasOlder, state.messagesLoadingEarlier])
+  }, [rows, state.messagesHasOlder, state.messagesLoadingEarlier])
 
-  const toggleTrace = (traceId: string) => {
+  // `traceLengths` changes identity on every live delta. Reading it through a ref
+  // keeps this handler stable, which is what lets memoized rows bail out.
+  const traceLengthsRef = useRef(traceLengths)
+  traceLengthsRef.current = traceLengths
+
+  const toggleTrace = useCallback((traceId: string) => {
     setDisclosures((current) => {
       const traces = new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS)
       if (traces.has(traceId)) traces.delete(traceId)
       else traces.add(traceId)
       const traceLimits = new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS)
-      if (traces.has(traceId)) traceLimits.set(traceId, Math.min(TRACE_INITIAL_PROJECTED_ROWS, traceLengths.get(traceId) || TRACE_INITIAL_PROJECTED_ROWS))
+      if (traces.has(traceId)) traceLimits.set(traceId, Math.min(TRACE_INITIAL_PROJECTED_ROWS, traceLengthsRef.current.get(traceId) || TRACE_INITIAL_PROJECTED_ROWS))
       else traceLimits.delete(traceId)
       return { sessionKey, traces, entries: new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS), traceLimits }
     })
-  }
-  const toggleEntry = (rowId: string) => {
+  }, [sessionKey])
+  const toggleEntry = useCallback((rowId: string) => {
     setDisclosures((current) => {
       const entries = new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS)
       if (entries.has(rowId)) entries.delete(rowId)
       else entries.add(rowId)
       return { sessionKey, traces: new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS), entries, traceLimits: new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS) }
     })
-  }
+  }, [sessionKey])
+
+  const leasePreviewHeight = useCallback((key: string, natural: number, hold: boolean) => {
+    if (!hold) {
+      previewLeases.current.delete(key)
+      return natural
+    }
+    const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
+    previewLeases.current.set(key, next)
+    return next
+  }, [])
+
+  const finishRetire = useCallback((id: string) => {
+    setRetiringAssistants((current) => current.filter((item) => item.id !== id))
+  }, [])
 
   // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
     <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', pointerEvents: interactionDisabled ? 'none' : 'auto' }} onScroll={handleHistoryScroll}>
       <NativeVirtualList
-        key={`${sessionKey}:${appearance ?? nativeTheme.appearance}:virtual`}
+        key={`${appearance ?? nativeTheme.appearance}:virtual`}
         testId="transcript-list"
         alignment="bottom"
         followTail={followTail}
@@ -298,23 +331,15 @@ export const Transcript = memo(function Transcript({
         style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
       >
         {rows.map((row) => (
-          <TranscriptRowTransition key={row.id} row={row} live={row.kind === 'trace-header' && row.id === liveTraceId} persist={row.kind === 'trace-header' && stickyHeaderIds.current.has(row.id)}>
-          <ProjectedTranscriptRow
+          <MemoTranscriptRowTransition key={row.id} row={row} live={row.kind === 'trace-header' && row.id === liveTraceId} persist={row.kind === 'trace-header' && stickyHeaderIds.current.has(row.id)}>
+          <MemoProjectedTranscriptRow
             row={row}
             presenters={presenters}
             workspacePath={state.workspacePath}
             historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
             live={row.kind === 'trace-header' && row.id === liveTraceId}
-            leasePreviewHeight={(key, natural, hold) => {
-              if (!hold) {
-                previewLeases.current.delete(key)
-                return natural
-              }
-              const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
-              previewLeases.current.set(key, next)
-              return next
-            }}
+            leasePreviewHeight={leasePreviewHeight}
             questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
             statusItems={state.statusItems}
@@ -330,9 +355,9 @@ export const Transcript = memo(function Transcript({
             onOpenDiff={onOpenDiff}
             onRevert={onRevert}
             onDismissNotice={onDismissNotice}
-            onFinishRetire={(id) => setRetiringAssistants((current) => current.filter((item) => item.id !== id))}
+            onFinishRetire={finishRetire}
           />
-          </TranscriptRowTransition>
+          </MemoTranscriptRowTransition>
         ))}
       </NativeVirtualList>
     </div>
@@ -352,10 +377,16 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.sessionId === next.state.session.sessionId
   && previous.state.session.isStreaming === next.state.session.isStreaming
   && previous.state.notices.length === next.state.notices.length
+  && previous.state.statusLines === next.state.statusLines
   && previous.state.questionnaireCollapsed === next.state.questionnaireCollapsed
   && previous.state.queue === next.state.queue
   && previous.state.statusItems === next.state.statusItems
   && previous.state.widgets === next.state.widgets)
+
+// Row identity is reused by `projectTranscriptRows` while its backing item is
+// unchanged, so memoized rows let a streaming delta skip settled history.
+const MemoTranscriptRowTransition = memo(TranscriptRowTransition)
+const MemoProjectedTranscriptRow = memo(ProjectedTranscriptRow)
 
 function TranscriptRowTransition({ row, live, persist, children }: { row: TranscriptRenderRow; live: boolean; persist: boolean; children: React.ReactNode }) {
   const entered = useRef(false)
@@ -428,7 +459,7 @@ function ProjectedTranscriptRow({
     const running = live
     const inline = row.trace.items.length <= TRACE_INITIAL_PROJECTED_ROWS
     return (
-      <TranscriptRowShell compact={running} noSelect>
+      <TranscriptRowShell compact={running}>
         <ExecutionTraceHeader
           trace={row.trace}
           presenters={presenters}
@@ -518,15 +549,39 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
     <TranscriptRowShell user={item.kind === 'user'}>
       {item.kind === 'user' && <UserMessage item={item} onRevert={onRevert} />}
       {item.kind === 'assistant' && <AssistantMessage item={item} onRevert={onRevert} />}
-      {item.kind === 'status' && <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />}
+      {item.kind === 'status' && (item.origin === 'extension'
+        ? <SessionStatusLine text={item.text} />
+        : <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />)}
     </TranscriptRowShell>
   )
+}
+
+/**
+ * Row padding plus the selection policy for one transcript row.
+ *
+ * Only explicitly non-selectable chrome opts out. Read-only content (expanded traces,
+ * nested tool calls, reasoning, changed-file paths) stays selectable: a `userSelect: 'none'`
+ * here also disabled the native drag-selection copy path in the pinned GPUiX runtime.
+ */
+export function transcriptRowShellStyle(options: { user: boolean; compact: boolean; noSelect: boolean; contentGutter: number }) {
+  const { user, compact, noSelect, contentGutter } = options
+  return {
+    display: 'flex' as const,
+    flexDirection: 'row' as const,
+    justifyContent: 'center' as const,
+    width: '100%' as const,
+    paddingTop: user ? 9 : compact ? 0 : 4,
+    paddingBottom: user ? 11 : compact ? 0 : 7,
+    paddingLeft: contentGutter,
+    paddingRight: contentGutter,
+    userSelect: noSelect ? ('none' as const) : ('text' as const),
+   }
 }
 
 function TranscriptRowShell({ children, user = false, compact = false, noSelect = false }: { children: React.ReactNode; user?: boolean; compact?: boolean; noSelect?: boolean }) {
   const { contentGutter } = useResponsiveLayout()
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: contentGutter, paddingRight: contentGutter, ...((compact || noSelect) ? { userSelect: 'none' as const } : {}) }}>
+    <div style={transcriptRowShellStyle({ user, compact, noSelect, contentGutter })}>
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>{children}</div>
     </div>
   )
@@ -553,6 +608,7 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
 }
 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
+  const link = useExternalLink()
   return (
     <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
       <MathMarkdown
@@ -560,8 +616,9 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
         source={item.text || '…'}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
-        onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+        onLinkClick={(event) => link.launch(String(event.value ?? ''))}
       />
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
       {!item.streaming && <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
     </div>
   )
@@ -604,9 +661,8 @@ function ExecutionTraceHeader({
   const naturalHeight = !expanded && running ? Math.max(COLLAPSED_TRACE_ROW_HEIGHT, collapsedPreviewHeight(collapsedTools, preview, presenters)) : 0
   const leasedHeight = leasePreviewHeight(trace.boundaryId ?? trace.items[0]?.id ?? trace.id, naturalHeight, running)
   const extraHeight = Math.max(0, leasedHeight - naturalHeight)
-  const height = leasedHeight
   return (
-    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2, userSelect: 'none' }}>
+    <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2 }}>
       <div
         testId="tool-row"
         tabIndex={0}
@@ -619,7 +675,7 @@ function ExecutionTraceHeader({
         <TraceChevron expanded={expanded} />
       </div>
       {!expanded && (
-        <WorkPreviewTransition height={height}>
+        <WorkPreviewTransition height={leasedHeight}>
           {running && preview && <TracePreview item={preview} />}
           {running && collapsedTools.length > 0 ? <CollapsedTraceTools items={collapsedTools} presenters={presenters} hidden={Math.max(0, wave.tools.length - collapsedTools.length)} /> : null}
           {running && extraHeight > 0 && <div testId="transcript-lease" style={{ width: '100%', height: extraHeight }} />}
@@ -763,6 +819,7 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
 }
 
 function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
+  const link = useExternalLink()
   return (
     <div testId={testId} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div testId={`${testId}-toggle`} tabIndex={0} style={{ position: 'relative', minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none', backgroundColor: colors.background }} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
@@ -776,24 +833,30 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
           testId={`${testId}-markdown`}
           source={text}
           theme={traceMarkdownTheme()}
-          style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'none', pointerEvents: 'none' }}
-          onLinkClick={(event) => openExternal(String(event.value ?? ''))}
+          style={traceBodyStyle()}
+          onLinkClick={(event) => link.launch(String(event.value ?? ''))}
         />
       )}
+      {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
     </div>
   )
 }
 
-function TracePreview({ item }: { item: TraceTimelineItem }) {
+/**
+ * Expanded trace bodies stay interactive: their links open externally and their text selects.
+ * `pointerEvents: 'none'` here made every link in a disclosure inert.
+ */
+export function traceBodyStyle() {
+  return { width: '100%', minWidth: 0, overflow: 'visible' as const, userSelect: 'text' as const }
+}
+
+function TracePreview({ item }: { item: TracePreviewItem }) {
   if (item.kind === 'thinking' || item.kind === 'assistant') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
   }
   if (item.kind === 'context-injection') {
     const prefix = item.source ? `${contextInjectionLabel(item)} ` : ''
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(`${prefix}${item.text}`)}</text></div>
-  }
-  if (item.kind === 'notice') {
-    return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.notice.message}</text></div>
   }
   if (item.kind === 'compaction') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
@@ -815,7 +878,7 @@ function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-
   if (!isCompactionWorkTrace(trace)) return undefined
   const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
   if (!compaction) return undefined
-  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString()} tokens` : 'Compacted'
+  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${formatTokenCount(compaction.tokensBefore)} tokens` : 'Compacted'
 }
 
 function CollapsedTraceTools({ items, hidden, presenters }: { items: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>; hidden: number; presenters: ReadonlyMap<string, ToolPresenter> }) {
@@ -870,7 +933,7 @@ function RetiringAssistantRow({ item, onRevert, onDone }: { item: AssistantTimel
 
 function collapsedPreviewHeight(
   tools: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>,
-  preview: TraceTimelineItem | undefined,
+  preview: TracePreviewItem | undefined,
   presenters: ReadonlyMap<string, ToolPresenter>,
 ): number {
   let rows = preview && preview.kind !== 'tool' ? 1 : 0
@@ -897,20 +960,6 @@ function compactOneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
-function formatFabricValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value.slice(0, 18_000)
-  try {
-    return JSON.stringify(value, null, 2).slice(0, 18_000)
-  } catch {
-    return String(value).slice(0, 18_000)
-  }
-}
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1_000 ? `${Math.round(durationMs)}ms` : `${(durationMs / 1_000).toFixed(1)}s`
-}
-
 function MessageImage({ image }: { image: PiImageContent }) {
   return (
     <div style={{ width: 156, height: 104, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
@@ -934,24 +983,11 @@ function MessageFooter({
   align: 'start' | 'end'
   onRevert(entryId: string): void
 }) {
-  const [copied, setCopied] = useState(false)
-  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => {
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-  }, [])
-  const copy = async () => {
-    if (!await copyTextToClipboard(copyText)) return
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-    setCopied(true)
-    copyResetTimer.current = setTimeout(() => {
-      copyResetTimer.current = undefined
-      setCopied(false)
-    }, 900)
-  }
+  const copy = useClipboardCopy()
   const actions = (
     <>
       {revertEntryId && <TranscriptInlineAction icon="gitBranch" testId="tree-message" onClick={() => onRevert(revertEntryId)} />}
-      {copyText && <TranscriptInlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
+      {copyText && <TranscriptInlineAction icon={copy.copied ? 'check' : 'copy'} testId="copy-message" onClick={() => copy.copy(copyText)} />}
     </>
   )
   return (
@@ -959,6 +995,7 @@ function MessageFooter({
       {align === 'start' && actions}
       {timestamp && <Timestamp value={timestamp} />}
       {align === 'end' && actions}
+      {copy.failure && <text testId="copy-message-failure" style={{ color: colors.error, fontSize: 9 }}>{copy.failure}</text>}
     </div>
   )
 }
@@ -983,6 +1020,19 @@ function StatusMessage({ text, error, timestamp }: { text: string; error: boolea
   )
 }
 
+/**
+ * Pi core's showStatus line for an `info` notify: dim chat content with no notification chrome —
+ * no card, border, icon, timestamp, dismiss control, badge, or ledger entry. Pi rewrites the
+ * previous line when statuses arrive back to back, so a turn keeps its latest readout.
+ */
+function SessionStatusLine({ text }: { text: string }) {
+  return (
+    <div testId="session-status-line" style={{ paddingLeft: 1, paddingRight: 1 }}>
+      <text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
+    </div>
+  )
+}
+
 function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   const { contentGutter } = useResponsiveLayout()
   const project = workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? workspacePath
@@ -1001,7 +1051,7 @@ function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }:
 }
 
 function Timestamp({ value }: { value: number }) {
-  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimestamp(value)}</text>
+  return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimeOfDay(value)}</text>
 }
 
 export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpenDiff(): void }) {
@@ -1039,8 +1089,4 @@ function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | 
     timestampCount += 1
   }
   return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
-}
-
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }

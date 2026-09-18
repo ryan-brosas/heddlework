@@ -3,38 +3,27 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { isCurrentPiSession, sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
-import { pickWorkspaceDirectory } from './open-external.ts'
+import { pickProjectDirectory } from './native-directory-picker.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
+import { ALL_PROJECTS_SCOPE, projectChoices, resolveProjectScope } from './workspace-choices.ts'
 
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 
 const SIDEBAR_WIDTH = 256
-const ALL_PROJECTS_SCOPE = '__all-projects__'
 
-export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
-  width = SIDEBAR_WIDTH,
-  state,
-  controller,
-  flowsAvailable = false,
-  flowsActive = false,
-  settingsActive,
-  notificationsActive,
-  unreadCount,
-  appearance,
-  onSelectSession,
-  onFlows = () => undefined,
-  onSettings,
-  onNotifications,
-}: {
+
+
+export interface WorkbenchSidebarProps {
   width?: number
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchServiceAlias
   flowsAvailable?: boolean
   flowsActive?: boolean
   settingsActive: boolean
@@ -45,7 +34,24 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   onFlows?(): void
   onSettings(): void
   onNotifications(): void
-}) {
+}
+
+type WorkbenchServiceAlias = WorkbenchService
+
+export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
+  width = SIDEBAR_WIDTH,
+  state,
+  controller,
+  flowsAvailable = false,
+  flowsActive = false,
+  settingsActive,
+  notificationsActive,
+  unreadCount,
+  onSelectSession,
+  onFlows = () => undefined,
+  onSettings,
+  onNotifications,
+}: WorkbenchSidebarProps) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
   const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
@@ -64,21 +70,15 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     [activePath, persistedSessions, state],
   )
   const normalizedSearch = search.trim().toLowerCase()
-  const projectOptions = useMemo(() => {
-    const projects = new Map<string, string>()
-    for (const session of [activeSummary, ...persistedSessions]) {
-      if (!session) continue
-      projects.set(resolve(session.cwd), sessionProjectName(session))
-    }
-    return [
-      { value: ALL_PROJECTS_SCOPE, label: 'All projects' },
-      ...[...projects].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label)),
-    ]
-  }, [activeSummary, persistedSessions])
+  // The current workspace is a project even before it has any session, so this list cannot come from
+  // messages alone: a folder that "New project" had just opened produced no option at all, which made a
+  // successful pick look like it did nothing. `projectChoices` owns that projection for both pickers.
+  const projectOptions = useMemo(() => projectChoices(state), [state.sessions, state.workspacePath])
+
   useEffect(() => {
-    if (!projectOptions.some((option) => option.value === projectScope)) setProjectScope(ALL_PROJECTS_SCOPE)
-  }, [projectOptions, projectScope])
-  const matchingSessions = useMemo(() => {
+    setProjectScope((selected) => resolveProjectScope(selected, projectOptions))
+  }, [projectOptions])
+  const visibleSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
     for (const session of persistedSessions) unique.set(session.path, session)
@@ -90,7 +90,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       ? scoped.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
       : scoped
   }, [activeSummary, normalizedSearch, persistedSessions, projectScope])
-  const visibleSessions = matchingSessions
   const now = clock
   useEffect(() => {
     if (initialSessionScrollApplied.current || state.sessionsLoading || visibleSessions.length === 0) return
@@ -135,13 +134,13 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         session={session}
         projectName={sessionProjectName(session)}
         active={active}
-        running={active && state.session.isStreaming}
+        running={active ? state.session.isStreaming : state.sessionActivity[session.path] === true || state.sessionActivity[resolve(session.path)] === true}
         disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
         snoozeOpen={snoozeMenu === session.path}
-        onClick={() => { onSelectSession(); void controller.switchSession(session) }}
+        onClick={() => { onSelectSession(); void controller.switchSession(session).catch(notifyFailure(controller, 'Could not open the thread')) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
         onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
@@ -158,7 +157,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     sessionScrollDistance.current += downwardDistance
     if (sessionScrollDistance.current < 640) return
     sessionScrollDistance.current = 0
-    void controller.loadMoreSessions()
+    void controller.loadMoreSessions().catch(notifyFailure(controller, 'Could not load more sessions'))
   }
 
   return (
@@ -167,7 +166,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
         {flowsAvailable && (
-          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
+          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
             <Icon name="gitBranch" size={15} color={flowsActive ? colors.text : colors.textMuted} />
             <text style={{ color: flowsActive ? colors.text : colors.textMuted, fontSize: 12, fontWeight: flowsActive ? 650 : 550 }}>Flows</text>
           </div>
@@ -184,7 +183,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
               onChange={(event) => setSearch(String(event.value ?? ''))}
             />
           </div>
-          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.session.isStreaming || state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
+          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession().catch(notifyFailure(controller, 'Could not start a new thread')) }} />
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -196,10 +195,12 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
             disabled={pickingProject}
             onClick={() => {
               setPickingProject(true)
-              void pickWorkspaceDirectory().then((pick) => {
+              void pickProjectDirectory(renderer).then(async (pick) => {
                 if (pick.error) controller.notify('error', pick.error)
-                else if (pick.path) void controller.switchWorkspace(pick.path)
-              }).finally(() => setPickingProject(false))
+                // Awaiting the switch keeps `pickingProject` set until the workspace actually changes, so the
+                // button cannot read as idle while the picker result is still being applied.
+                else if (pick.path) await controller.switchWorkspace(pick.path).catch(notifyFailure(controller, 'Could not open the project'))
+              }).catch(notifyFailure(controller, 'Could not open the folder picker')).finally(() => setPickingProject(false))
             }}
           />
         </div>
@@ -228,7 +229,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
           <IconButton icon="bell" label="Notifications" testId="sidebar-notifications" active={notificationsActive} onClick={onNotifications} />
           {unreadCount > 0 && <div style={{ position: 'absolute', top: 2, right: 1, minWidth: 13, height: 13, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 3, paddingRight: 3, backgroundColor: colors.primary }}><text style={{ color: '#FFFFFF', fontSize: 7, fontWeight: 700 }}>{String(Math.min(99, unreadCount))}</text></div>}
         </div>
-        <IconButton icon="refresh" label="Refresh threads" disabled={state.sessionsLoading} onClick={() => void controller.refreshSessions()} />
+        <IconButton icon="refresh" label="Refresh threads" disabled={state.sessionsLoading} onClick={() => void controller.refreshSessions().catch(notifyFailure(controller, 'Could not refresh threads'))} />
         <div style={{ flexGrow: 1 }} />
         <div testId="sidebar-connection-status" style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: connectionColor }} />
@@ -236,22 +237,37 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       </div>
     </div>
   )
-}, (previous, next) => previous.controller === next.controller
+}, sidebarPropsEqual)
+
+/**
+ * Whether a sidebar render can be skipped. Exported so the rule is testable: a controller can
+ * publish a new `messages` array that changes a derived session title without a new `session`, and
+ * `syntheticActiveSession` reads it, so `messages` belongs in the comparison beside `session`.
+ */
+export function sidebarPropsEqual(previous: WorkbenchSidebarProps, next: WorkbenchSidebarProps): boolean {
+  return previous.controller === next.controller
   && previous.width === next.width
   && previous.flowsAvailable === next.flowsAvailable
   && previous.flowsActive === next.flowsActive
   && previous.settingsActive === next.settingsActive
   && previous.notificationsActive === next.notificationsActive
   && previous.unreadCount === next.unreadCount
+  // The body paints from the module-level palette that applyResolvedTheme mutates in place,
+  // so a light/dark switch must break memo here even though the prop is never read directly.
   && previous.appearance === next.appearance
   && previous.state.sessions === next.state.sessions
   && previous.state.sessionsLoading === next.state.sessionsLoading
   && previous.state.sessionsHasMore === next.state.sessionsHasMore
   && previous.state.session === next.state.session
+  && previous.state.messages === next.state.messages
+  // Session activity is a per-session record the controller replaces wholesale, and a row's running
+  // badge reads it, so a skipped render would leave that badge stale.
+  && previous.state.sessionActivity === next.state.sessionActivity
   && previous.state.connection === next.state.connection
   && previous.state.threadLifecycle === next.state.threadLifecycle
   && previous.state.workspacePath === next.state.workspacePath
-  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch)
+  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch
+}
 
 function ProjectFilter({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
   const dropdown = useDropdownState()
@@ -315,7 +331,7 @@ function SectionLabel({ label, tone = 'normal' }: { label: string; tone?: 'norma
 
 function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expanded: boolean; onToggle(): void }) {
   return (
-    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, cursor: 'pointer' }} onClick={onToggle}>
+    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, borderRadius: 7, backgroundColor: colors.sidebar, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onToggle} onKeyDown={(event: { key?: string }) => { if (event.key === 'enter' || event.key === 'space') onToggle() }}>
       <text style={{ color: colors.settledText, fontSize: 10, fontWeight: 550, pointerEvents: 'none' }}>{expanded ? 'Settled' : `Settled (${count})`}</text>
       <div style={{ height: 1, flexGrow: 1, backgroundColor: colors.settledDivider, pointerEvents: 'none' }} />
       <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>
@@ -323,12 +339,16 @@ function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expa
   )
 }
 
-function SidebarTextAction({ label, onClick }: { label: string; onClick(): void }) {
-  return <div tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick}><text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550 }}>{label}</text></div>
-}
-
-function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
-  if (state.messages.length === 0) return null
+/**
+ * The thread Pi is actually holding, even before it has a message.
+ *
+ * A session's file is absent only while nothing has been persisted, which is the one case with
+ * nothing to show. Once Pi holds an open thread, hiding it left a freshly started thread
+ * invisible in the sidebar.
+ */
+export function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
+  const identity = state.session.sessionFile ?? state.session.sessionId
+  if (state.messages.length === 0 && !identity) return null
   const firstUser = state.messages.find((message) => message.role === 'user')
   const firstMessage = firstUser ? contentText(firstUser.content).trim() : ''
   return {

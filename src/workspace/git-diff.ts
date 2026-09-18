@@ -4,12 +4,17 @@ import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 const MAX_PATCH_BYTES = 1_500_000
 const MAX_UNTRACKED_FILES = 24
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+// `git -c` wins over every config file, so the prefixes stay stable no matter how the
+// invoking developer configured diff.mnemonicprefix, diff.noprefix or diff.srcPrefix.
+const DIFF_PREFIX = ['-c', 'diff.mnemonicprefix=false', '-c', 'diff.noprefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/']
 
 export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
   try {
     const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    const trackedPatch = await runGit(cwd, ['diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
-    const numstat = await runGit(cwd, ['diff', '--numstat', 'HEAD', '--'])
+    // git honours diff.mnemonicprefix/diff.noprefix from the developer's own
+    // configuration. Pin the prefixes this parser reads instead of inheriting them.
+    const trackedPatch = await runGit(cwd, [...DIFF_PREFIX, 'diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
+    const numstat = await runGit(cwd, [...DIFF_PREFIX, 'diff', '--numstat', 'HEAD', '--'])
     const untracked = (await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '--']))
       .split('\n')
       .map((path) => path.trim())
@@ -17,7 +22,7 @@ export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
       .slice(0, MAX_UNTRACKED_FILES)
 
     const untrackedPatches = await Promise.all(untracked.map(async (path) => {
-      const result = await runGit(cwd, ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path], [0, 1])
+      const result = await runGit(cwd, [...DIFF_PREFIX, 'diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path], [0, 1])
       return normalizeNoIndexPatch(result, cwd, path)
     }))
     const patch = [trackedPatch, ...untrackedPatches].filter(Boolean).join('\n')

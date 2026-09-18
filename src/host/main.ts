@@ -18,7 +18,7 @@ const environment = hostOptionsFromEnvironment({ ...process.env, HEDDLEWORK_HOST
 const tokenPath = demoMode ? false : hostTokenPath()
 const staticRoot = resolveStaticRoot()
 const kernel = new WorkbenchKernel()
-kernel.mount(createWorkbenchControllerPlugin(workspacePath, { queueStore: new FileQueueStore(demoMode ? false : queueStorePath()), threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()) }))
+kernel.mount(createWorkbenchControllerPlugin(workspacePath, { queueStore: new FileQueueStore(demoMode ? false : queueStorePath()), threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()), transportOptions: { cwd: workspacePath, demo: demoMode, ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}), piArgs: piArgumentsFromEnvironment() } }))
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
 kernel.mount(createTerminalPlugin({ cwd: workspacePath, appearancePath: false }))
 kernel.mount(createWorkspaceHostPlugin({ ...environment, enabled: true, workspacePath, tokenPath, ...(staticRoot ? { staticRoot } : {}) }))

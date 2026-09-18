@@ -1,3 +1,4 @@
+import { asRecord } from '../workbench/state.ts'
 import type { PiMessage } from './types.ts'
 
 export interface PiSessionEntry {
@@ -201,20 +202,6 @@ export function layoutSessionTreeOptions(options: readonly PiSessionTreeOption[]
   return rows
 }
 
-export function sessionTreeLeafDescendsFrom(sessionTree: PiSessionTree, ancestorId: string | null): boolean {
-  if (ancestorId === null) return true
-  const parents = new Map<string, string | null>()
-  visitNodes(sessionTree.tree, (node) => parents.set(node.entry.id, node.entry.parentId))
-  let cursor: string | null | undefined = sessionTree.leafId
-  const visited = new Set<string>()
-  while (cursor !== null && cursor !== undefined && !visited.has(cursor)) {
-    if (cursor === ancestorId) return true
-    visited.add(cursor)
-    cursor = parents.get(cursor)
-  }
-  return false
-}
-
 export function treeNavigationLeavesBranch(sessionTree: PiSessionTree, targetId: string): boolean {
   const oldLeafId = sessionTree.leafId
   if (!oldLeafId || oldLeafId === targetId) return false
@@ -330,8 +317,4 @@ function visitNodes(nodes: readonly PiSessionTreeNode[], visit: (node: PiSession
     visit(node)
     for (let index = node.children.length - 1; index >= 0; index -= 1) pending.push(node.children[index]!)
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }

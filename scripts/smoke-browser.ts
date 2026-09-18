@@ -111,6 +111,6 @@ try {
 } finally {
   clearInterval(monitor)
   if (timedOut) await child.exited.catch(() => undefined)
-  server.stop(true)
+  await server.stop(true)
   rmSync(temporary, { recursive: true, force: true })
 }

@@ -1,13 +1,13 @@
-import React from 'react'
 import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import {
   workbenchUiRegistryToken,
   type WorkbenchPlugin,
   type WorkbenchSurfaceProps,
 } from '../src/plugin-api.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { createCoreUiExtension } from '../src/ui/core-extension.tsx'
@@ -70,8 +70,6 @@ describe('workbench UI extensions', () => {
     await kernel.dispose()
   })
 })
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('workbench UI extension host', () => {
   it('opens a user-contributed component from the shared surface picker', async () => {

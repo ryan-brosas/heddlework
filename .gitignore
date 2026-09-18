@@ -3,3 +3,8 @@ dist/
 *.log
 .DS_Store
 screenshots/
+.idea/
+.pi/
+.veda/
+.probe/
+external/

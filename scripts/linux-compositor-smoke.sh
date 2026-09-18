@@ -147,3 +147,8 @@ timeout --preserve-status 120s bun scripts/linux-window-smoke.ts \
   --compositor "$compositor" \
   --decorations "$decorations" \
   --report "$report"
+
+# The same session hosts the UI text-selection lane, which asserts the shipped selection policy.
+HEDDLEWORK_SELECTION_COMPOSITOR="${compositor}-${decorations}" \
+  timeout --preserve-status 120s bun scripts/linux-selection-smoke.ts \
+  | tee "$artifacts/selection-${compositor}-${decorations}.log"

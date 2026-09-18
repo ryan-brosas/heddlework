@@ -6,7 +6,6 @@ import type {
   TerminalCleanup,
   TerminalGridSnapshot,
   TerminalPlacement,
-  TerminalProcessStatus,
   TerminalServiceSnapshot,
   TerminalSessionId,
   TerminalSessionInfo,
@@ -53,6 +52,7 @@ export class TerminalSessionService {
   #stateDirty = false
   #disposed = false
   #seq = 0
+  #lastError: string | undefined
 
   constructor(options: {
     cwd: string
@@ -88,6 +88,23 @@ export class TerminalSessionService {
 
   readonly getSnapshot = (): TerminalServiceSnapshot => this.#snapshot
   readonly getStateSnapshot = (): TerminalServiceSnapshot => this.#stateSnapshot
+
+  /**
+   * Owns a fire-and-forget terminal action. The desktop host treats an unhandled rejection as fatal
+   * (`src/main.tsx` routes it to `shutdown`), so a UI affordance that cannot await must not leave its
+   * promise floating: the failure becomes `lastError` state, which the terminal surfaces render.
+   */
+  readonly dispatch = (task: Promise<unknown>): void => {
+    void task.catch((error: unknown) => {
+      this.#lastError = error instanceof Error ? error.message : String(error)
+      try {
+        this.#publishState()
+      } catch {
+        // A listener failure must not re-enter this boundary as a second rejection.
+      }
+    })
+  }
+
 
   grid(id: TerminalSessionId | undefined): TerminalGridSnapshot | undefined {
     if (!id) return undefined
@@ -167,6 +184,7 @@ export class TerminalSessionService {
     this.#sessions.set(id, session)
     if (!this.#activeBottomId) this.#activeBottomId = id
     if (!this.#activeRightId) this.#activeRightId = id
+    this.#lastError = undefined
     this.#publishState()
     return id
   }
@@ -332,6 +350,7 @@ export class TerminalSessionService {
       activeRightId: this.#activeRightId,
       appearance: this.#appearance,
       generation: this.#generation,
+      ...(this.#lastError ? { lastError: this.#lastError } : {}),
     }
   }
 }
@@ -343,5 +362,8 @@ function terminalAppearancesEqual(left: TerminalAppearance, right: TerminalAppea
     && left.nerdFontEnabled === right.nerdFontEnabled
     && left.muteEmojiColors === right.muteEmojiColors
 }
+
+/** Public terminal surface shared by the native service and the web companion. */
+export type TerminalService = Pick<TerminalSessionService, keyof TerminalSessionService>
 
 export { MemoryTerminalBackend, BunPtyBackend }

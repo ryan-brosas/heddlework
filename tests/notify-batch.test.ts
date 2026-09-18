@@ -30,4 +30,18 @@ describe('live notification batching', () => {
     await Bun.sleep(35)
     expect(count).toBe(2)
   })
+
+  it('coalesces a delta-cadence burst at the default interval', async () => {
+    let count = 0
+    const notifier = new TrailingNotifier(() => { count += 1 })
+    // Deltas arrive about every 16ms; a timer at that cadence fires for nearly every one and
+    // each live notify rebuilds the transcript projection.
+    for (let index = 0; index < 6; index += 1) {
+      notifier.notify(false)
+      await Bun.sleep(16)
+    }
+    expect(count).toBeGreaterThan(0)
+    expect(count).toBeLessThanOrEqual(3)
+    notifier.cancel()
+  })
 })

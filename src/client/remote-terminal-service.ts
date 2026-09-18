@@ -1,28 +1,28 @@
 import type { WorkspaceClient } from '../web/client.ts'
 import { MAX_TERMINAL_WRITE_CHARS, type RemoteTerminalFrame, type RemoteTerminalSnapshot } from '../protocol/terminal.ts'
+import { DEFAULT_REMOTE_TERMINAL_APPEARANCE } from '../terminal/appearance-defaults.ts'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalServiceSnapshot, TerminalSessionId, TerminalSpawnRequest } from '../terminal/types.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 
-const DEFAULT_APPEARANCE: TerminalAppearance = { fontFamily: 'ui-monospace', nerdFontFamily: 'Symbols Nerd Font Mono', ligaturesEnabled: true, nerdFontEnabled: false, muteEmojiColors: true }
 const FG = { kind: 'default-fg' } as const
 const BG = { kind: 'default-bg' } as const
 const EMPTY_REMOTE: RemoteTerminalSnapshot = { sessions: [] }
 
-export class RemoteTerminalService {
+export class RemoteTerminalService implements TerminalService {
   readonly #client: WorkspaceClient
   readonly #listeners = new Set<() => void>()
   readonly #stateListeners = new Set<() => void>()
   readonly #frameListeners = new Set<(id: string) => void>()
   #remote: RemoteTerminalSnapshot = { sessions: [] }
-  #appearance = DEFAULT_APPEARANCE
+  #appearance = DEFAULT_REMOTE_TERMINAL_APPEARANCE
   #activeBottomId: string | undefined
   #activeRightId: string | undefined
   #generation = 0
   #snapshot: TerminalServiceSnapshot
   #stateSnapshot: TerminalServiceSnapshot
   readonly #grids = new WeakMap<RemoteTerminalFrame, TerminalGridSnapshot>()
-  #unsubscribeClient: () => void
-  #unsubscribeFrames: () => void
+  readonly #unsubscribeClient: () => void
+  readonly #unsubscribeFrames: () => void
   readonly #sizeOwners = new Map<string, TerminalPlacement>()
   readonly #sizes = new Map<string, string>()
   constructor(client: WorkspaceClient) {
@@ -43,6 +43,15 @@ export class RemoteTerminalService {
   readonly subscribeFrames = (listener: (id: string) => void) => { this.#frameListeners.add(listener); return () => { this.#frameListeners.delete(listener) } }
   readonly getSnapshot = (): TerminalServiceSnapshot => this.#snapshot
   readonly getStateSnapshot = (): TerminalServiceSnapshot => this.#stateSnapshot
+  /**
+   * Web companion counterpart of `TerminalSessionService.dispatch`. The host is a different process,
+   * so a failed terminal command is reported through the client's error channel instead of the
+   * desktop's local `lastError` state. Both implementations must provide it: the terminal surfaces
+   * call it on whichever service the platform supplies.
+   */
+  readonly dispatch = (task: Promise<unknown>): void => {
+    void task.catch((error: unknown) => { this.#client.reportError(error) })
+  }
 
   grid(id: TerminalSessionId | undefined): TerminalGridSnapshot | undefined {
     if (!id || !this.#remote.sessions.some((session) => session.id === id)) return undefined
@@ -56,7 +65,7 @@ export class RemoteTerminalService {
     return grid
   }
   setAppearance(patch: Partial<TerminalAppearance>): void { this.#appearance = { ...this.#appearance, ...patch }; this.#emitState() }
-  resetAppearance(): void { this.#appearance = DEFAULT_APPEARANCE; this.#emitState() }
+  resetAppearance(): void { this.#appearance = DEFAULT_REMOTE_TERMINAL_APPEARANCE; this.#emitState() }
   async spawn(request: TerminalSpawnRequest = {}): Promise<TerminalSessionId> {
     const value = await this.#client.send({
       type: 'openTerminal',
@@ -110,5 +119,4 @@ export class RemoteTerminalService {
     for (const listener of this.#listeners) listener()
   }
 }
-export function asTerminalSessionService(remote: RemoteTerminalService): TerminalSessionService { return remote as unknown as TerminalSessionService }
 function gridFromFrame(frame: RemoteTerminalFrame): TerminalGridSnapshot { const viewport = Array.from({ length: frame.rows }, (_, row) => { const text = frame.lines[row] ?? ''; const characters = Array.from(text).slice(0, frame.cols); const cells = Array.from({ length: frame.cols }, (_, column) => ({ ch: characters[column] ?? ' ', fg: FG, bg: BG, attrs: 0 })); return { text, cells } }); return { cols: frame.cols, rows: frame.rows, cursorX: frame.cursorX, cursorY: frame.cursorY, cursorVisible: frame.cursorVisible, applicationCursor: frame.applicationCursor, bracketedPaste: frame.bracketedPaste, title: frame.title, viewport, scrollback: 0, scrollOffset: 0 } }

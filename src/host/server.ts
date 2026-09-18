@@ -143,7 +143,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
   const unsubscribeTerminalState = options.terminals?.subscribeState(() => { if (closed || !options.terminals) return; const snapshot = serializeRemoteTerminal(options.terminals); for (const socket of sockets) if (socket.data.clientId) send(socket, { kind: 'terminal', snapshot }) })
   const unsubscribeTerminalFrames = options.terminals?.subscribeFrames((id) => {
     if (closed) return; dirtyTerminals.add(id); if (terminalTimer) return
-    terminalTimer = setTimeout(() => { terminalTimer = undefined; if (closed || !options.terminals) return; for (const terminalId of dirtyTerminals) { const frame = serializeRemoteTerminalFrame(options.terminals, terminalId); if (frame) for (const socket of sockets) if (socket.data.clientId) send(socket, { kind: 'terminalFrame', frame }) }; dirtyTerminals.clear() }, 33)
+    terminalTimer = setTimeout(() => { terminalTimer = undefined; if (closed || !options.terminals) return; for (const terminalId of dirtyTerminals) { const frame = serializeRemoteTerminalFrame(options.terminals, terminalId); if (frame) for (const socket of sockets) if (socket.data.clientId) send(socket, { kind: 'terminalFrame', frame }) } dirtyTerminals.clear() }, 33)
   })
   const port = server.port ?? options.port
   const displayHost = hostname === '0.0.0.0' || hostname === '::' ? '127.0.0.1' : hostname
@@ -151,7 +151,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     url: `http://${displayHost.includes(':') ? `[${displayHost}]` : displayHost}:${port}`,
     port, hostname, token: options.token, workspacePath: options.workspacePath,
     connectionCount: () => sockets.size,
-    async close() { if (closed) return; closed = true; unsubscribeController(); unsubscribeFlows(); unsubscribeTerminalState?.(); unsubscribeTerminalFrames?.(); if (terminalTimer) clearTimeout(terminalTimer); dirtyTerminals.clear(); for (const socket of sockets) { socket.data.sender?.dispose(); socket.close(1001, 'Host shutting down') }; sockets.clear(); await server.stop(true) },
+    async close() { if (closed) return; closed = true; unsubscribeController(); unsubscribeFlows(); unsubscribeTerminalState?.(); unsubscribeTerminalFrames?.(); if (terminalTimer) clearTimeout(terminalTimer); dirtyTerminals.clear(); for (const socket of sockets) { socket.data.sender?.dispose(); socket.close(1001, 'Host shutting down') } sockets.clear(); await server.stop(true) },
   }
 }
 
@@ -240,7 +240,6 @@ export class ServerMessageSendQueue {
   }
 
   get hasActiveMessage(): boolean { return this.#active !== undefined }
-  get queuedBytes(): number { return this.#queuedBytes }
 
   enqueue(message: ServerMessage): void {
     if (this.#disposed) return

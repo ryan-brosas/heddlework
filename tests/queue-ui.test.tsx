@@ -1,7 +1,7 @@
-import React, { useSyncExternalStore } from 'react'
-import { describe, expect, it } from 'bun:test'
+import { useSyncExternalStore } from 'react'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createQueueState } from '../src/workbench/queue.ts'
@@ -9,8 +9,7 @@ import { Composer } from '../src/ui/composer.tsx'
 import { QueueDock, queueDockReserveHeight } from '../src/ui/queue-dock.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
+import { describeNative } from './helpers/native-renderer.ts'
 
 describeNative('queue dock', () => {
   it('reveals the queue shortcut, queues with Alt+Enter, and resumes with empty Enter', async () => {

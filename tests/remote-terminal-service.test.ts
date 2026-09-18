@@ -105,6 +105,27 @@ it('keeps external-store snapshots stable and separates frames from state change
   expect(service.getStateSnapshot().sessions).toEqual([])
 })
 
+it('reports rejected dispatched actions through the client error channel', async () => {
+  const reported: unknown[] = []
+  const client = {
+    getSnapshot: () => ({}),
+    terminalFrame: () => undefined,
+    subscribe: () => () => {},
+    onTerminalFrame: () => () => {},
+    reportError: (error: unknown) => { reported.push(error) },
+  } as unknown as WorkspaceClient
+  const service = new RemoteTerminalService(client)
+  const failure = new Error('terminal action failed')
+  try {
+    service.dispatch(Promise.reject(failure))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(reported).toEqual([failure])
+  } finally {
+    await service.dispose()
+  }
+})
+
 it('opens distinct remote terminals rather than reusing the first PTY', async () => {
   const terminals = new TerminalSessionService({ cwd: '/workspace', backend: new MemoryTerminalBackend(), appearancePath: false })
   try {

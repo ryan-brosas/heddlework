@@ -1,12 +1,13 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { copyTextToClipboard } from './clipboard-media.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { FlowsView } from './flows-view.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
@@ -21,14 +22,16 @@ import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
+import { WindowMetricsProvider, windowInsetsPollInterval, windowSizePollInterval, type WindowMetrics } from './window-metrics.tsx'
 import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
-import type { TerminalSessionService } from '../terminal/service.ts'
+import type { TerminalService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
-import { BrowserServiceProvider } from './browser-context.tsx'
-import { BrowserNativeHost } from './browser-host.tsx'
-import { LinuxResizeHandles, LinuxWindowChrome, useNativeWindowChrome } from './linux-window-chrome.tsx'
+import { BrowserServiceProvider, ChromeBackendProvider } from './browser-context.tsx'
+import { BrowserHost } from './browser-host.tsx'
+import type { ChromeBrowserBackend } from '../browser/chrome-backend.ts'
+import { LINUX_CHROME_IDLE_POLL_MS, LINUX_CHROME_STREAMING_POLL_MS, LinuxResizeHandles, LinuxWindowChrome, useNativeWindowChrome } from './linux-window-chrome.tsx'
 import type { WindowControlRenderer } from './window-controls.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
@@ -49,15 +52,17 @@ export function WorkbenchApp({
   flows,
   terminals,
   browsers,
+  chrome,
   themeManager = defaultThemeManager,
   onQuit,
 }: {
-  controller: WorkbenchController
+  controller: WorkbenchService
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
-  terminals?: TerminalSessionService
+  terminals?: TerminalService
   browsers?: BrowserSessionService
+  chrome?: ChromeBrowserBackend | undefined
   themeManager?: ThemeManager
   onQuit?(): void
 }) {
@@ -66,9 +71,11 @@ export function WorkbenchApp({
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
   const windowControls = renderer as WindowControlRenderer
-  const nativeChrome = useNativeWindowChrome(windowControls)
-  const windowSize = useWindowSize({ intervalMs: 50 })
-  const windowInsets = useWindowInsets({ intervalMs: 50 })
+  const deferLinuxUiPolls = state.session.isStreaming || state.activity === 'Opening thread'
+  const nativeChrome = useNativeWindowChrome(windowControls, deferLinuxUiPolls ? LINUX_CHROME_STREAMING_POLL_MS : LINUX_CHROME_IDLE_POLL_MS)
+  const windowSize = useWindowSize({ intervalMs: windowSizePollInterval(deferLinuxUiPolls) })
+  const windowInsets = useWindowInsets({ intervalMs: windowInsetsPollInterval() })
+  const windowMetrics = useMemo<WindowMetrics>(() => ({ size: windowSize, insets: windowInsets }), [windowSize, windowInsets])
   const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
   const layout = resolveResponsiveLayout(safeWidth)
   const [surface, setSurface] = useState<Surface>('chat')
@@ -339,10 +346,12 @@ export function WorkbenchApp({
   return (
     <TerminalServiceProvider service={terminals}>
     <BrowserServiceProvider service={browsers}>
+    <ChromeBackendProvider backend={chrome}>
     <ResponsiveLayoutProvider layout={layout}>
+    <WindowMetricsProvider metrics={windowMetrics}>
       <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
         {nativeChrome.height > 0 && nativeChrome.state && (
-          <LinuxWindowChrome renderer={windowControls} state={nativeChrome.state} title={state.windowTitle} onQuit={onQuit} reducedMotion={typeof process !== 'undefined' && process.env.HEDDLEWORK_REDUCED_MOTION === '1'} />
+          <LinuxWindowChrome renderer={windowControls} state={nativeChrome.state} title={state.windowTitle} onQuit={onQuit} onRefresh={nativeChrome.refresh} reducedMotion={typeof process !== 'undefined' && process.env.HEDDLEWORK_REDUCED_MOTION === '1'} />
         )}
         <div
           testId="workbench-safe-area"
@@ -364,7 +373,7 @@ export function WorkbenchApp({
                     <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
                     <>
-                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId)} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
+                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId).catch(notifyFailure(controller, 'Could not navigate the thread'))} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
                       <TranscriptFade />
                       <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} />
                     </>
@@ -435,7 +444,7 @@ export function WorkbenchApp({
               onMouseUp={() => setBottomResizeDrag(undefined)}
             />
           )}
-          {browsers && <BrowserNativeHost service={browsers} suspended={Boolean(bottomResizeDrag)} />}
+          {browsers && <BrowserHost service={browsers} suspended={Boolean(bottomResizeDrag)} chrome={chrome} />}
           {!fullscreenVisible && (
             <MotionDiv
               initial={false}
@@ -452,7 +461,9 @@ export function WorkbenchApp({
         </div>
         {nativeChrome.height > 0 && nativeChrome.state && <LinuxResizeHandles state={nativeChrome.state} />}
       </div>
+    </WindowMetricsProvider>
     </ResponsiveLayoutProvider>
+    </ChromeBackendProvider>
     </BrowserServiceProvider>
     </TerminalServiceProvider>
   )

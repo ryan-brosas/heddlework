@@ -82,7 +82,7 @@ function viewportMetrics() {
   return { width, height, visibleHeight, keyboardTop, keyboardInset }
 }
 
-export function useWindowSize(_options?: { intervalMs?: number }): { width: number; height: number } {
+export function useWindowSize(_options?: { intervalMs?: number | false }): { width: number; height: number } {
   const read = () => { const value = viewportMetrics(); return { width: value.width, height: value.height } }
   const [size, setSize] = useState(read)
   useEffect(() => {
@@ -102,7 +102,7 @@ export function useWindowSize(_options?: { intervalMs?: number }): { width: numb
   return size
 }
 
-export function useWindowInsets(_options?: { intervalMs?: number }) {
+export function useWindowInsets(_options?: { intervalMs?: number | false }) {
   const [metrics, setMetrics] = useState(viewportMetrics)
   useEffect(() => {
     const update = () => setMetrics((current) => {
@@ -123,9 +123,6 @@ export function useWindowInsets(_options?: { intervalMs?: number }) {
   return { safeArea: zero, ime, effective: ime, keyboardTop: metrics.keyboardTop, keyboardVisible: metrics.keyboardInset > 80, visibleHeight: metrics.visibleHeight }
 }
 
-export function findRanges(): Array<[number, number]> { return [] }
-export function useTextSearch() { return { query: '', setQuery: () => undefined, matches: [], activeIndex: 0, next: () => undefined, previous: () => undefined } }
-
 const EVENT_PROPS = new Set(['onClick', 'onAuxClick', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'onMouseMove', 'onMouseDownOutside', 'onKeyDown', 'onKeyUp', 'onFocus', 'onBlur', 'onScroll', 'onChange', 'onSubmit', 'onToggleFile', 'onShowMore', 'onLineClick', 'onLinkClick', 'onVisibleRange', 'onHighlight', 'onBrowserState', 'onBrowserOpen', 'onBrowserError'])
 const HOST_ONLY = new Set(['style', 'testId', 'motion', 'highlight', 'autoFocus', 'tabIndex', 'children', 'ref', 'key', 'windowDragRegion', 'windowResizeEdge', ...EVENT_PROPS])
 
@@ -144,7 +141,7 @@ function useInstance(type: string, props: AnyProps, ref: React.ForwardedRef<unkn
 }
 
 // Outside-press dismissal mirrors gpuix: any mousedown whose target is not inside the element fires the handler.
-function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
+function useMouseDownOutside(id: number, nodeRef: React.RefObject<HTMLElement | null>, handler: ((event: EventPayload) => void) | undefined) {
   useEffect(() => {
     if (!handler) return undefined
     const listener = (event: MouseEvent) => {
@@ -157,7 +154,7 @@ function useMouseDownOutside(id: number, nodeRef: React.MutableRefObject<HTMLEle
   }, [handler, id, nodeRef])
 }
 
-function useMotion(nodeRef: React.MutableRefObject<HTMLElement | null>, motion: AnyProps | undefined) {
+function useMotion(nodeRef: React.RefObject<HTMLElement | null>, motion: AnyProps | undefined) {
   const first = useRef(true)
   const animate = motion?.animate as Record<string, number> | undefined
   const transition = motion?.transition as { duration?: number; delay?: number; ease?: unknown } | undefined
@@ -348,6 +345,7 @@ const Field = forwardRef<unknown, AnyProps & { multiline: boolean }>(function Fi
   const maxRows = Number(props.maxRows ?? (multiline ? 10 : 1))
   const onChange = props.onChange as ((event: EventPayload) => void) | undefined
   const onSubmit = props.onSubmit as ((event: EventPayload) => void) | undefined
+  const onPaste = props.onPaste as ((event: EventPayload) => void) | undefined
   const onKeyDown = props.onKeyDown as ((event: EventPayload) => void) | undefined
   const onKeyUp = props.onKeyUp as ((event: EventPayload) => void) | undefined
   const onFocus = props.onFocus as ((event: EventPayload) => void) | undefined
@@ -383,6 +381,9 @@ const Field = forwardRef<unknown, AnyProps & { multiline: boolean }>(function Fi
       if (event.key === 'Tab' && onKeyDown) event.preventDefault()
     },
     onKeyUp: (event: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => onKeyUp?.(keyPayload(id, 'keyUp', event)),
+    // The browser performs the paste itself, so the element reports it rather than replacing it: the app
+    // treats a native and a DOM paste event the same way.
+    onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => onPaste?.(plainPayload(id, 'paste', { value: event.clipboardData?.getData('text/plain') ?? '' })),
     onFocus: () => onFocus?.(plainPayload(id, 'focus')),
     onBlur: () => onBlur?.(plainPayload(id, 'blur')),
     onClick: (event: React.MouseEvent) => onClick?.(mousePayload(id, 'click', event)),
@@ -504,10 +505,6 @@ export const motion = { div: MotionDiv }
 export function handleGpuixEvent(): void {}
 export function createRoot(): never { throw new Error('createRoot is not available on the DOM host') }
 export function flushSync<T>(fn: () => T): T { return fn() }
-export function enableAutomation(): void {}
-export const MAC_CPU_THROTTLES = [] as const
-export function readMacCpuThrottle(): undefined { return undefined }
-export function applyMacCpuThrottleFromEnv(): void {}
 
 export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator, SelectTrigger, SelectValue } from '@gpuix/react/select'
 export { Combobox, ComboboxContent, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxLabel, ComboboxList, ComboboxSeparator, ComboboxTrigger, ComboboxValue } from '@gpuix/react/combobox'

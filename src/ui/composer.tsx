@@ -1,13 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuix } from '@gpuix/react'
 import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
+import { ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
+import { editorTextAfterImagePaste, readClipboardImage, readClipboardText } from './clipboard-media.ts'
+import { attachClipboardImage, draftBeforeNativePaste, hasSubmittableDraft, pasteTargetsSameSession, planPasteSubmit, resolveSubmittedText, sessionIdentity } from './clipboard-paste-text.ts'
+import { nativeClipboardEditing } from './clipboard-ownership.ts'
+import { resolveInsertKeyCommand } from './insert-key.ts'
+import { createPasteAction } from './paste-feedback.ts'
+import { notifyFailure } from './failure-notice.ts'
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
@@ -19,15 +24,45 @@ export { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeigh
 export const QUEUE_HINT_DURATION_MS = 1_700
 const PRIMARY_ACTION_SIZE = 34
 
-export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
+export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchService; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
+  /**
+   * The fallback paste's clipboard read. This path owns the whole gesture - the runtime does not bind the
+   * desktop clipboard keys - so a read that yields nothing is reported through the notice stream instead of
+   * looking like a dead key. The `Ctrl+V` half below only adds an image on top of the runtime's own text
+   * insertion, so it stays silent.
+   */
+  const pasteAction = useMemo(
+    () => createPasteAction({
+      read: readClipboardText,
+      onFailure: (failure) => { if (failure) controller.notify('error', failure) },
+    }),
+    [controller],
+  )
+  // Withdraw the action with the component, like every other registration the composer holds.
+  useEffect(() => () => pasteAction.dispose(), [pasteAction])
+  /** The paste the keystroke started, so a submit that arrives first cannot send the pre-paste draft. */
+  const pendingPaste = useRef<Promise<void> | null>(null)
+  /** Whether a submit already claimed that paste; the same paste must not be submitted twice. */
+  const pendingPasteClaimed = useRef(false)
+  /** The thread a session change is detected against, so paste bookkeeping does not outlive it. */
+  const sessionIdentityRef = useRef(sessionIdentity(state.session))
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const [queueHintVisible, setQueueHintVisible] = useState(false)
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queueHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const gpuix = useGpuix()
+  // A switch drops the paste bookkeeping: what a previous thread's clipboard read produced must not be
+  // submitted into the thread that is open now.
+  useEffect(() => {
+    const identity = sessionIdentity(state.session)
+    if (sessionIdentityRef.current === identity) return
+    sessionIdentityRef.current = identity
+    pendingPaste.current = null
+    pendingPasteClaimed.current = false
+  }, [state.session.sessionFile, state.session.sessionId])
   const composerId = useRef<number | undefined>(undefined)
   const setComposerNode = useCallback((instance: { id: number } | null) => {
     composerId.current = instance?.id
@@ -85,10 +120,16 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }))
   const thinkingOptions: SelectOption[] = state.thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))
   const currentModel = state.session.model ? modelKey(state.session.model) : ''
+  /**
+   * The thread the workbench is on right now. Read from the controller, not from React state or a ref: the
+   * switch publishes the new session synchronously, while the effect that tracks it runs after the next
+   * render, and an asynchronous clipboard read can resolve inside that window.
+   */
+  const currentSessionIdentity = (): string => sessionIdentity(controller.getSnapshot().session)
   const above = Object.values(state.widgets).filter((widget) => widget.placement === 'aboveEditor')
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
   const contextPercent = state.stats?.contextUsage?.percent
-  const hasComposerInput = Boolean(state.editorText.trim() || state.editorImages.length > 0)
+  const hasComposerInput = hasSubmittableDraft(state.editorText, state.editorImages)
   const canResumeQueue = !state.session.isStreaming && state.queue.paused && state.queue.items.length > 0 && !hasComposerInput
   const queueHintOpen = queueHintVisible && connected && !state.session.isStreaming
   const primaryActionWidth = queueHintOpen ? queueHintExpandedWidth() : PRIMARY_ACTION_SIZE
@@ -99,28 +140,125 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     setQueueHintVisible(false)
   }
 
-  const send = (value: string, queue = false) => {
+  /**
+   * Submit a draft decided in `startedIdentity`. The check runs at delivery because a submit that waited
+   * for a clipboard read can finish after the user clicked another thread.
+   */
+  const send = (value: string, queue = false, startedIdentity = currentSessionIdentity()) => {
+    if (!pasteTargetsSameSession(startedIdentity, currentSessionIdentity())) return
     clearQueueHint()
-    if (!value.trim() && state.editorImages.length === 0) {
+    // The attachments are read live: this closure can run after a paste attached an image to the draft.
+    if (!hasSubmittableDraft(value, controller.getSnapshot().editorImages)) {
       if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
       return
     }
-    void controller.submit(value, { queue })
+    void controller.submit(value, { queue }).catch(notifyFailure(controller, 'Could not send the message'))
   }
 
+  /**
+   * Attach a clipboard image when available, preserving text according to the native image-paste policy.
+   *
+   * The session guard lives in `attachClipboardImage` so both paste paths share it, and it re-reads the
+   * thread at the moment of the write.
+   */
+  const insertPastedImage = async (editorTextBeforePaste: string, startedIdentity: string): Promise<boolean> => {
+    const outcome = await attachClipboardImage({
+      startedIdentity,
+      currentIdentity: currentSessionIdentity,
+      readImage: readClipboardImage,
+      attachImage: (image) => controller.addEditorImage(image),
+    })
+    if (outcome !== 'attached') return false
+    const currentText = controller.getSnapshot().editorText
+    const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
+    if (restoredText !== currentText) controller.setEditorText(restoredText)
+    return true
+  }
+
+  /** Native `Ctrl+V`: the runtime inserts text at the caret itself, so only an image needs the app. */
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
+    const startedIdentity = currentSessionIdentity()
     setPastingImage(true)
     try {
-      const image = await readClipboardImage()
-      if (!image) return
-      controller.addEditorImage(image)
-      const currentText = controller.getSnapshot().editorText
-      const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
-      if (restoredText !== currentText) controller.setEditorText(restoredText)
+      await insertPastedImage(editorTextBeforePaste, startedIdentity)
     } finally {
       setPastingImage(false)
     }
+  }
+
+  /**
+   * Fallback paste for a runtime that does not bind the clipboard keys: `Shift+Insert` (what Omarchy's
+   * Hyprland bindings send for `Ctrl+V`) has to be handled here. This path owns the whole action - it takes
+   * an image when the clipboard holds one, otherwise it appends the text, matching a paste with the caret at
+   * the end - and it exists only for a runtime that predates the native binding.
+   */
+  const pasteClipboardIntoComposer = async () => {
+    if (pastingImage) return
+    const startedIdentity = currentSessionIdentity()
+    setPastingImage(true)
+    try {
+      const draft = controller.getSnapshot().editorText
+      if (await insertPastedImage(draft, startedIdentity)) {
+        keepComposerFocus()
+        return
+      }
+      const text = await pasteAction.paste()
+      // The action has reported a clipboard that yielded nothing, and a superseded attempt inserts
+      // nothing either: the newer paste owns both the insertion and the notice.
+      if (!text) return
+      if (!pasteTargetsSameSession(startedIdentity, currentSessionIdentity())) return
+      const current = controller.getSnapshot().editorText
+      controller.setEditorText(current ? current + text : text)
+      keepComposerFocus()
+    } finally {
+      setPastingImage(false)
+    }
+  }
+
+  /**
+   * The runtime's own paste already inserted its text at the caret, and this event is how the composer learns
+   * that happened - not the key, which never reaches a React handler once the native action owns it. The text
+   * is therefore already in the draft, and the half a text input cannot hold is the clipboard image, so that
+   * is all this adds, exactly once per paste. `contentBefore` is the runtime's own report of the draft that
+   * insertion replaced, which is what a pasted image path has to be compared against.
+   */
+  const handleComposerPaste = (event: { contentBefore?: unknown }) => {
+    if (!nativeClipboardEditing()) return
+    const before = draftBeforeNativePaste(event, controller.getSnapshot().editorText)
+    startPaste(() => pasteClipboardImage(before))
+  }
+
+  /** Track an in-flight paste; the submit path waits for it instead of racing the clipboard read. */
+  const startPaste = (work: () => Promise<void>): void => {
+    // An overlapping key joins the running read: replacing the marker here would clear it while the
+    // clipboard read is still in flight, and a submit in that window would send the pre-paste draft.
+    if (pendingPaste.current !== null) return
+    const started = work()
+    pendingPaste.current = started
+    pendingPasteClaimed.current = false
+    void started.catch(() => undefined).then(() => {
+      if (pendingPaste.current !== started) return
+      pendingPaste.current = null
+      pendingPasteClaimed.current = false
+    })
+  }
+
+  /** Submit the draft, waiting for a pending paste so the submitted text is what the paste produced. */
+  const submitDraft = (eventValue: string, queue = false): void => {
+    const startedIdentity = currentSessionIdentity()
+    const plan = planPasteSubmit({ pending: pendingPaste.current, claimed: pendingPasteClaimed.current, eventValue })
+    if (plan.action === 'ignore') return
+    if (plan.action === 'send') {
+      send(plan.text, queue, startedIdentity)
+      return
+    }
+    pendingPasteClaimed.current = true
+    void resolveSubmittedText({
+      pending: pendingPaste.current,
+      eventValue,
+      currentDraft: () => controller.getSnapshot().editorText,
+    }).then((text) => send(text, queue, startedIdentity))
   }
 
   const showQueueHint = () => {
@@ -151,7 +289,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     queueMicrotask(() => { commandPickedByKeyDown.current = false })
     return true
   }
-  const handleComposerKeyDown = (event: { key?: string; keyChar?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
+  const handleComposerKeyDown = (event: { key?: string; keyChar?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean; shift?: boolean } }) => {
     const key = event.key?.toLowerCase()
     const tab = key === 'tab' || event.keyChar === '\t'
     if (key === 'escape' && commandQuery !== undefined) {
@@ -179,10 +317,16 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       completeActiveSlashCommand()
       keepComposerFocus()
     }
-    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
+    // Fallback only. The pinned runtime binds `Ctrl+V`/`Cmd+V`/`Shift+Insert` itself, inserts at the caret and
+    // reports the insertion through `onPaste`; handling the key here as well would paste the same clipboard
+    // twice.
+    if (!nativeClipboardEditing()) {
+      if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) startPaste(() => pasteClipboardImage(state.editorText))
+      if (resolveInsertKeyCommand(event) === 'paste') startPaste(pasteClipboardIntoComposer)
+    }
     if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
-      send(state.editorText, true)
+      submitDraft(state.editorText, true)
       queueMicrotask(() => { queuedByKeyDown.current = false })
     }
   }
@@ -263,6 +407,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           onFocus={showQueueHint}
           onClick={() => { if (!hintShownOnce.current) showQueueHint() }}
           onKeyDown={handleComposerKeyDown}
+          onPaste={handleComposerPaste}
           onSubmit={(event) => {
             if (commandPickedByKeyDown.current) {
               commandPickedByKeyDown.current = false
@@ -272,7 +417,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               queuedByKeyDown.current = false
               return
             }
-            send(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
+            submitDraft(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
           }}
         />
         {matchingCommands.length > 0 && commandQuery ? (
@@ -302,7 +447,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => {
               const model = state.models.find((candidate) => modelKey(candidate) === value)
-              if (model) void controller.setModel(model)
+              if (model) void controller.setModel(model).catch(notifyFailure(controller, 'Could not switch model'))
             }}
           />
           {!layout.mobile && <ToolbarSeparator />}
@@ -316,7 +461,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             triggerMaxWidth={layout.mobile ? 68 : 130}
             {...(state.uiRequest?.kind === 'thinking' ? { openRequest: state.uiRequest.id } : {})}
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
-            onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel)}
+            onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel).catch(notifyFailure(controller, 'Could not change the thinking level'))}
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 4 : 9 }}>
@@ -327,8 +472,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               tabIndex={matchingCommands.length > 0 ? -1 : 0}
               queueHintVisible={queueHintOpen}
               width={primaryActionWidth}
-              onSend={() => send(state.editorText)}
-              onStop={() => void controller.abort()}
+              onSend={() => submitDraft(state.editorText)}
+              onStop={() => void controller.abort().catch(notifyFailure(controller, 'Could not stop the run'))}
             />
           </div>
         </div>

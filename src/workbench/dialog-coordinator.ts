@@ -3,8 +3,8 @@ import type { ExtensionUiRequest, RpcRecord } from '../pi/types.ts'
 import { errorMessage } from '../pi/types.ts'
 import {
   addNotice,
+  addStatusLine,
   type ExtensionDialog,
-  type ExtensionWidget,
   type WorkbenchState,
 } from './state.ts'
 import { currentTurnTracePosition } from './timeline.ts'
@@ -48,17 +48,20 @@ export class WorkbenchDialogCoordinator {
 
   handleExtensionUi(request: ExtensionUiRequest, sessionTransitioning: boolean): void {
     if (sessionTransitioning) {
-      if (isInteractiveRequest(request)) {
-        try {
-          this.#host.send({ type: 'extension_ui_response', id: request.id, cancelled: true })
-        } catch {
-          // The abandoned session no longer owns visible UI; switching remains authoritative.
-        }
-      }
+      // Hide incoming UI for the session we are leaving; do not cancel Pi.
+      // Cancelling the dialog aborts the background turn.
       return
     }
     if (request.method === 'notify') {
-      this.#host.setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification', currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
+      const kind = request.notifyType ?? 'info'
+      const message = request.message ?? 'Pi notification'
+      if (kind === 'info') {
+        // Pi routes `info` notifies to `showStatus`, a status line in the session chat, and keeps
+        // `warning`/`error` for the notification stack.
+        this.#host.setState((state) => addStatusLine(state, message))
+        return
+      }
+      this.#host.setState((state) => addNotice(state, kind, message, currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
       return
     }
     if (request.method === 'setStatus') {
@@ -75,12 +78,11 @@ export class WorkbenchDialogCoordinator {
       const key = request.widgetKey ?? request.id
       const widgets = { ...state.widgets }
       if (request.widgetLines) {
-        const widget: ExtensionWidget = {
+        widgets[key] = {
           key,
           lines: request.widgetLines,
           placement: request.widgetPlacement ?? 'aboveEditor',
         }
-        widgets[key] = widget
       } else {
         delete widgets[key]
       }
@@ -193,14 +195,30 @@ export class WorkbenchDialogCoordinator {
     }
   }
 
-  cancelAll(): void {
-    const state = this.#host.getState()
-    const pending = [state.dialog, ...state.dialogQueue]
+  /** Drop visible dialogs without telling Pi. Background harnesses keep waiting. */
+  hideVisible(): void {
+    const pending = [this.#host.getState().dialog, ...this.#host.getState().dialogQueue]
       .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
     this.#askUserDialogDriver = undefined
     this.#host.patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
     this.#clearDialogTimer()
-    for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
+    // A locally-driven dialog settles through its stored callback, so hiding it must answer it or the
+    // caller waits forever. Pi-originated dialogs stay unanswered on purpose: that is what keeps the
+    // background turn alive.
+    for (const dialog of pending) {
+      if (this.#localDialogResponses.has(dialog.id)) this.#sendDialogResponse(dialog.id, { cancelled: true })
+    }
+  }
+
+  cancelAll(): void {
+    const state = this.#host.getState()
+    const pending = [state.dialog, ...state.dialogQueue]
+      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
+    // Captured before hideVisible consumes the local callbacks: a locally-driven dialog is answered through
+    // its own callback, so sending it over the host as well would emit a response Pi never asked for.
+    const fromPi = pending.filter((dialog) => !this.#localDialogResponses.has(dialog.id))
+    this.hideVisible()
+    for (const dialog of fromPi) this.#sendDialogResponse(dialog.id, { cancelled: true })
   }
 
   dispose(): void {
@@ -282,10 +300,6 @@ export class WorkbenchDialogCoordinator {
     if (this.#dialogTimer) clearTimeout(this.#dialogTimer)
     this.#dialogTimer = undefined
   }
-}
-
-function isInteractiveRequest(request: ExtensionUiRequest): boolean {
-  return request.method === 'select' || request.method === 'confirm' || request.method === 'input' || request.method === 'editor'
 }
 
 function hasActiveConversation(state: WorkbenchState): boolean {

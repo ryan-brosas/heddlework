@@ -1,4 +1,3 @@
-import React from 'react'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { TerminalOutputBuffer, type TerminalBackend, type TerminalOutputMetadata, type TerminalProcess } from '../src/terminal/backend.ts'
 import type { TerminalProcessStatus, TerminalSpawnRequest } from '../src/terminal/types.ts'

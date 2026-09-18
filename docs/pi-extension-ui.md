@@ -8,7 +8,7 @@ Heddlework handles Pi's `select`, `confirm`, `input`, and `editor` requests in t
 
 Fire-and-forget extension surfaces are also native:
 
-- `notify` and `extension_error` enter the notification stack and ledger.
+- `notify` mirrors Pi core's `showExtensionNotify` routing exactly. `info` is Pi's `showStatus`: dim chat content appended after the turn it describes, carrying no chrome and no timestamp, never a card, banner, badge, or ledger row; Pi rewrites the previous line when statuses arrive back to back, so a turn keeps its latest readout. `warning` and `error` enter the notification stack and ledger, as does `extension_error`. A status that arrives before the transcript loads, as pi-tps restores on resume, is placed at the transcript tail. Status lines reset with the session. The durable TPS readout stays where Pi core put it — the session's own `tps` custom entry.
 - String `setWidget` content and ANSI-safe `setStatus` entries share a horizontally scrollable rail above the composer. Above-editor widgets enter first, followed by below-editor widgets and then status chips; new items use that same order for staggered motion.
 - `setTitle` updates the window title.
 - `setEditorText` updates the draft.

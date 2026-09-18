@@ -12,6 +12,7 @@ import {
   type TerminalCell,
   type TerminalColor,
 } from '../terminal/types.ts'
+import { DEFAULT_TERMINAL_APPEARANCE } from '../terminal/appearance-defaults.ts'
 import type { ResolvedTheme } from './theme.ts'
 import {
   blendLinear,
@@ -30,13 +31,6 @@ const LIGHT_ANSI = [
   '#6F7077', '#E5484D', '#2F9A6A', '#C69026', '#3B82C4', '#9A5FBF', '#1A9B8C', '#FFFFFF',
 ]
 
-const DEFAULT_RENDER_OPTIONS: TerminalAppearance = {
-  fontFamily: 'Menlo',
-  nerdFontFamily: 'Symbols Nerd Font Mono',
-  ligaturesEnabled: true,
-  nerdFontEnabled: false,
-  muteEmojiColors: true,
-}
 const ZERO_WIDTH_NON_JOINER = '\u200C'
 const TEXT_PRESENTATION_SELECTOR = '\uFE0E'
 const COLOR_PRESENTATION_SELECTOR = '\uFE0F'
@@ -161,7 +155,7 @@ export function paintTerminalCell(cell: TerminalCell, theme: TerminalPaintTheme)
 export function terminalRowRuns(
   cells: readonly TerminalCell[],
   theme: TerminalPaintTheme,
-  options: TerminalAppearance = DEFAULT_RENDER_OPTIONS,
+  options: TerminalAppearance = DEFAULT_TERMINAL_APPEARANCE,
 ): TerminalRunStyle[] {
   const runs: TerminalRunStyle[] = []
   let previousWide = false

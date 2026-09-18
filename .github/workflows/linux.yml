@@ -1,9 +1,8 @@
 name: linux
 
+# Compositor checks are opt-in, not automatic PR or main-branch checks.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,7 +41,7 @@ jobs:
             libfontconfig-dev libgl1-mesa-dri libssl-dev libvulkan1 \
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev \
             mesa-vulkan-drivers mutter pkg-config sway vulkan-tools wayland-protocols \
-            weston x11-utils xdotool xvfb
+            weston wl-clipboard x11-utils xclip xdotool xvfb
       - run: bun install --frozen-lockfile
       - name: Build pinned Heddlework GPUix runtime
         run: bun scripts/install-gpuix.ts

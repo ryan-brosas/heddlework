@@ -1,4 +1,12 @@
-export const LIVE_NOTIFY_INTERVAL_MS = 16
+/**
+ * Trailing delay for the high-frequency live fields (`liveAssistant`, `liveTools`, `activity`).
+ *
+ * It has to exceed the delta cadence to batch more than one delta: at the observed ~16ms
+ * cadence a 16ms timer fired for almost every delta, and each live notify rebuilds the
+ * transcript projection in `src/ui/transcript.tsx`. Terminal state (`messages`, session
+ * boundaries) bypasses this timer and flushes immediately.
+ */
+export const LIVE_NOTIFY_INTERVAL_MS = 48
 export const LIVE_STATE_KEYS = new Set(['liveAssistant', 'liveTools', 'activity'])
 
 export function liveFieldsOnlyChanged(

@@ -1,15 +1,14 @@
-import React from 'react'
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
 import { WorkbenchSidebar } from '../src/ui/sidebar.tsx'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createInitialState } from '../src/workbench/state.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const now = Date.now()
 const sessions = Array.from({ length: 40 }, (_, index): PiSessionSummary => ({
   id: `session-${index}`,

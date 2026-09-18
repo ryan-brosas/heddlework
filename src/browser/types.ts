@@ -1,6 +1,6 @@
 export type BrowserProfileKind = 'workspace' | 'personal' | 'private'
 export type BrowserAgentAccess = 'allowed' | 'prompt' | 'denied'
-export type BrowserEngineKind = 'cef' | 'system' | 'remote' | 'unavailable'
+export type BrowserEngineKind = 'cef' | 'chrome' | 'system' | 'remote' | 'unavailable'
 export type BrowserLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export interface BrowserProfile {
@@ -45,6 +45,17 @@ export interface BrowserCommand {
   serial: number
   kind: BrowserCommandKind
   value?: string | undefined
+}
+
+/**
+ * One CDP input call, in dispatch order.
+ *
+ * The planner decides what a gesture means and the backend sends it, so the call shape belongs to the
+ * contract they share rather than to either implementation.
+ */
+export interface ChromeInputCall {
+  readonly method: string
+  readonly params: Record<string, unknown>
 }
 
 export interface BrowserNativeState {

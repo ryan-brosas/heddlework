@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import { useEffect, useMemo, useState } from 'react'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import { queueItemsInDeliveryOrder, queueSize, queuedInputControl, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
+import { notifyFailure } from './failure-notice.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -30,7 +31,7 @@ export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
   return queueSize(queue) > 0 ? COLLAPSED_HEIGHT + 8 : 0
 }
 
-export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
   const { compact } = useResponsiveLayout()
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)
@@ -163,7 +164,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
                 </MotionDiv>
               )}
               {row.item && state.session.isStreaming && !control && (
-                <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id) } : {})}>
+                <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id).catch(notifyFailure(controller, 'Could not steer the queued message')) } : {})}>
                   <Icon name="arrowUp" size={12} color="#7EA2FF" />
                 </MotionDiv>
               )}
@@ -182,7 +183,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text {...(state.queue.blockingActivity ? { testId: 'queue-blocking-note' } : {})} style={{ minWidth: 0, flexGrow: 1, color: state.queue.blockingActivity ? colors.warning : colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{state.queue.blockingNote ?? first.text ?? 'Image attachment'}</text>
-        <div testId="queue-peer-gate" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, paddingLeft: compact ? 6 : 8, paddingRight: compact ? 6 : 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer', flexShrink: 0 }} onClick={() => void controller.queueFabricPeerGate()} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') void controller.queueFabricPeerGate() }}>
+        <div testId="queue-peer-gate" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, paddingLeft: compact ? 6 : 8, paddingRight: compact ? 6 : 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer', flexShrink: 0 }} onClick={() => void controller.queueFabricPeerGate().catch(notifyFailure(controller, 'Could not start the Fabric peer gate'))} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') void controller.queueFabricPeerGate().catch(notifyFailure(controller, 'Could not start the Fabric peer gate')) }}>
           <Icon name="gitBranch" size={11} color={colors.textMuted} />
           {!compact && <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Wait peer</text>}
         </div>
@@ -193,12 +194,12 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
           </div>
         )}
         {drainable && (
-          <div testId="queue-drain" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.drainQueueMessages()}>
+          <div testId="queue-drain" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.drainQueueMessages().catch(notifyFailure(controller, 'Could not drain the queue'))}>
             <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Drain</text>
           </div>
         )}
         {state.session.isStreaming && (
-          <div testId="queue-pause" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.pause()}>
+          <div testId="queue-pause" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.pause().catch(notifyFailure(controller, 'Could not pause'))}>
             <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Pause</text>
           </div>
         )}

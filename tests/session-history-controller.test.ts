@@ -6,6 +6,7 @@ import { PiSessionCatalog, type PiSessionSummary } from '../src/pi/session-catal
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { buildTimeline } from '../src/workbench/timeline.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 const fixtures: string[] = []
@@ -101,11 +102,33 @@ describe('controller-backed persisted history', () => {
       expect(controller.getSnapshot().messages[0]?.content).toBe('user 20')
       expect(controller.getSnapshot()).toMatchObject({ messagesHasOlder: true, messagesLoadingEarlier: false })
 
+      // Anchors captured in the loaded window: pi-tps reports a turn's readout and an extension
+      // warning carries a trace position, both numbered in the currently loaded messages.
+      controller.acceptAgentEvent({ type: 'extension_ui_request', id: 'tps-live', method: 'notify', message: 'TPS 25.6 tok/s', notifyType: 'info' })
+      controller.acceptAgentEvent({ type: 'extension_ui_request', id: 'warn-live', method: 'notify', message: 'Disk almost full', notifyType: 'warning' })
+      const beforePaging = controller.getSnapshot()
+      const statusTurn = beforePaging.statusLines[0]?.turn
+      const noticeTurn = beforePaging.notices.at(-1)?.transcriptTurn
+      expect(statusTurn).toBe(39)
+      expect(noticeTurn).toBe(39)
+
       await controller.loadEarlierMessages()
 
-      expect(controller.getSnapshot().messages).toHaveLength(100)
-      expect(controller.getSnapshot().messages[0]?.content).toBe('user 0')
-      expect(controller.getSnapshot()).toMatchObject({ messagesHasOlder: false, messagesLoadingEarlier: false })
+      const afterPaging = controller.getSnapshot()
+      expect(afterPaging.messages).toHaveLength(100)
+      expect(afterPaging.messages[0]?.content).toBe('user 0')
+      expect(afterPaging).toMatchObject({ messagesHasOlder: false, messagesLoadingEarlier: false })
+      const prependedTurns = afterPaging.messages.filter((message) => message.role === 'user').length
+        - beforePaging.messages.filter((message) => message.role === 'user').length
+      expect(prependedTurns).toBe(10)
+      // The anchors followed their own turns instead of pointing at an older one.
+      expect(afterPaging.statusLines[0]?.turn).toBe(statusTurn! + prependedTurns)
+      expect(afterPaging.notices.at(-1)?.transcriptTurn).toBe(noticeTurn! + prependedTurns)
+      const items = buildTimeline(afterPaging.messages, undefined, [], [], 0, afterPaging.notices, afterPaging.statusLines)
+      const statusIndex = items.findIndex((item) => item.kind === 'status' && item.text === 'TPS 25.6 tok/s')
+      expect(statusIndex).toBeGreaterThan(-1)
+      const beforeStatus = items.slice(0, statusIndex).filter((item) => item.kind === 'user' || item.kind === 'assistant')
+      expect(beforeStatus.at(-1)).toMatchObject({ kind: 'assistant', text: 'assistant 99' })
     } finally {
       await controller.dispose()
     }

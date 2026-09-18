@@ -1,10 +1,9 @@
-import React from 'react'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { createComposerImage } from '../src/ui/clipboard-media.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
@@ -14,6 +13,7 @@ import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { colors, lightColors, nativeTheme } from '../src/ui/theme.ts'
 import { ThemeManager } from '../src/ui/theme-manager.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+import { describeNative } from './helpers/native-renderer.ts'
 
 const controllers: WorkbenchController[] = []
 const workspaces: string[] = []
@@ -21,8 +21,6 @@ afterEach(async () => {
   await Promise.all(controllers.splice(0).map((controller) => controller.dispose()))
   for (const workspace of workspaces.splice(0)) rmSync(workspace, { recursive: true, force: true })
 })
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 function waitForSettled(controller: WorkbenchController): Promise<void> {
   if (isFullySettled(controller)) return Promise.resolve()
@@ -498,14 +496,16 @@ describeNative('WorkbenchApp', () => {
     root.renderer.flush()
     const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
     expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
-    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor ?? colors.transparent).toBe(colors.transparent)
+    const sessionStatus = await automation.getByTestId('sidebar-session-status').bounds()
+    expect(sessionStatus.y).toBeGreaterThan(sessionCardBeforeHover.y + sessionCardBeforeHover.height / 2)
+    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor).toBe(colors.sidebarActive)
     expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.textFaint)
     const settleBounds = await automation.getByTestId('sidebar-settle').bounds()
     await automation.call('mouseMove', { x: settleBounds.x + settleBounds.width / 2, y: settleBounds.y + settleBounds.height / 2 })
     await Bun.sleep(30)
     root.renderer.flush()
     expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.text)
-    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor ?? colors.transparent).toBe(colors.transparent)
+    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor).toBe(colors.sidebarActive)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-thread-hover.png')
       root.renderer.captureScreenshot(screenshot)

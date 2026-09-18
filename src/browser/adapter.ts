@@ -2,7 +2,6 @@ import type {
   BrowserAgentAccess,
   BrowserEngineKind,
   BrowserNativeState,
-  BrowserRuntimeProfile,
   BrowserSurfaceBounds,
 } from './types.ts'
 
@@ -28,11 +27,6 @@ export interface BrowserSurfaceSession {
   dispose(): void
 }
 
-export interface BrowserSurfaceAdapter {
-  readonly engine: BrowserEngineKind
-  open(profile: BrowserRuntimeProfile, events: BrowserSurfaceEvents): Promise<BrowserSurfaceSession>
-}
-
 export interface BrowserAutomationGrant {
   profileId: string
   access: BrowserAgentAccess
@@ -44,6 +38,14 @@ export interface BrowserAutomationAdapter {
   navigate(tabId: string, url: string, grant: BrowserAutomationGrant): Promise<void>
   evaluate<T>(tabId: string, expression: string, grant: BrowserAutomationGrant): Promise<T>
   screenshot(tabId: string, grant: BrowserAutomationGrant): Promise<Uint8Array>
+}
+
+export function roundToHalf(value: number): number {
+  return Number.isFinite(value) ? Math.round(value * 2) / 2 : 0
+}
+
+export function boundsEqual(a: BrowserSurfaceBounds, b: BrowserSurfaceBounds): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 export function mayAutomateBrowser(grant: BrowserAutomationGrant, now = Date.now()): boolean {

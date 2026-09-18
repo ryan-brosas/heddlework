@@ -93,7 +93,15 @@ umask 077
   shell_quote "$launch_path"
   printf '\nexport HEDDLEWORK_PI='
   shell_quote "$pi_executable"
-  printf "\ncd \"\${HEDDLEWORK_WORKSPACE:-\$HOME}\"\nexec "
+  printf '\nstate="${XDG_STATE_HOME:-$HOME/.local/state}/heddlework/workspace"\n'
+  printf 'workspace=$HOME\n'
+  printf 'if [ -n "${HEDDLEWORK_WORKSPACE:-}" ]; then\n'
+  printf '  workspace=$HEDDLEWORK_WORKSPACE\n'
+  printf 'elif [ -f "$state" ]; then\n'
+  printf '  line=$(head -n 1 "$state")\n'
+  printf '  if [ -d "$line" ]; then workspace=$line; fi\n'
+  printf 'fi\n'
+  printf 'cd "$workspace"\nexec '
   shell_quote "$installed_binary"
   printf ' "$@"\n'
 } > "$launcher"

@@ -1,13 +1,12 @@
 import React from 'react'
 import { beforeAll, describe, expect, it } from 'bun:test'
-import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { createTestRoot } from '@gpuix/react/testing'
 import { attachMathPunctuation, buildMathRows, MathMarkdown, parseInlineMarkdown, parseInlineWithMath } from '../src/ui/math-markdown.tsx'
 import { loadFormulaRenderer } from '../src/ui/math-engine.ts'
 import { segmentMathMarkdown } from '../src/ui/math-segment.ts'
 import { Transcript } from '../src/ui/transcript.tsx'
 import { createInitialState } from '../src/workbench/state.ts'
-
-const describeNative = hasNativeTestRenderer ? describe : describe.skip
+import { describeNative } from './helpers/native-renderer.ts'
 
 beforeAll(async () => {
   await loadFormulaRenderer()

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import {
   cycleSessionTreeFilterMode,
@@ -8,7 +8,7 @@ import {
   type PiSessionTreeFilterMode,
   type PiSessionTreeRow,
 } from '../pi/session-tree.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchService } from '../workbench/controller.ts'
 import {
   questionnaireFromTool,
   questionnaireMatchesDialog,
@@ -20,7 +20,7 @@ import type { ExtensionDialog, WorkbenchState } from '../workbench/state.ts'
 import { Button, NativeVirtualList, useNativeVirtualWindow, type NativeElementHandle } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle, type ParsedExtensionOption } from './extension-ui.ts'
-import { openExternal } from './open-external.ts'
+import { useExternalLink } from './external-launch.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
 interface ExtensionDialogResponse {
@@ -36,7 +36,7 @@ interface AnswerDraft {
   custom: string
 }
 
-export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchService }) {
   const { mobile } = useResponsiveLayout()
   const questionnaire = useMemo(() => {
     const candidates = state.liveTools.flatMap((tool) => {
@@ -83,7 +83,7 @@ function GenericDialogSurface({ dialog, queued, onRespond }: { dialog: Extension
   )
 }
 
-function QuestionnaireOverlay({ questionnaire, submitting, controller }: { questionnaire: AskUserQuestionnaire; submitting: boolean; controller: WorkbenchController }) {
+function QuestionnaireOverlay({ questionnaire, submitting, controller }: { questionnaire: AskUserQuestionnaire; submitting: boolean; controller: WorkbenchService }) {
   const { mobile } = useResponsiveLayout()
   const [currentTab, setCurrentTab] = useState(0)
   const [drafts, setDrafts] = useState<AnswerDraft[]>(() => questionnaire.questions.map((question) => ({
@@ -162,6 +162,7 @@ function QuestionTabs({ questionnaire, currentTab, drafts, onChange }: { questio
 
 function QuestionPage({ question, index, draft, onChange }: { question: AskUserQuestion; index: number; draft: AnswerDraft; onChange(update: (draft: AnswerDraft) => AnswerDraft): void }) {
   const { mobile } = useResponsiveLayout()
+  const link = useExternalLink()
   const hasPreviews = !question.multiSelect && question.options.some((option) => option.preview)
   const previewIndex = draft.kind === 'option' ? draft.optionIndex : question.options.findIndex((option) => option.preview)
   const preview = previewIndex === undefined || previewIndex < 0 ? undefined : question.options[previewIndex]?.preview
@@ -206,8 +207,9 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
         <div testId="ask-user-preview" style={{ minWidth: 0, minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: mobile ? 14 : 20, backgroundColor: colors.card, overflow: 'scroll' }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>PREVIEW</text>
           {preview
-            ? <markdown source={preview} theme={questionnaireMarkdownTheme()} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
+            ? <markdown source={preview} theme={questionnaireMarkdownTheme()} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => link.launch(String(event.value ?? ''))} />
             : <text style={{ color: colors.textFaint, fontSize: 11 }}>This option has no preview.</text>}
+          {link.failure && <text testId="external-link-failure" style={{ color: colors.error, fontSize: 9 }}>{link.failure}</text>}
         </div>
       )}
     </div>

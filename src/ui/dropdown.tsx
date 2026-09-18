@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, type ComponentProps } from 'react'
+import { useCallback, useEffect, useState, type ComponentProps } from 'react'
 import { MotionDiv } from './motion.ts'
 import { colors } from './theme.ts'
 

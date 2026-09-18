@@ -1,5 +1,5 @@
 import { hasNativeTrafficLights } from './window-chrome.ts'
-import React, { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import { Icon, type IconName } from './icons.tsx'
 import { IconButton } from './primitives.tsx'
