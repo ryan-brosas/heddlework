@@ -185,6 +185,9 @@ export class ChromeBrowserBackend {
         // a lingering entry answers later commands for a session that never opened, and its browser
         // context would never reach zero tabs and so never be released.
         this.#sessions.delete(request.tabId)
+        // The target exists already, and a persistent tab has no context to dispose, so it has to be
+        // closed here or every retry would leave an unmanaged page alive until Chrome exits.
+        await chrome.cdp.send('Target.closeTarget', { targetId }).catch(() => undefined)
         if (contextId) await this.#releaseContext(chrome, contextId).catch(() => undefined)
         throw error
       }

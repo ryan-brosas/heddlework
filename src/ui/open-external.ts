@@ -241,4 +241,3 @@ export async function runPickerCommand(
   if (result.exitCode === 0 && selected) return { kind: 'selected', path: resolve(selected) }
   return classifyPickerExit(result.exitCode)
 }
-
