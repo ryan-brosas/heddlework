@@ -47,6 +47,30 @@ describe('sidebar session hit target', () => {
     expect(sidebar).toContain('backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebar')
     expect(sidebar).toContain('testId="sidebar-settled-toggle"')
     expect(sidebar).toMatch(/sidebar-settled-toggle[\s\S]{0,400}backgroundColor: colors\.sidebar/)
+    // Keyboard contract, the rule the review's nesting finding settled: the row answers Enter and
+    // Space, and its controls stay pointer-only. GPUIX delivers an unconsumed key to the focused
+    // element and then to focusable ancestors, so a key handler on a nested control would fire
+    // alongside the row's and one press would invoke two actions.
+    expect(row).toContain('onKeyDown: activateOnKey(onClick)')
+    // Bound each control at its own closing tag: its attributes and children are what the contract
+    // covers. Slicing to the next testId would run into the following row branch and read that row's
+    // handler as the control's, and a fixed width cannot span the long style strings.
+    const elementOf = (source: string, id: string) => {
+      const start = source.indexOf('testId="' + id + '"')
+      expect(start).toBeGreaterThan(-1)
+      const close = source.indexOf('</div>', start)
+      return source.slice(start, close === -1 ? start + 1_200 : close)
+    }
+    for (const control of ['sidebar-wake', 'sidebar-snooze', 'sidebar-settle']) {
+      const segment = elementOf(row, control)
+      expect(segment).toContain('tabIndex={disabled ? -1 : 0}')
+      expect(segment).toContain('disabled ? {} : {')
+      expect(segment).not.toContain('onKeyDown')
+    }
+    // The sidebar's own focusable entries must answer the keyboard too, or a tab stop is inert.
+    for (const entry of ['sidebar-flows', 'sidebar-settled-toggle']) {
+      expect(elementOf(sidebar, entry)).toContain('onKeyDown')
+    }
     // The folder-filter contract lives in tests/sidebar-project-scope.test.ts.
   })
 })
