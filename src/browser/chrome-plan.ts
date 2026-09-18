@@ -183,6 +183,12 @@ function virtualKeyForPrintable(value: string | undefined): number {
   return 0
 }
 
+/** Insert desktop clipboard text; headless Chrome cannot read the desktop clipboard itself. */
+export function planChromePaste(text: string): { method: 'Input.insertText'; params: { text: string } } | undefined {
+  return text ? { method: 'Input.insertText', params: { text } } : undefined
+}
+
+/** Where the page is drawn on screen, in the coordinates its input expects. */
 export interface ChromeBounds {
   readonly x: number
   readonly y: number

@@ -4,6 +4,7 @@ import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, Termi
 import { dispatchTerminalKey, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalService } from '../terminal/service.ts'
 import { copyTextToClipboard, readClipboardText } from './clipboard-media.ts'
+import { createPasteAction } from './paste-feedback.ts'
 import { createTerminalCopyAction, type TerminalCopy } from './terminal-copy-feedback.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
@@ -69,10 +70,23 @@ export const TerminalView = memo(function TerminalView({
     () => createTerminalCopyAction({ writer: copy, onFailure: setCopyFailure }),
     [copy, sessionId],
   )
+  // Paste failure feedback beside the copy one: this view performs the paste itself, so a clipboard
+  // that yielded no text would otherwise look like a key that did nothing.
+  const [pasteFailure, setPasteFailure] = useState<string | undefined>(undefined)
+  const pasteAction = useMemo(
+    () => createPasteAction({ read: readPaste, onFailure: setPasteFailure }),
+    [readPaste, sessionId],
+  )
+
   useEffect(() => {
     setCopyFailure(undefined)
     return () => copyAction.dispose()
   }, [copyAction])
+
+  useEffect(() => {
+    setPasteFailure(undefined)
+    return () => pasteAction.dispose()
+  }, [pasteAction])
 
   useEffect(() => {
     if (projectionSuspended || !sessionId || !sessionReady) return
@@ -104,9 +118,9 @@ export const TerminalView = memo(function TerminalView({
       grid: service.grid(sessionId),
       write: (data) => service.write(sessionId, data),
       copy: copyAction.copy,
-      readPaste,
+      readPaste: pasteAction.paste, // the action reports a clipboard that yielded nothing
     })
-  }, [copyAction, readPaste, service, sessionId])
+  }, [copyAction, pasteAction, service, sessionId])
 
   const onScroll = useCallback((event: { deltaY?: number }) => {
     if (!sessionId) return
@@ -173,6 +187,21 @@ export const TerminalView = memo(function TerminalView({
         onKeyDown={onKeyDown}
         onScroll={onScroll}
       />
+      {pasteFailure ? (
+        <text
+          testId={'terminal-paste-failure-' + placement}
+          style={{
+            position: 'absolute',
+            left: TERMINAL_PADDING_X,
+            bottom: TERMINAL_PADDING_Y + 14,
+            color: colors.diffDel,
+            fontSize: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          {pasteFailure}
+        </text>
+      ) : null}
       {copyFailure ? (
         <text
           testId={'terminal-copy-failure-' + placement}

@@ -9,6 +9,7 @@ import {
   planChromeCommand,
   planChromeEvent,
   planChromeKey,
+  planChromePaste,
   planChromePointer,
   planChromeWindowOpen,
   planOrphanPopupTargets,
@@ -228,5 +229,13 @@ describe('chrome event planning', () => {
     expect(historyTarget({ currentIndex: 2, entries: history.entries }, 1)).toBeUndefined()
     expect(historyTarget({ entries: history.entries }, 1)).toBeUndefined()
     expect(historyTarget({ currentIndex: 0, entries: 'nope' }, 1)).toBeUndefined()
+  })
+
+  it('maps pasted text to one insert call and empty text to nothing', () => {
+    // The page cannot paste for itself here: Chrome's headless clipboard is not the desktop one, so the
+    // host reads the desktop clipboard and this maps its text onto the insertion the page receives.
+    expect(planChromePaste('pasted')).toEqual({ method: 'Input.insertText', params: { text: 'pasted' } })
+    expect(planChromePaste('line one\nline two')).toEqual({ method: 'Input.insertText', params: { text: 'line one\nline two' } })
+    expect(planChromePaste('')).toBeUndefined()
   })
 })

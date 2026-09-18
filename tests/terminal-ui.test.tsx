@@ -7,6 +7,7 @@ import { TerminalSessionService } from '../src/terminal/service.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { TerminalView } from '../src/ui/terminal-view.tsx'
 import { TERMINAL_COPY_FAILED_MESSAGE } from '../src/ui/terminal-copy-feedback.ts'
+import { PASTE_FAILED_MESSAGE } from '../src/ui/paste-feedback.ts'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
@@ -144,6 +145,42 @@ describeNative('terminal panels', () => {
       await Bun.sleep(1)
       root.renderer.flush()
       expect(root.renderer.getPaintedText().some((text) => text.includes(TERMINAL_COPY_FAILED_MESSAGE))).toBe(false)
+    } finally {
+      root.unmount()
+    }
+  })
+
+  it('shows the paste failure label when the clipboard reads nothing and clears it on a successful read', async () => {
+    const terminals = new TerminalSessionService({ cwd: '/tmp/heddlework-terminal-ui', backend: new MemoryTerminalBackend() })
+    services.push(terminals)
+    const sessionId = await terminals.spawn({ cols: 80, rows: 24 })
+    let clipboard: string | undefined
+    const root = createTestRoot({ width: 800, height: 420 })
+    try {
+      root.render(
+        <TerminalView
+          service={terminals}
+          sessionId={sessionId}
+          placement="bottom"
+          width={800}
+          height={420}
+          appearance="dark"
+          readPaste={() => Promise.resolve(clipboard)}
+        />,
+      )
+      root.renderer.flush()
+      root.renderer.simulateKeystrokes('ctrl+v')
+      await Bun.sleep(1)
+      root.renderer.flush()
+      // The view performs the paste itself, so a clipboard that yielded no text has to say so
+      // instead of looking like a key that did nothing.
+      expect(root.renderer.getPaintedText().some((text) => text.includes(PASTE_FAILED_MESSAGE))).toBe(true)
+
+      clipboard = 'hello from the clipboard'
+      root.renderer.simulateKeystrokes('ctrl+v')
+      await Bun.sleep(1)
+      root.renderer.flush()
+      expect(root.renderer.getPaintedText().some((text) => text.includes(PASTE_FAILED_MESSAGE))).toBe(false)
     } finally {
       root.unmount()
     }
