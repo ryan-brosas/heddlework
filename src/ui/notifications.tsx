@@ -225,4 +225,3 @@ function noticeColor(kind: NoticeKind): string {
   if (kind === 'warning') return colors.warning
   return colors.success
 }
-

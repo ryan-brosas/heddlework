@@ -1090,4 +1090,3 @@ function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | 
   }
   return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
 }
-
