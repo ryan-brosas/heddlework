@@ -60,6 +60,8 @@ for (p in listOf(/* files */)) {
 | `DuplicatedCode` short windows in `scripts/cef-artifacts.ts` | No deterministic 8-line/120-char duplicate exists there (see `heddlework-dup-scan`), and the counterpart location is not reported. |
 | `JSUnreachableSwitchBranches` on every `case` of `Block` in `src/dom/rich.tsx` | The tool ran while the TS-Go proxy crashed on the same function ("Failed to find RemoteNode parent ... parent kind: 263" at the `function` keyword). `BlockNode` (`src/web/markdown-blocks.ts`) declares all six kinds, `tsc --noEmit` is clean, and the web DOM probe renders and clicks `case 'code'` at runtime — execution disproves the claim. |
 | `JSVoidFunctionReturnValueUsed` on `src/web/main.tsx:22` | The anchor is `const root = document.getElementById('root')`; `getElementById` returns `HTMLElement \| null`, never `void`, and `tsc --noEmit -p src/web` is clean. The same run crashed the proxy on this file while reporting a stale 24-line snapshot, so the finding is line-mapped onto the wrong statement. |
+| `HtmlRequiredAltAttribute` on `<img testId="chrome-browser-frame">` (`src/ui/browser-chrome-surface.tsx`) | The element is a GPUix intrinsic, not a DOM `<img>`: `src/dom/host.tsx` maps it and the native element draws a streamed frame. It has no textual alternate to describe, and the only place an `alt` reaches a real browser is the DOM host's own `<img>` branch. |
+| `UnnecessaryLocalVariableJS` on the CDP payload builders in `src/browser/chrome-plan.ts` | The local carries an explicit `Record<string, unknown>` annotation that documents the payload the planner hands to CDP; inlining it into the `return` loses that. Same class as the named `render` closure above. |
 
 ## Baseline (2026-09-13, branch `chore/ide-inspection-fixes`)
 
@@ -68,6 +70,20 @@ for (p in listOf(/* files */)) {
   was actionable (`src/main.tsx` redundant initializer). Everything else fell in the table above.
 - Deterministic cross-checks: 0 unreferenced modules under `src`, 3 duplicate clusters repo-wide
   (two are import lists or test scaffolding).
+
+## Second sweep (2026-09-18, contribution revision)
+
+- Coverage: the 211 paths the upstream contribution changes - 102 under `src`, 95 under `tests`+`scripts`,
+  the rest docs, patches and CI config - swept in batches of 20-24 with the harness above. 0 harness
+  failures, and every finding was anchored to its source text before it was judged.
+- One row was actionable: shell-stub text inside a TypeScript template literal
+  (`ES6RedundantNestingInTemplateLiteral` in `scripts/linux-workbench-key-harness.ts`), where
+  `${'${1#--type=}'}` became `\${1#--type=}`. The emitted bytes are identical and the interpolation reads as
+  the shell parameter expansion it is.
+- Two classes appeared for the first time and are now in the table: `HtmlRequiredAltAttribute` on a GPUix
+  intrinsic, and `UnnecessaryLocalVariableJS` on an annotated CDP payload builder.
+- `PointlessBooleanExpressionJS` on probe assertions (`x === true` inside a `record(...)` call) and
+  `ExceptionCaughtLocallyJS` in the controller and the host server stayed rejected, as the table says.
 
 ## Addendum: what this harness cannot catch (async boundaries)
 
