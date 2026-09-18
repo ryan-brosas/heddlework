@@ -10,7 +10,7 @@ const controller = {} as WorkbenchService
 function props(state: WorkbenchSidebarProps['state']): WorkbenchSidebarProps {
   return {
     state,
-    controller, 
+    controller,
     settingsActive: false,
     notificationsActive: false,
     unreadCount: 0,

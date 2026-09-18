@@ -34,17 +34,19 @@ chmod 700 "$root/runtime"
 # Logging shims: they delegate to the real tools, so the clipboard stays real while every call is
 # recorded for evidence (which arguments the app used, what its own read returned). The real paths are
 # resolved here and must not come from the shim directory, or the shim would call itself.
-for helper in wl-paste wl-copy; do
-  resolved=$(command -v "$helper" || true)
-  case "$resolved" in
-    "" | "$root"/*) echo "$helper is required and must not resolve inside $root/bin" >&2; exit 1 ;;
+# `type -P` reports only an executable found on PATH: `command -v` would return a bare name for a
+# shell function, which the generated wrapper would then resolve through the shim directory and call.
+real_paste=$(type -P wl-paste || true)
+real_copy=$(type -P wl-copy || true)
+for helper in "$real_paste" "$real_copy"; do
+  case "$helper" in
+    "" | "$root"/*) echo "wl-paste and wl-copy are required and must not resolve inside $root/bin" >&2; exit 1 ;;
   esac
-  eval "real_${helper#wl-}=\$resolved"
 done
 cat > "$root/bin/wl-paste" <<EOF
 #!/bin/sh
 out=\$(mktemp)
-$real_paste "\$@" > "\$out" 2>/dev/null
+"$real_paste" "\$@" > "\$out" 2>/dev/null
 code=\$?
 printf '%s wl-paste args=[%s] exit=%s bytes=%s head=%s\n' "\$(date +%H:%M:%S.%3N)" "\$*" "\$code" "\$(wc -c < "\$out")" "\$(head -c 40 "\$out")" >> "$root/helper.log"
 cat "\$out"
@@ -55,7 +57,7 @@ chmod 755 "$root/bin/wl-paste"
 cat > "$root/bin/wl-copy" <<EOF
 #!/bin/sh
 printf '%s wl-copy args=[%s]\n' "\$(date +%H:%M:%S.%3N)" "\$*" >> "$root/helper.log"
-exec $real_copy "\$@"
+exec "$real_copy" "\$@"
 EOF
 chmod 755 "$root/bin/wl-copy"
 
