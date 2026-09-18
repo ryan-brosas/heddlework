@@ -214,8 +214,11 @@ export class WorkbenchDialogCoordinator {
     const state = this.#host.getState()
     const pending = [state.dialog, ...state.dialogQueue]
       .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
+    // Captured before hideVisible consumes the local callbacks: a locally-driven dialog is answered through
+    // its own callback, so sending it over the host as well would emit a response Pi never asked for.
+    const fromPi = pending.filter((dialog) => !this.#localDialogResponses.has(dialog.id))
     this.hideVisible()
-    for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
+    for (const dialog of fromPi) this.#sendDialogResponse(dialog.id, { cancelled: true })
   }
 
   dispose(): void {
