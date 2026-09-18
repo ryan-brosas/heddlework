@@ -46,12 +46,13 @@ export async function resolveSubmittedText(options: {
  * Whether a paste or submit still belongs to the thread it started in.
  *
  * The clipboard read is asynchronous and the composer is not remounted when the user clicks a thread, so a
- * read, an attached image, or a waiting submit can outlive the session it began in. Comparing the session
- * file - not the session object identity - is what keeps a late result from being written into the thread
- * the user is looking at now, where it would look like the paste went to the wrong place.
+ * read, an attached image, or a waiting submit can outlive the session it began in. Comparing
+ * `sessionIdentity` is what keeps a late result from being written into the thread the user is looking at
+ * now, where it would look like the paste went to the wrong place: a thread Pi has not written a file for
+ * yet is identified by its session id, so two such threads never compare as one.
  */
-export function pasteTargetsSameSession(startedSessionFile: string, currentSessionFile: string): boolean {
-  return startedSessionFile === currentSessionFile
+export function pasteTargetsSameSession(startedIdentity: string, currentIdentity: string): boolean {
+  return startedIdentity === currentIdentity
 }
 
 /**
@@ -68,14 +69,6 @@ export function sessionIdentity(session: { readonly sessionFile?: string; readon
 }
 
 /**
- * The draft a native paste started from, as the runtime reported it.
- *
- * The runtime that performed the insertion is the only owner of "what the draft was": a caret insertion
- * cannot be inverted from the inserted text, and a paste that replaced a selection cannot be inverted at all.
- * A paste that reported nothing (a DOM paste, or a runtime that predates the field) left the draft as the
- * current one, which is why that is the fallback rather than a guess.
- */
-/**
  * Attach the clipboard image half of a paste, unless the thread changed while the clipboard was read.
  *
  * Both paste paths need this: the read is asynchronous and the composer is not remounted when the user
@@ -87,14 +80,14 @@ export function sessionIdentity(session: { readonly sessionFile?: string; readon
  * updates synchronously.
  */
 export async function attachClipboardImage(options: {
-  readonly startedSessionFile: string
-  readonly currentSessionFile: () => string
+  readonly startedIdentity: string
+  readonly currentIdentity: () => string
   readonly readImage: () => Promise<ComposerImage | undefined>
   readonly attachImage: (image: ComposerImage) => void
 }): Promise<'attached' | 'unavailable' | 'stale'> {
   const image = await options.readImage()
   if (!image) return 'unavailable'
-  if (!pasteTargetsSameSession(options.startedSessionFile, options.currentSessionFile())) return 'stale'
+  if (!pasteTargetsSameSession(options.startedIdentity, options.currentIdentity())) return 'stale'
   options.attachImage(image)
   return 'attached'
 }
