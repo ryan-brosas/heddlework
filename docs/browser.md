@@ -212,9 +212,11 @@ The engine runs the host's own Chrome or Chromium (`google-chrome-stable`, `goog
   `Page.startScreencast` and drawn as frames; pointer, wheel, key and text gestures are forwarded with the
   `Input` domain, and the page viewport is set from the measured panel rectangle so input needs no scale
   factor.
-- `Ctrl+V`/`Cmd+V` reads the desktop clipboard through the shared helper and inserts it, because Chrome's
-  headless clipboard is not the desktop clipboard. Chords such as `Ctrl+C`/`Ctrl+A` are forwarded as key
-  events so the page keeps its own shortcuts.
+- `Ctrl+V`/`Cmd+V` reads the desktop clipboard and inserts its text, because Chrome's headless clipboard is
+  not the desktop clipboard. The text-to-insertion mapping is `planChromePaste` in `src/browser/chrome-plan.ts`,
+  and a read that yields nothing is reported in the surface (`chrome-browser-paste-failure`, message in
+  `src/ui/browser-chrome-surface.tsx`) instead of looking like a dead key. Chords such as `Ctrl+C`/`Ctrl+A`
+  are forwarded as key events so the page keeps its own shortcuts.
 - A `window.open` from a page (`Page.windowOpen`) becomes an app-managed tab, and the browser's own popup
   window is closed rather than left as an unmanaged duplicate.
 - `Page.javascriptDialogOpening` is accepted automatically; dialogs are not yet surfaced to the user.

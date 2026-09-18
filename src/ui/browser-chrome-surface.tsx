@@ -6,11 +6,12 @@
  * which is the same contract the native surface follows. Input is decided by the pure planners so a
  * coordinate mapping or modifier bug is caught by a unit test rather than by a misdirected click.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import type { ChromeBrowserBackend, ChromeInputCall } from '../browser/chrome-backend.ts'
-import { planChromeKey, planChromePointer, planChromeWheel, type ChromeBounds, type ChromeModifiers } from '../browser/chrome-plan.ts'
+import { planChromeKey, planChromePaste, planChromePointer, planChromeWheel, type ChromeBounds, type ChromeModifiers } from '../browser/chrome-plan.ts'
 import { readClipboardText } from './clipboard-media.ts'
+import { createPasteAction } from './paste-feedback.ts'
 import { colors } from './theme.ts'
 
 /** How often the surfaced page re-measures its rectangle. Only a resize needs this. */
@@ -33,17 +34,36 @@ interface ChromeSurfaceEvent {
   modifiers?: ChromeModifiers | undefined
 }
 
-export function ChromeBrowserSurface({ backend, tabId, generation, visible }: {
+/** Paste failure text for this surface: it performs the paste itself, so a read that yielded nothing is reported. */
+export const CHROME_PASTE_FAILED_MESSAGE = "Couldn't paste into the page: no clipboard text was available. Try copying text again."
+
+export function ChromeBrowserSurface({ backend, tabId, generation, visible, readPaste = readClipboardText }: {
   backend: ChromeBrowserBackend
   tabId: string
   generation: number
   visible: boolean
+  /**
+   * Desktop clipboard reader used by the paste gesture. Injectable like the terminal's, so the
+   * failure path is covered without a compositor or an OS clipboard.
+   */
+  readPaste?: () => Promise<string | undefined>
 }) {
   const renderer = useGpuixRequired() as ChromeSurfaceRenderer
   const elementId = useRef<number | undefined>(undefined)
   const bounds = useRef<ChromeBounds | undefined>(undefined)
   const [frame, setFrame] = useState<string | undefined>(undefined)
   const [size, setSize] = useState<{ width: number; height: number } | undefined>(undefined)
+  // Paste failure feedback: this surface performs the paste itself, and a clipboard that yielded no
+  // text would otherwise be indistinguishable from a key that did nothing.
+  const [pasteFailure, setPasteFailure] = useState<string | undefined>(undefined)
+  const pasteAction = useMemo(
+    () => createPasteAction({ read: readPaste, onFailure: setPasteFailure, message: CHROME_PASTE_FAILED_MESSAGE }),
+    [readPaste],
+  )
+  useEffect(() => {
+    setPasteFailure(undefined)
+    return () => pasteAction.dispose()
+  }, [pasteAction])
   const setNodeRef = useCallback((instance: { id: number } | null) => { elementId.current = instance?.id }, [])
 
   useEffect(() => {
@@ -96,15 +116,17 @@ export function ChromeBrowserSurface({ backend, tabId, generation, visible }: {
         break
       case 'paste':
         // Chrome's headless clipboard is not the desktop clipboard, so the paste gesture reads the
-        // desktop clipboard through the helper the composer already uses and inserts its text.
-        void readClipboardText().then((text) => {
-          if (text) send([{ method: 'Input.insertText', params: { text } }])
+        // desktop clipboard through the shared reader; a read that yielded nothing is reported rather
+        // than looking like a dead key, and the insertion is planned like every other gesture.
+        void pasteAction.paste().then((text) => {
+          const call = text === undefined ? undefined : planChromePaste(text)
+          if (call) send([call])
         })
         break
       case 'ignore':
         break
     }
-  }, [send])
+  }, [pasteAction, send])
 
   return (
     <div
@@ -131,6 +153,21 @@ export function ChromeBrowserSurface({ backend, tabId, generation, visible }: {
           <text style={{ maxWidth: 300, color: colors.textFaint, fontSize: 9, lineHeight: 14, textAlign: 'center' }}>The page appears here once Chrome has drawn its first frame.</text>
         </div>
       )}
+      {pasteFailure ? (
+        <text
+          testId="chrome-browser-paste-failure"
+          style={{
+            position: 'absolute',
+            left: 12,
+            bottom: 12,
+            color: colors.diffDel,
+            fontSize: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          {pasteFailure}
+        </text>
+      ) : null}
     </div>
   )
 }

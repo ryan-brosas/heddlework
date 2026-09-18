@@ -14,7 +14,7 @@ Terminal key routing resolves copy, paste, and interrupt commands **before** ter
 
 - **Copy**: `Ctrl+Shift+C` (Linux/Windows) and `Command+C` (macOS). A copy command writes **zero PTY bytes**, including when the clipboard write fails.
 - **Interrupt**: plain `Ctrl+C` writes exactly one ETX, never a copy.
-- **Paste**: `Ctrl+V` / `Command+V` reads the clipboard once and writes it to the focused session, wrapped in bracketed-paste markers when the emulator enabled DEC mode 2004. A failed read stays local and never falls through to key encoding.
+- **Paste**: `Ctrl+V` / `Command+V` reads the clipboard once and writes it to the focused session, wrapped in bracketed-paste markers when the emulator enabled DEC mode 2004. A failed read stays local, never falls through to key encoding, and reports one generic local message (`terminal-paste-failure-<placement>`) instead of looking like a dead key.
 
 The Linux text readers name the type they want (`wl-paste --no-newline --type text`, `xclip -target
 UTF8_STRING -type`): an inferred MIME type can hand image bytes to a UTF-8 decode. A helper that overruns its
@@ -35,6 +35,8 @@ deterministically through `BunPtyBackend`'s injected PTY lifecycle.
 Copy currently exports the **visible terminal viewport**, not a modeled selection. Rows are padded to the terminal width, so the copied text trims each line's trailing padding and drops the unused blank rows below the last line while keeping leading indentation and interior blank lines; an empty or all-blank viewport copies nothing and reports no failure, because a no-op is not a failed write. Terminal drag-selection and a distinct "copy visible terminal" action are separate follow-up work; do not promise selection-scoped copy from this path.
 
 A failed copy reports one generic, local message (`terminal-copy-failure-<placement>`, message text in `src/ui/terminal-copy-feedback.ts`) and never falls through to interrupt. The feedback is owned by the terminal view: a new attempt clears it, stale completions cannot overwrite newer feedback, and it is withdrawn on unmount, on a session change, or on writer replacement. One view instance serves every session, so the action is scoped to the session and a copy still in flight for a session that was left cannot report over its successor. Published feedback never contains the clipboard payload or an exception detail.
+
+An empty or unreadable clipboard during a paste is reported the same way (`terminal-paste-failure-<placement>`), which is what makes "paste does nothing" diagnosable: the terminal performs the paste itself, so the gesture has no other feedback. The rule lives in `src/ui/paste-feedback.ts` on top of the shared latest-attempt ordering in `src/ui/attempt-feedback.ts`, so the terminal and the browser page report the same condition without either surface re-deriving it; the props still accept a plain reader, so a test can inject one that reads nothing and assert the message.
 
 Clipboard I/O is injectable in both directions (`TerminalView`'s `copy` and `readPaste` props) so the production dispatch seam, its failure feedback, and paste delivery are regression-tested without a native GPUIX renderer or an operating-system clipboard.
 
